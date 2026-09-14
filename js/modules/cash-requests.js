@@ -324,8 +324,7 @@ export function getCashRequestStatusInfo(status) {
 // =====================================================================
 
 
-    const badge = document.getElementById('cash-requests-badge');
-    if (!badge) return;
+  
 export function updateCashRequestsBadge() {
     const badge = document.getElementById('cash-requests-badge');
     if (!badge) return;
