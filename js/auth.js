@@ -5,9 +5,7 @@
 // Работает через Supabase Auth.
 //
 // ВАЖНО: проверяем не только наличие сессии, но и статус сотрудника
-// в таблице employees (active / blocked / fired). Уволенные и
-// заблокированные не пускаются в приложение, но их данные
-// (объекты, заявки, задачи) остаются в базе.
+// в таблице employees (active / blocked / fired).
 // =====================================================================
 
 import { supabase } from './config.js';
@@ -19,9 +17,6 @@ import { log, toast } from './utils.js';
 
 /**
  * Вход по email и паролю.
- * @param {string} email
- * @param {string} password
- * @returns {Promise<{ user, session, error }>}
  */
 export async function signIn(email, password) {
     log.auth(`Попытка входа: ${email}`);
@@ -96,8 +91,6 @@ export async function getCurrentUserEmail() {
 
 /**
  * Подписывается на изменения авторизации.
- * @param {Function} callback — (event, session) => { ... }
- * @returns {Object} — { unsubscribe }
  */
 export function onAuthChange(callback) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -116,7 +109,6 @@ export function onAuthChange(callback) {
 
 /**
  * Находит запись сотрудника, привязанную к текущему Auth-пользователю.
- * @returns {Promise<{ employee, error }>}
  */
 export async function getCurrentEmployee() {
     const { data: { user } } = await supabase.auth.getUser();
@@ -140,14 +132,10 @@ export async function getCurrentEmployee() {
 
 /**
  * Проверяет статус текущего сотрудника.
- * Возвращает:
- *  - { allowed: true, employee } — если всё ок или если сотрудник ещё не привязан
- *  - { allowed: false, reason: 'blocked' | 'fired', employee } — если доступ закрыт
  */
 export async function checkEmployeeAccess() {
     const { employee, error } = await getCurrentEmployee();
 
-    // Если запись не привязана — не блокируем (это администратор/директор)
     if (error || !employee) {
         log.auth('Сотрудник не привязан к Auth — доступ разрешён');
         return { allowed: true, employee: null };
@@ -166,9 +154,8 @@ export async function checkEmployeeAccess() {
 }
 
 /**
- * Привязывает текущего Auth-пользователя к записи сотрудника.
- * @param {number} employeeId
- * @returns {Promise<{ success, error }>}
+ * Привязывает ТЕКУЩЕГО Auth-пользователя к записи сотрудника.
+ * Используется при самостоятельной привязке.
  */
 export async function linkUserToEmployee(employeeId) {
     const { data: { user } } = await supabase.auth.getUser();
@@ -190,14 +177,60 @@ export async function linkUserToEmployee(employeeId) {
     return { success: true, error: null };
 }
 
+/**
+ * Отвязывает аккаунт от записи сотрудника (user_id = null).
+ * Используется Администратором.
+ */
+export async function unlinkUserFromEmployee(employeeId) {
+    const { error } = await supabase
+        .from('employees')
+        .update({ user_id: null })
+        .eq('id', employeeId);
+
+    if (error) {
+        log.error('Ошибка отвязки:', error.message);
+        return { success: false, error };
+    }
+
+    log.auth(`✅ Аккаунт отвязан от сотрудника #${employeeId}`);
+    return { success: true, error: null };
+}
+
+/**
+ * Привязывает ПРОИЗВОЛЬНЫЙ user_id к сотруднику.
+ * Используется Администратором для привязки чужих аккаунтов по UID.
+ */
+export async function linkUserById(employeeId, userId) {
+    if (!userId || typeof userId !== 'string') {
+        return { success: false, error: new Error('user_id не задан') };
+    }
+
+    // Проверка формата UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userId)) {
+        return { success: false, error: new Error('Некорректный формат UID') };
+    }
+
+    const { error } = await supabase
+        .from('employees')
+        .update({ user_id: userId })
+        .eq('id', employeeId);
+
+    if (error) {
+        log.error('Ошибка привязки по UID:', error.message);
+        return { success: false, error };
+    }
+
+    log.auth(`✅ user_id ${userId} привязан к сотруднику #${employeeId}`);
+    return { success: true, error: null };
+}
+
 // =====================================================================
 // СМЕНА ПАРОЛЯ
 // =====================================================================
 
 /**
  * Обновляет пароль текущего пользователя.
- * @param {string} newPassword
- * @returns {Promise<{ success, error }>}
  */
 export async function updatePassword(newPassword) {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
@@ -213,12 +246,7 @@ export async function updatePassword(newPassword) {
 // =====================================================================
 
 /**
- * Инициализирует экран логина:
- *  - Проверяет сессию при загрузке.
- *  - Проверяет статус сотрудника (active / blocked / fired).
- *  - Обрабатывает отправку формы.
- *
- * @param {Object} options — { onSuccess: Function, onLogout: Function }
+ * Инициализирует экран логина.
  */
 export function initLoginScreen(options = {}) {
     const { onSuccess, onLogout } = options;
@@ -228,7 +256,7 @@ export function initLoginScreen(options = {}) {
     const btn = document.getElementById('login-btn');
 
     if (!authScreen || !loginForm) {
-        log.error('Не найдены элементы экрана логина (auth-screen, login-form)');
+        log.error('Не найдены элементы экрана логина');
         return;
     }
 
@@ -242,7 +270,6 @@ export function initLoginScreen(options = {}) {
             return;
         }
 
-        // Есть сессия — проверяем статус сотрудника
         const access = await checkEmployeeAccess();
 
         if (!access.allowed) {
@@ -282,7 +309,6 @@ export function initLoginScreen(options = {}) {
             return;
         }
 
-        // Проверяем статус сотрудника после входа
         const access = await checkEmployeeAccess();
 
         if (!access.allowed) {
@@ -302,7 +328,7 @@ export function initLoginScreen(options = {}) {
         if (onSuccess) onSuccess(user);
     });
 
-    // ----- Следим за изменениями сессии -----
+    // ----- Слежение за изменениями сессии -----
     onAuthChange((event, session) => {
         if (event === 'SIGNED_OUT') {
             authScreen.classList.remove('hidden');
@@ -315,7 +341,7 @@ export function initLoginScreen(options = {}) {
 }
 
 /**
- * Функция выхода — вызывается из кнопки в интерфейсе.
+ * Функция выхода.
  */
 export async function logout() {
     if (!confirm('Выйти из приложения?')) return;
@@ -323,5 +349,4 @@ export async function logout() {
     location.reload();
 }
 
-// Делаем logout доступным глобально, чтобы onclick="logout()" работал в HTML
 window.logout = logout;

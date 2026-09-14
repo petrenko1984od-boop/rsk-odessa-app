@@ -1,10 +1,17 @@
 // =====================================================================
 // RSK ODESSA — ТОЧКА ВХОДА ПРИЛОЖЕНИЯ
 // =====================================================================
+// Запускается первым. Он:
+//   1. Инициализирует экран логина
+//   2. После входа показывает приложение
+//   3. Загружает права доступа
+//   4. Подключает модули разделов
+// =====================================================================
 
 import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
+import { loadPermissions } from './permissions.js';
 
 // Модули разделов
 import {
@@ -15,7 +22,7 @@ import {
 } from './modules/employees.js';
 
 // =====================================================================
-// СОСТОЯНИЕ
+// СОСТОЯНИЕ ПРИЛОЖЕНИЯ
 // =====================================================================
 
 export const AppState = {
@@ -30,6 +37,7 @@ export const AppState = {
 // =====================================================================
 
 const ALL_TABS = ['welcome', 'projects', 'employees', 'orders', 'registry', 'new-order'];
+const TAB_BUTTONS = ['projects', 'employees', 'orders', 'registry', 'new-order'];
 
 export function switchTab(tabId) {
     // Скрываем все вкладки
@@ -42,8 +50,8 @@ export function switchTab(tabId) {
     const target = document.getElementById(`tab-${tabId}`);
     if (target) target.classList.remove('hidden');
 
-    // Подсветка кнопки
-    ['projects', 'employees', 'orders', 'registry', 'new-order'].forEach(t => {
+    // Подсветка активной кнопки
+    TAB_BUTTONS.forEach(t => {
         const btn = document.getElementById(`btn-${t}`);
         if (!btn) return;
         if (t === tabId) {
@@ -57,7 +65,7 @@ export function switchTab(tabId) {
 
     AppState.currentTab = tabId;
 
-    // Триггеры на загрузку данных
+    // Триггеры загрузки данных при открытии вкладки
     if (tabId === 'employees') {
         loadEmployees();
     }
@@ -70,7 +78,10 @@ window.switchTab = switchTab;
 // =====================================================================
 
 async function startApp(user) {
-    if (AppState.isReady) return;
+    if (AppState.isReady) {
+        log.warn('Приложение уже запущено');
+        return;
+    }
 
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('app-container').classList.remove('hidden');
@@ -79,6 +90,9 @@ async function startApp(user) {
     AppState.currentUserEmail = user?.email || null;
 
     toast(`Добро пожаловать, ${user?.email || 'гость'}!`, 'success');
+
+    // Загружаем права доступа ДО загрузки данных
+    await loadPermissions();
 
     // Загружаем данные
     try {
@@ -109,11 +123,9 @@ function stopApp() {
 // =====================================================================
 
 function bindForms() {
-    // Форма добавления сотрудника
     const empForm = document.getElementById('employee-form');
     if (empForm) empForm.addEventListener('submit', saveNewEmployee);
 
-    // Форма деактивации
     const deactForm = document.getElementById('deactivate-form');
     if (deactForm) deactForm.addEventListener('submit', confirmDeactivate);
 }
@@ -152,4 +164,5 @@ if (document.readyState === 'loading') {
     boot();
 }
 
+// Для отладки через консоль
 window.AppState = AppState;

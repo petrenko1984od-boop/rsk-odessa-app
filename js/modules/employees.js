@@ -1,37 +1,34 @@
 // =====================================================================
-// МОДУЛЬ: СОТРУДНИКИ
-// =====================================================================
-// Всё, что связано с разделом «Сотрудники»:
-//   - Загрузка из Supabase
-//   - Отображение карточками
-//   - Добавление / просмотр / редактирование
-//   - Блокировка / увольнение (soft delete)
-//   - Привязка Auth-пользователя к записи
+// МОДУЛЬ: СОТРУДНИКИ (с правами доступа)
 // =====================================================================
 
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    getFormData, formatDate, getPaymentStatusBadge
+    formatDate
 } from '../utils.js';
 import { CONFIG } from '../config.js';
 import {
-    getCurrentUser, linkUserToEmployee as linkUserAuth
+    getCurrentUser,
+    linkUserById,
+    unlinkUserFromEmployee
 } from '../auth.js';
+import {
+    can, requirePermission, isAdmin
+} from '../permissions.js';
 
 // =====================================================================
-// СОСТОЯНИЕ МОДУЛЯ
+// СОСТОЯНИЕ
 // =====================================================================
 
 let employeesCache = [];
-let currentCardId = null;
 
 // =====================================================================
-// ЗАГРУЗКА СПИСКА СОТРУДНИКОВ
+// ЗАГРУЗКА
 // =====================================================================
 
 export async function loadEmployees() {
-    log.info('Загрузка сотрудников из Supabase...');
+    log.info('Загрузка сотрудников...');
 
     const { data, error } = await db.select('employees', {
         orderBy: { column: 'name', asc: true }
@@ -44,46 +41,47 @@ export async function loadEmployees() {
     }
 
     employeesCache = data || [];
-    log.info(`Загружено сотрудников: ${employeesCache.length}`);
+    log.info(`Загружено: ${employeesCache.length}`);
     renderEmployees();
     updateEmployeesBadge();
 }
 
 // =====================================================================
-// ОТРИСОВКА СПИСКА
+// РЕНДЕР СПИСКА
 // =====================================================================
 
 export function renderEmployees() {
     const container = document.getElementById('employees-container');
     if (!container) return;
 
+    // Кнопка «Добавить сотрудника» — видна только Администратору
+    const addBtn = document.querySelector('#tab-employees button[onclick="openAddEmployeeModal()"]');
+    if (addBtn) {
+        addBtn.style.display = can('add_employee') ? '' : 'none';
+    }
+
     if (employeesCache.length === 0) {
         container.innerHTML = `
             <div class="col-span-2 bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-300 p-8 text-center space-y-2">
                 <div class="text-5xl">👥</div>
                 <h3 class="font-bold text-gray-700">Список сотрудников пуст</h3>
-                <p class="text-sm text-gray-500">Нажми «➕ Добавить сотрудника», чтобы создать первого.</p>
+                <p class="text-sm text-gray-500">${can('add_employee') ? 'Нажми «➕ Добавить сотрудника»' : 'Обратитесь к администратору'}</p>
             </div>
         `;
         return;
     }
 
-    // Группируем: сначала активные, потом заблокированные, потом уволенные
-    const active = employeesCache.filter(e => !e.status || e.status === 'active');
+    const active  = employeesCache.filter(e => !e.status || e.status === 'active');
     const blocked = employeesCache.filter(e => e.status === 'blocked');
-    const fired = employeesCache.filter(e => e.status === 'fired');
-
+    const fired   = employeesCache.filter(e => e.status === 'fired');
     const sorted = [...active, ...blocked, ...fired];
 
-    container.innerHTML = sorted.map(emp => renderEmployeeCard(emp)).join('');
+    container.innerHTML = sorted.map(renderEmployeeCard).join('');
 }
 
 function renderEmployeeCard(emp) {
     const status = emp.status || 'active';
-
-    let statusBadge = '';
-    let cardBorder = 'border-[#15803d]';
-    let cardOpacity = '';
+    let statusBadge = '', cardBorder = 'border-[#15803d]', cardOpacity = '';
 
     if (status === 'blocked') {
         statusBadge = `<span class="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">🟡 Заблокирован</span>`;
@@ -96,13 +94,11 @@ function renderEmployeeCard(emp) {
         statusBadge = `<span class="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">🟢 Активен</span>`;
     }
 
-    const initials = getInitials(emp.name);
-
     return `
         <button onclick="window.openEmployeeCard(${emp.id})"
                 class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex gap-4 items-start border-l-4 ${cardBorder} ${cardOpacity} hover:bg-emerald-50/50 transition cursor-pointer group">
             <div class="w-12 h-12 rounded-full bg-[#15803d] text-white flex items-center justify-center text-base font-bold shrink-0">
-                ${initials}
+                ${getInitials(emp.name)}
             </div>
             <div class="flex-1 min-w-0 space-y-1">
                 <div class="flex justify-between items-start gap-2">
@@ -125,11 +121,12 @@ function getInitials(name) {
 }
 
 // =====================================================================
-// ДОБАВЛЕНИЕ СОТРУДНИКА
+// ДОБАВЛЕНИЕ (только Администратор)
 // =====================================================================
 
 export function openAddEmployeeModal() {
-    // Заполняем справочник должностей
+    if (!requirePermission('add_employee')) return;
+
     const posSelect = document.getElementById('emp-position');
     if (posSelect) {
         posSelect.innerHTML = CONFIG.POSITIONS
@@ -137,23 +134,23 @@ export function openAddEmployeeModal() {
             .join('');
     }
 
-    // Сбрасываем форму
     document.getElementById('employee-form').reset();
     showModal('employee-modal');
 }
 
 export async function saveNewEmployee(event) {
     event.preventDefault();
+    if (!requirePermission('add_employee')) return;
 
     const form = event.target;
     const submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Сохраняем...';
 
-    const name = document.getElementById('emp-name').value.trim();
+    const name     = document.getElementById('emp-name').value.trim();
     const position = document.getElementById('emp-position').value;
-    const phone = document.getElementById('emp-phone').value.trim();
-    const notes = document.getElementById('emp-notes').value.trim();
+    const phone    = document.getElementById('emp-phone').value.trim();
+    const notes    = document.getElementById('emp-notes').value.trim();
 
     if (!name || !position || !phone) {
         toast('Заполни обязательные поля', 'error');
@@ -162,26 +159,19 @@ export async function saveNewEmployee(event) {
         return;
     }
 
-    const { data, error } = await db.insert('employees', {
-        name, position, phone, notes,
-        status: 'active'
-    });
+    const { error } = await db.insert('employees', { name, position, phone, notes, status: 'active' });
 
     submitBtn.disabled = false;
     submitBtn.textContent = '💾 Сохранить';
 
     if (error) {
-        log.error('Ошибка добавления сотрудника:', error.message);
         toast('Не удалось сохранить: ' + error.message, 'error');
         return;
     }
 
-    log.info('Сотрудник добавлен:', data);
     toast(`${name} добавлен`, 'success');
-
     hideModal('employee-modal');
     form.reset();
-
     await loadEmployees();
 }
 
@@ -191,12 +181,8 @@ export async function saveNewEmployee(event) {
 
 export async function openEmployeeCard(id) {
     const emp = employeesCache.find(e => e.id === id);
-    if (!emp) {
-        toast('Сотрудник не найден', 'error');
-        return;
-    }
+    if (!emp) { toast('Сотрудник не найден', 'error'); return; }
 
-    currentCardId = id;
     const container = document.getElementById('employee-card-content');
     const status = emp.status || 'active';
 
@@ -207,21 +193,15 @@ export async function openEmployeeCard(id) {
                 <p class="font-bold text-red-700">🚫 Уволен</p>
                 ${emp.deactivated_at ? `<p class="text-gray-600">Дата: ${formatDate(emp.deactivated_at)}</p>` : ''}
                 ${emp.deactivation_reason ? `<p class="text-gray-600">Причина: ${escapeHtml(emp.deactivation_reason)}</p>` : ''}
-            </div>
-        `;
+            </div>`;
     } else if (status === 'blocked') {
         statusInfo = `
             <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs space-y-1">
                 <p class="font-bold text-amber-800">🟡 Заблокирован</p>
                 ${emp.deactivated_at ? `<p class="text-gray-600">Дата: ${formatDate(emp.deactivated_at)}</p>` : ''}
                 ${emp.deactivation_reason ? `<p class="text-gray-600">Причина: ${escapeHtml(emp.deactivation_reason)}</p>` : ''}
-            </div>
-        `;
+            </div>`;
     }
-
-    const user = await getCurrentUser();
-    const isMyAccount = user?.user?.id && emp.user_id === user.user.id;
-    const canLink = !emp.user_id && status === 'active';
 
     container.innerHTML = `
         <div class="flex items-center gap-3 bg-emerald-50 p-3 rounded-lg border border-emerald-100">
@@ -238,24 +218,23 @@ export async function openEmployeeCard(id) {
             <p><strong>📞 Телефон:</strong> <a href="tel:${escapeHtml(emp.phone)}" class="text-[#15803d] hover:underline">${escapeHtml(emp.phone)}</a></p>
             <p><strong>📅 Добавлен:</strong> ${formatDate(emp.created_at)}</p>
             ${emp.notes ? `<p><strong>📝 Заметки:</strong> ${escapeHtml(emp.notes)}</p>` : ''}
+            ${emp.user_id ? `<p class="text-[10px] text-emerald-700 break-all"><strong>🔗 user_id:</strong> <code class="bg-white px-1 rounded">${escapeHtml(emp.user_id)}</code></p>` : ''}
         </div>
 
         ${statusInfo}
-
-        ${isMyAccount ? `
-            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs">
-                <p class="font-bold text-blue-800">🔗 Это твой аккаунт</p>
-                <p class="text-gray-600 mt-1">Привязан к ${escapeHtml(user.user.email)}</p>
-            </div>
-        ` : ''}
     `;
 
-    // Кнопки в футере карточки
-    const deleteBtn = document.getElementById('card-emp-delete-btn');
-    deleteBtn.onclick = () => confirmDeleteEmployee(emp.id, emp.name);
-
-    // Кнопки управления в карточке
+    // Кнопки действий (только для Администратора)
     renderCardActions(emp);
+
+    // Кнопка "Удалить" в футере
+    const deleteBtn = document.getElementById('card-emp-delete-btn');
+    if (can('delete_employee')) {
+        deleteBtn.style.display = '';
+        deleteBtn.onclick = () => confirmDeleteEmployee(emp.id, emp.name);
+    } else {
+        deleteBtn.style.display = 'none';
+    }
 
     showModal('employee-card-modal');
 }
@@ -263,14 +242,20 @@ export async function openEmployeeCard(id) {
 function renderCardActions(emp) {
     const container = document.getElementById('employee-card-content');
     const status = emp.status || 'active';
+
+    // Если нет прав на управление — вообще не показываем блок
+    if (!isAdmin()) return;
+
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'pt-3 border-t flex flex-wrap gap-2';
 
     let buttonsHTML = '';
 
     if (status === 'active') {
-        if (!emp.user_id) {
-            buttonsHTML += `<button onclick="window.linkMyAccount(${emp.id})" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🔗 Привязать мой аккаунт</button>`;
+        if (emp.user_id) {
+            buttonsHTML += `<button onclick="window.unlinkAccount(${emp.id})" class="bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🔓 Отвязать аккаунт</button>`;
+        } else {
+            buttonsHTML += `<button onclick="window.openLinkModal(${emp.id})" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🔗 Привязать аккаунт</button>`;
         }
         buttonsHTML += `<button onclick="window.openDeactivateModal(${emp.id}, 'blocked')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🟡 Заблокировать</button>`;
         buttonsHTML += `<button onclick="window.openDeactivateModal(${emp.id}, 'fired')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🚫 Уволить</button>`;
@@ -283,10 +268,12 @@ function renderCardActions(emp) {
 }
 
 // =====================================================================
-// ДЕАКТИВАЦИЯ (БЛОКИРОВКА / УВОЛЬНЕНИЕ)
+// ДЕАКТИВАЦИЯ
 // =====================================================================
 
 export function openDeactivateModal(id, action) {
+    if (!requirePermission(action === 'fired' ? 'fire_employee' : 'block_employee')) return;
+
     const emp = employeesCache.find(e => e.id === id);
     if (!emp) return;
 
@@ -302,23 +289,19 @@ export function openDeactivateModal(id, action) {
 
 export async function confirmDeactivate(event) {
     event.preventDefault();
+    if (!requirePermission('fire_employee') && !requirePermission('block_employee')) return;
 
     const id = parseInt(document.getElementById('deactivate-emp-id').value);
     const action = document.getElementById('deactivate-action').value;
     const reason = document.getElementById('deactivate-reason').value.trim();
 
-    const updates = {
+    const { error } = await db.update('employees', {
         status: action,
         deactivated_at: new Date().toISOString(),
         deactivation_reason: reason || null
-    };
+    }, { id });
 
-    const { error } = await db.update('employees', updates, { id });
-
-    if (error) {
-        toast('Ошибка: ' + error.message, 'error');
-        return;
-    }
+    if (error) { toast('Ошибка: ' + error.message, 'error'); return; }
 
     const emp = employeesCache.find(e => e.id === id);
     toast(action === 'fired' ? `${emp.name} уволен` : `${emp.name} заблокирован`, 'success');
@@ -328,6 +311,7 @@ export async function confirmDeactivate(event) {
 }
 
 export async function restoreEmployee(id) {
+    if (!requirePermission('restore_employee')) return;
     if (!confirm('Восстановить сотрудника?')) return;
 
     const { error } = await db.update('employees', {
@@ -336,10 +320,7 @@ export async function restoreEmployee(id) {
         deactivation_reason: null
     }, { id });
 
-    if (error) {
-        toast('Ошибка: ' + error.message, 'error');
-        return;
-    }
+    if (error) { toast('Ошибка: ' + error.message, 'error'); return; }
 
     toast('Сотрудник восстановлен', 'success');
     hideModal('employee-card-modal');
@@ -347,42 +328,82 @@ export async function restoreEmployee(id) {
 }
 
 // =====================================================================
-// ПРИВЯЗКА АККАУНТА
+// ПРИВЯЗКА / ОТВЯЗКА АККАУНТА (только Администратор)
 // =====================================================================
 
-export async function linkMyAccount(id) {
+export function openLinkModal(id) {
+    if (!requirePermission('link_account')) return;
+
     const emp = employeesCache.find(e => e.id === id);
     if (!emp) return;
 
-    if (!confirm(`Привязать твой аккаунт к "${emp.name}"?`)) return;
+    hideModal('employee-card-modal');
 
-    const result = await linkUserAuth(id);
+    // Показываем модалку привязки
+    const content = document.getElementById('link-user-content');
+    content.innerHTML = `
+        <div class="bg-blue-50 p-3 rounded-lg border border-blue-200 text-xs space-y-1">
+            <p class="font-bold text-blue-800">👤 ${escapeHtml(emp.name)}</p>
+            <p class="text-gray-600">${escapeHtml(emp.position)}</p>
+        </div>
+        <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">UID пользователя (из Supabase → Authentication → Users):</label>
+            <input type="text" id="link-uid-input" placeholder="933d90ab-33d1-4645-9e94-40d72d32f05b"
+                   class="w-full border rounded-lg p-2.5 text-xs font-mono outline-none focus:ring-2 focus:ring-[#15803d]">
+        </div>
+        <p class="text-[11px] text-gray-500 bg-gray-50 p-2 rounded border">
+            💡 Скопируй UID из Supabase Dashboard → <b>Authentication</b> → <b>Users</b> → колонка <b>UID</b>.
+        </p>
+        <div class="flex gap-2 pt-2">
+            <button onclick="window.confirmLinkAccount(${emp.id})" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">🔗 Привязать</button>
+        </div>
+    `;
+    showModal('link-user-modal');
+}
+
+export async function confirmLinkAccount(id) {
+    if (!requirePermission('link_account')) return;
+
+    const input = document.getElementById('link-uid-input');
+    const uid = input.value.trim();
+
+    if (!uid) { toast('Введи UID', 'error'); return; }
+
+    const result = await linkUserById(id, uid);
 
     if (!result.success) {
-        toast('Ошибка привязки: ' + result.error.message, 'error');
+        toast('Ошибка: ' + result.error.message, 'error');
         return;
     }
 
-    toast(`Аккаунт привязан к ${emp.name}`, 'success');
+    toast('Аккаунт привязан', 'success');
+    hideModal('link-user-modal');
+    await loadEmployees();
+}
+
+export async function unlinkAccount(id) {
+    if (!requirePermission('unlink_account')) return;
+    if (!confirm('Отвязать аккаунт от сотрудника?')) return;
+
+    const { success, error } = await unlinkUserFromEmployee(id);
+    if (!success) { toast('Ошибка: ' + error.message, 'error'); return; }
+
+    toast('Аккаунт отвязан', 'success');
     hideModal('employee-card-modal');
     await loadEmployees();
 }
 
 // =====================================================================
-// УДАЛЕНИЕ
+// УДАЛЕНИЕ (только Администратор)
 // =====================================================================
 
 async function confirmDeleteEmployee(id, name) {
-    if (!confirm(`УДАЛИТЬ "${name}" навсегда?\n\nВнимание: если у сотрудника есть объекты/заявки, они потеряют связь. Рекомендуется использовать "Уволить" вместо удаления.`)) {
-        return;
-    }
+    if (!requirePermission('delete_employee')) return;
+
+    if (!confirm(`УДАЛИТЬ "${name}" навсегда?\n\n⚠️ Рекомендуется использовать "Уволить" вместо удаления.`)) return;
 
     const { error } = await db.remove('employees', { id });
-
-    if (error) {
-        toast('Ошибка удаления: ' + error.message, 'error');
-        return;
-    }
+    if (error) { toast('Ошибка удаления: ' + error.message, 'error'); return; }
 
     toast('Сотрудник удалён', 'success');
     hideModal('employee-card-modal');
@@ -390,7 +411,7 @@ async function confirmDeleteEmployee(id, name) {
 }
 
 // =====================================================================
-// ОБНОВЛЕНИЕ БЕЙДЖА В ШАПКЕ
+// БЕЙДЖ
 // =====================================================================
 
 export function updateEmployeesBadge() {
@@ -399,13 +420,15 @@ export function updateEmployeesBadge() {
 }
 
 // =====================================================================
-// ЭКСПОРТ ГЛОБАЛЬНЫХ ФУНКЦИЙ (для onclick в HTML)
+// ГЛОБАЛЬНЫЕ ФУНКЦИИ (для onclick)
 // =====================================================================
 
 window.openEmployeeCard = openEmployeeCard;
 window.openDeactivateModal = openDeactivateModal;
 window.restoreEmployee = restoreEmployee;
-window.linkMyAccount = linkMyAccount;
 window.openAddEmployeeModal = openAddEmployeeModal;
 window.saveNewEmployee = saveNewEmployee;
 window.confirmDeactivate = confirmDeactivate;
+window.openLinkModal = openLinkModal;
+window.confirmLinkAccount = confirmLinkAccount;
+window.unlinkAccount = unlinkAccount;
