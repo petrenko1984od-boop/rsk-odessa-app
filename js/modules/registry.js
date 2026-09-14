@@ -4,14 +4,17 @@
 // Сводная таблица всех закупок и расходов.
 //
 // Источники данных (не хранит, а собирает):
-//   1. Закрытые заявки → order_items (payment_source = 'company')
-//   2. Расходы сотрудников → cash_operations.items (source = 'manual')
-//   3. Заявки, оплаченные сотрудником → cash_operations (source = 'order')
+//   1. Заявки с payment_source = 'company' (closed + archived)
+//   2. Расходы из cash_operations (source = 'manual')
+//   3. Заявки с payment_source = 'employee' (уже в cash_operations)
 //
-// ⚠️ ВАЖНО: избегаем двойного учёта:
-//   - Если заявка оплачена фирмой → берём из order_items
-//   - Если заявка оплачена сотрудником → берём из cash_operations
-//   - Прямые расходы → всегда из cash_operations
+// ⚠️ ВАЖНО: 
+//   - Архивные заявки ТОЖЕ попадают в реестр (архив ≠ удаление)
+//   - Избегаем двойного учёта:
+//       * заявка фирмой → из order_items
+//       * заявка сотрудником → из cash_operations
+//       * прямой расход → из cash_operations
+//   - Дата: для заявок — closed_at, для расходов — operation_date
 // =====================================================================
 
 import { db } from '../database.js';
@@ -19,13 +22,12 @@ import {
     log, toast, escapeHtml, formatMoney,
     formatDate
 } from '../utils.js';
-import { getEmployee, isAdmin } from '../permissions.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
 
-let registryCache = [];   // Сводный список материалов
+let registryCache = [];
 let filters = {
     project: '',
     section: '',
@@ -45,31 +47,46 @@ export async function loadRegistry() {
 
     const items = [];
 
-    // 1. Загружаем позиции из ЗАКРЫТЫХ заявок с оплатой фирмой
-    const { data: firmOrders } = await db.select('orders', {
+    // ============================================================
+    // 1. Заявки с оплатой фирмой (status: closed ИЛИ archived)
+    //    ⚠️ .in не работает — загружаем всё, фильтруем в JS
+    // ============================================================
+    const { data: allOrders, error: ordersError } = await db.select('orders', {
         select: `
             id, request_number, project_id, section_id, 
-            supplier, payment_source, closed_at,
+            supplier, payment_source, closed_at, status, created_at,
             project:projects ( id, name ),
             section:sections ( id, name ),
             created_by_emp:employees!orders_created_by_employee_id_fkey ( id, name )
         `,
-        filters: { 
-            status: 'closed',
-            payment_source: 'company'
-        }
+        filters: { payment_source: 'company' }
     });
 
-    if (firmOrders && firmOrders.length > 0) {
+    if (ordersError) {
+        log.error('Ошибка загрузки заявок для реестра:', ordersError.message);
+    }
+
+    // Фильтруем только closed + archived
+    const firmOrders = (allOrders || []).filter(o => 
+        o.status === 'closed' || o.status === 'archived'
+    );
+
+    if (firmOrders.length > 0) {
+        // Загружаем order_items для этих заявок
         const orderIds = firmOrders.map(o => o.id);
-        const { data: orderItems } = await db.select('order_items', {
-            filters: { 'order_id.in': orderIds }
+        const { data: allOrderItems } = await db.select('order_items', {
+            filters: {}
         });
 
+        // Фильтруем items по нашим заявкам
         const orderMap = {};
         firmOrders.forEach(o => { orderMap[o.id] = o; });
 
-        (orderItems || []).forEach(it => {
+        const orderItems = (allOrderItems || []).filter(it => 
+            orderMap[it.order_id]
+        );
+
+        orderItems.forEach(it => {
             const order = orderMap[it.order_id];
             if (!order) return;
 
@@ -95,9 +112,11 @@ export async function loadRegistry() {
         });
     }
 
-    // 2. Загружаем расходы из cash_operations (все)
-    //    (в том числе заявки, оплаченные сотрудником — они уже тут)
-    const { data: expenses } = await db.select('cash_operations', {
+    // ============================================================
+    // 2. Все расходы из cash_operations (source = 'manual' или 'order')
+    //    Заявки, оплаченные сотрудником, уже здесь (source = 'order')
+    // ============================================================
+    const { data: expenses, error: expError } = await db.select('cash_operations', {
         select: `
             id, employee_id, amount, category, project_id, section_id,
             items, source, order_id, operation_date, created_at, description,
@@ -108,32 +127,38 @@ export async function loadRegistry() {
         filters: { operation_type: 'expense' }
     });
 
+    if (expError) {
+        log.error('Ошибка загрузки расходов:', expError.message);
+    }
+
     if (expenses && expenses.length > 0) {
-        // Нужны номера заявок для source='order'
-        const orderIds = expenses.filter(e => e.order_id).map(e => e.order_id);
+        // Номера заявок для source='order'
+        const orderIdsForNumbers = expenses.filter(e => e.order_id).map(e => e.order_id);
         let orderNumbersMap = {};
-        if (orderIds.length > 0) {
+        if (orderIdsForNumbers.length > 0) {
             const { data: ordersData } = await db.select('orders', {
-                select: 'id, request_number, supplier',
-                filters: { 'id.in': orderIds }
+                select: 'id, request_number, supplier'
             });
-            (ordersData || []).forEach(o => { orderNumbersMap[o.id] = o; });
+            (ordersData || []).forEach(o => { 
+                if (orderIdsForNumbers.includes(o.id)) {
+                    orderNumbersMap[o.id] = o;
+                }
+            });
         }
 
         expenses.forEach(exp => {
             const expItems = Array.isArray(exp.items) ? exp.items : [];
 
-            // Определяем источник для отображения
+            // Источник
             let sourceLabel = '💰 Расход';
             let supplier = '—';
             if (exp.source === 'order' && exp.order_id) {
                 const orderInfo = orderNumbersMap[exp.order_id];
-                sourceLabel = orderInfo ? `📦 ${orderInfo.request_number}` : '📦 Заявка';
+                sourceLabel = orderInfo ? orderInfo.request_number : '—';
                 supplier = orderInfo?.supplier || '—';
             }
 
             if (expItems.length > 0) {
-                // Одна операция = много позиций
                 expItems.forEach(it => {
                     items.push({
                         _source: exp.source === 'order' ? 'order_employee' : 'expense',
@@ -156,7 +181,6 @@ export async function loadRegistry() {
                     });
                 });
             } else {
-                // Операция без items (старые данные) — одна строка
                 items.push({
                     _source: exp.source === 'order' ? 'order_employee' : 'expense',
                     _orderNumber: sourceLabel,
@@ -199,7 +223,6 @@ export async function loadRegistry() {
 // =====================================================================
 
 function renderRegistryFilters() {
-    // Проекты
     const projects = [...new Set(registryCache.map(i => i.project))].filter(Boolean).sort();
     const projectsSel = document.getElementById('reg-filter-project');
     if (projectsSel) {
@@ -209,7 +232,6 @@ function renderRegistryFilters() {
         projectsSel.value = current;
     }
 
-    // Разделы
     const sections = [...new Set(registryCache.map(i => i.section))].filter(Boolean).sort();
     const sectionsSel = document.getElementById('reg-filter-section');
     if (sectionsSel) {
@@ -219,7 +241,6 @@ function renderRegistryFilters() {
         sectionsSel.value = current;
     }
 
-    // Сотрудники
     const employees = [...new Set(registryCache.map(i => i.employee))].filter(Boolean).sort();
     const empSel = document.getElementById('reg-filter-employee');
     if (empSel) {
@@ -285,7 +306,6 @@ export function renderRegistry() {
 
     const data = getFilteredData();
 
-    // Сводка
     const totalSum = data.reduce((sum, i) => sum + (Number(i.sum) || 0), 0);
     const countEl = document.getElementById('registry-count');
     const sumEl = document.getElementById('registry-total-sum');
@@ -295,7 +315,7 @@ export function renderRegistry() {
     if (data.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="10" class="text-center text-gray-400 py-6 text-sm">
+                <td colspan="11" class="text-center text-gray-400 py-6 text-sm">
                     Нет данных в реестре
                 </td>
             </tr>
@@ -309,7 +329,6 @@ export function renderRegistry() {
 function renderRegistryRow(item) {
     const dateStr = formatDate(item.date);
 
-    // Источник
     let sourceBadge = '';
     if (item._source === 'order') {
         sourceBadge = `<span class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold" title="Заявка (оплата фирмой)">📦 Заявка</span>`;
@@ -319,7 +338,6 @@ function renderRegistryRow(item) {
         sourceBadge = `<span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold" title="Прямой расход">💰 Расход</span>`;
     }
 
-    // Категория
     const categoryLabels = {
         'materials': '📦 Материалы',
         'works': '🛠 Работы',
@@ -328,13 +346,12 @@ function renderRegistryRow(item) {
     };
     const categoryLabel = categoryLabels[item.category] || item.category || '—';
 
-    // Оплата
     const paymentBadge = item.payment === 'debt'
         ? `<span class="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold text-[10px]">В долг</span>`
         : `<span class="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-bold text-[10px]">Оплачено</span>`;
 
     return `
-        <tr class="hover:bg-emerald-50/60 cursor-pointer transition border-b">
+        <tr class="hover:bg-emerald-50/60 transition border-b">
             <td class="p-2.5 whitespace-nowrap text-xs">${dateStr}</td>
             <td class="p-2.5 whitespace-nowrap text-xs">${sourceBadge}<div class="text-[10px] text-gray-500 mt-0.5">${escapeHtml(item._orderNumber)}</div></td>
             <td class="p-2.5 text-xs font-semibold text-gray-900">${escapeHtml(item.name)}</td>
@@ -401,8 +418,7 @@ export function exportRegistryToExcel() {
 // =====================================================================
 
 export function updateRegistryBadge() {
-    // Пока не используем бейдж для реестра (в шапке нет)
-    // Можно добавить позже
+    // Пока не используем
 }
 
 // =====================================================================
