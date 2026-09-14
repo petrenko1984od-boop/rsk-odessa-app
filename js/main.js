@@ -127,20 +127,24 @@ window.switchTab = switchTab;
 // =====================================================================
 
 function applyPermissionsToUI() {
-    // Сотрудники — только если есть право
+    // Сотрудники
     const employeesBtn = document.getElementById('btn-employees');
     if (employeesBtn) {
         employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
     }
-// Реестр — только с правом view_registry                       // 
-    const registryBtn = document.getElementById('btn-registry');    // 
-    if (registryBtn) {                                              // 
-        if (canSeeTab('registry')) {                                // 
-            registryBtn.style.display = '';                         // 
-        } else {                                                    // 
-            registryBtn.style.display = 'none';                     // 
-        }                                                           // 
-    }                                                               // 
+
+    // Снабжение — только Админ + Снабженец
+    const ordersBtn = document.getElementById('btn-orders');
+    if (ordersBtn) {
+        ordersBtn.style.display = canSeeTab('orders') ? '' : 'none';
+    }
+
+    // Реестр
+    const registryBtn = document.getElementById('btn-registry');
+    if (registryBtn) {
+        registryBtn.style.display = canSeeTab('registry') ? '' : 'none';
+    }
+
     // Заявки финансов — только для кассиров
     const cashReqBtn = document.getElementById('btn-cash-requests');
     if (cashReqBtn) {
@@ -148,7 +152,6 @@ function applyPermissionsToUI() {
         const isCashier = role === 'Администратор' 
                        || role === 'Директор' 
                        || role === 'Главный инженер';
-
         if (isCashier) {
             cashReqBtn.classList.remove('hidden');
             cashReqBtn.style.display = '';

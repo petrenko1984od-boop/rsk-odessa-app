@@ -38,8 +38,9 @@ const ROLE_PERMISSIONS = {
         'add_project',
         'edit_project',
         'delete_project',
-        // Реестр
-        'view_registry'
+        // Вкладки
+        'view_registry',
+        'view_orders_tab'            // ← Снабжение
     ],
     'Директор': [
         'view_employees',
@@ -50,6 +51,7 @@ const ROLE_PERMISSIONS = {
         'cash_view_all',
         'view_projects_all',
         'view_registry'
+        // view_orders_tab — НЕТ
     ],
     'Главный инженер': [
         'view_employees',
@@ -60,6 +62,7 @@ const ROLE_PERMISSIONS = {
         'cash_view_all',
         'view_projects_all',
         'view_registry'
+        // view_orders_tab — НЕТ
     ],
     'Снабженец': [
         'view_employees',
@@ -67,7 +70,8 @@ const ROLE_PERMISSIONS = {
         'cash_expense_self',
         'cash_return_self',
         'view_projects_all',
-        'view_registry'
+        'view_registry',
+        'view_orders_tab'            // ← Снабжение
     ],
     'Инженер ПТО': [
         'view_employees',
@@ -76,12 +80,14 @@ const ROLE_PERMISSIONS = {
         'cash_return_self',
         'view_projects_all',
         'view_registry'
+        // view_orders_tab — НЕТ
     ],
     'Прораб': [
-        // Не видит сотрудников, реестр
+        // Только своё
         'cash_expense_self',
         'cash_return_self',
         'view_projects_own'
+        // view_registry, view_orders_tab — НЕТ
     ]
 };
 
@@ -92,8 +98,8 @@ const ROLE_PERMISSIONS = {
 const TAB_REQUIREMENTS = {
     'projects':      null,                   // Видна всем
     'employees':     'view_tab_employees',   // Только по праву
-    'orders':        null,                   // Видна всем
-    'cash-requests': null,                   // Видна всем (кнопка отдельно для кассиров в main.js)
+    'orders':        'view_orders_tab',      // Только Админ + Снабженец
+    'cash-requests': null,                   // Кнопка скрывается отдельно в main.js
     'registry':      'view_registry',        // Только по праву
     'new-order':     null                    // Видна всем
 };
