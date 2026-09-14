@@ -20,37 +20,36 @@ import {
 import {
     can, requirePermission, getEmployee, isAdmin
 } from '../permissions.js';
-import { renderEstimateUI, renderSectionsUI } from './estimate.js';
+import {
+    renderEstimateUI,
+    renderSectionsUI,
+    loadSections
+} from './estimate.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
 
-let projectsCache = [];        // Загруженные объекты
-let employeesCache = [];       // Все сотрудники (для выбора прораба)
-let currentActiveProjId = null; // Открытая карточка объекта
+let projectsCache = [];
+let employeesCache = [];
+let currentActiveProjId = null;
+let currentSectionsCache = [];   // Кэш разделов открытого объекта
 
 // =====================================================================
 // ЗАГРУЗКА
 // =====================================================================
 
-/**
- * Загрузка объектов с учётом прав.
- */
 export async function loadProjects() {
     log.info('Загрузка объектов...');
 
-    // Определяем фильтр по правам
     let filters = null;
 
     if (!can('view_projects_all')) {
-        // Прораб — только свои объекты
         const emp = getEmployee();
         if (emp) {
             filters = { foreman_id: emp.id };
             log.info(`Фильтр: только объекты прораба #${emp.id}`);
         } else {
-            // Пользователь без привязки — ничего не показываем
             projectsCache = [];
             renderProjects();
             updateProjectsBadge();
@@ -81,9 +80,6 @@ export async function loadProjects() {
     updateProjectsBadge();
 }
 
-/**
- * Загрузка списка активных сотрудников для выбора прораба.
- */
 async function loadActiveEmployees() {
     const { data, error } = await db.select('employees', {
         filters: { status: 'active' },
@@ -100,14 +96,13 @@ async function loadActiveEmployees() {
 }
 
 // =====================================================================
-// РЕНДЕР СПИСКА
+// СПИСОК ОБЪЕКТОВ
 // =====================================================================
 
 export function renderProjects() {
     const container = document.getElementById('projects-container');
     if (!container) return;
 
-    // Кнопка «Добавить объект» — только Администратору
     const addBtn = document.getElementById('add-project-btn');
     if (addBtn) {
         addBtn.style.display = can('add_project') ? '' : 'none';
@@ -135,7 +130,6 @@ function renderProjectCard(project) {
     const foremanPhone = foreman?.phone || '';
     const foremanBlocked = foreman?.status === 'blocked';
 
-    // Индикатор сметы
     const hasEstimate = !!project.estimate_file_path;
     const estimateLabel = hasEstimate
         ? `<span class="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">📊 Смета загружена</span>`
@@ -179,20 +173,23 @@ export async function openProjectDetail(id) {
 
     currentActiveProjId = id;
 
-    // Заголовок
     const titleEl = document.getElementById('card-proj-title');
     if (titleEl) titleEl.textContent = `🏗 ${project.name}`;
 
-    // Информация о прорабе
+    // Загружаем разделы (для финансовых показателей)
+    const { data: sections } = await loadSections(project.id);
+    currentSectionsCache = sections || [];
+
+    // Отрисовываем общую информацию
     renderProjectInfo(project);
 
-    // Отрисовываем вкладку «Файлы» (загрузка/просмотр сметы)
+    // Отрисовываем вкладку «Файлы»
     renderEstimateUI(project);
 
-    // Загружаем разделы для план-факта
+    // Отрисовываем «План-факт»
     await renderSectionsUI(project);
 
-    // Кнопка удаления (только для Администратора)
+    // Кнопка удаления
     const deleteBtn = document.getElementById('card-proj-delete-btn');
     if (deleteBtn) {
         if (can('delete_project')) {
@@ -203,17 +200,16 @@ export async function openProjectDetail(id) {
         }
     }
 
-    // Открываем карточку объекта
-    const appContainer = document.getElementById('tab-project-detail');
-    if (appContainer) {
+    // Показываем карточку
+    const detailEl = document.getElementById('tab-project-detail');
+    if (detailEl) {
         ['welcome', 'projects', 'employees', 'orders', 'registry', 'new-order'].forEach(t => {
             const el = document.getElementById(`tab-${t}`);
             if (el) el.classList.add('hidden');
         });
-        appContainer.classList.remove('hidden');
+        detailEl.classList.remove('hidden');
     }
 
-    // Открываем первую подвкладку
     switchProjectSubTab('info');
 }
 
@@ -226,9 +222,22 @@ function renderProjectInfo(project) {
     const foremanPhone = foreman?.phone || '';
     const foremanPosition = foreman?.position || '—';
 
+    // Считаем финансовые показатели из разделов
+    let totalWorks = 0;
+    let totalMaterials = 0;
+    let totalAll = 0;
+
+    currentSectionsCache.forEach(s => {
+        totalWorks += Number(s.plan_works) || 0;
+        totalMaterials += Number(s.plan_materials) || 0;
+        totalAll += Number(s.plan_total) || 0;
+    });
+
+    const hasSections = currentSectionsCache.length > 0;
+
     container.innerHTML = `
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <!-- Левая колонка: прораб -->
+            <!-- Прораб -->
             <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
                 <h5 class="text-[#15803d] font-bold mb-3 flex items-center text-sm">
                     <span class="mr-2 text-base">👨‍💼</span> Материально ответственное лицо
@@ -241,21 +250,25 @@ function renderProjectInfo(project) {
                 </p>
             </div>
 
-            <!-- Правая колонка: финансы -->
+            <!-- Финансы -->
             <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
                 <div class="rounded-lg border border-emerald-200 text-xs overflow-hidden">
                     <div class="bg-emerald-600 text-white font-bold px-3 py-2 flex justify-between items-center">
                         <span>📊 Финансовые показатели</span>
-                        <span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]" id="tbl-smeta-total-badge">Смета: 0 грн</span>
+                        <span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">${hasSections ? 'Смета загружена' : 'Смета: 0 грн'}</span>
                     </div>
                     <div class="divide-y divide-emerald-100 bg-emerald-50/50">
                         <div class="flex justify-between items-center px-3 py-2">
-                            <span class="text-gray-600 font-medium">🛠 Работы (План / Факт):</span>
-                            <span class="font-bold text-gray-800" id="tbl-works-val">0 / 0 грн</span>
+                            <span class="text-gray-600 font-medium">🛠 Работы:</span>
+                            <span class="font-bold text-gray-800">${formatMoney(totalWorks)}</span>
                         </div>
                         <div class="flex justify-between items-center px-3 py-2">
-                            <span class="text-gray-600 font-medium">📦 Материалы (План / Факт):</span>
-                            <span class="font-bold text-gray-800" id="tbl-materials-val">0 / 0 грн</span>
+                            <span class="text-gray-600 font-medium">📦 Материалы:</span>
+                            <span class="font-bold text-gray-800">${formatMoney(totalMaterials)}</span>
+                        </div>
+                        <div class="flex justify-between items-center px-3 py-2 bg-emerald-100">
+                            <span class="text-emerald-800 font-bold">💰 Итого:</span>
+                            <span class="font-bold text-[#166534]">${formatMoney(totalAll)}</span>
                         </div>
                     </div>
                 </div>
@@ -265,7 +278,7 @@ function renderProjectInfo(project) {
 }
 
 // =====================================================================
-// ПОДВКЛАДКИ ВНУТРИ КАРТОЧКИ ОБЪЕКТА
+// ПОДВКЛАДКИ
 // =====================================================================
 
 export function switchProjectSubTab(subId) {
@@ -287,13 +300,12 @@ export function switchProjectSubTab(subId) {
 }
 
 // =====================================================================
-// СОЗДАНИЕ ОБЪЕКТА
+// СОЗДАНИЕ
 // =====================================================================
 
 export async function openAddProjectModal() {
     if (!requirePermission('add_project')) return;
 
-    // Загружаем активных сотрудников
     const employees = await loadActiveEmployees();
 
     if (employees.length === 0) {
@@ -301,7 +313,6 @@ export async function openAddProjectModal() {
         return;
     }
 
-    // Заполняем dropdown
     const foremanSelect = document.getElementById('new-proj-foreman');
     if (foremanSelect) {
         foremanSelect.innerHTML = employees
@@ -309,7 +320,6 @@ export async function openAddProjectModal() {
             .join('');
     }
 
-    // Сбрасываем форму
     document.getElementById('new-proj-name').value = '';
     showModal('project-modal');
 }
@@ -371,7 +381,6 @@ async function confirmDeleteProject(id, name) {
 
     toast('Объект удалён', 'success');
 
-    // Возвращаемся к списку объектов
     if (window.switchTab) window.switchTab('projects');
     await loadProjects();
 }
@@ -386,11 +395,15 @@ export function updateProjectsBadge() {
 }
 
 // =====================================================================
-// ПОЛУЧИТЬ ТЕКУЩИЙ ОБЪЕКТ (для estimate.js)
+// ЭКСПОРТ ДЛЯ ДРУГИХ МОДУЛЕЙ
 // =====================================================================
 
 export function getCurrentProject() {
     return projectsCache.find(p => p.id === currentActiveProjId) || null;
+}
+
+export function getSectionsCache() {
+    return currentSectionsCache;
 }
 
 // =====================================================================

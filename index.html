@@ -11,14 +11,11 @@
 </head>
 <body class="bg-gray-100 font-sans min-h-screen">
 
-    <!-- ============================================================
-         ЭКРАН АВТОРИЗАЦИИ / РЕГИСТРАЦИИ
-         ============================================================ -->
+    <!-- ЭКРАН АВТОРИЗАЦИИ / РЕГИСТРАЦИИ -->
     <div id="auth-screen" class="fixed inset-0 bg-gray-900 flex items-center justify-center z-[100] p-4">
         <div class="bg-white rounded-xl shadow-2xl p-8 max-w-sm w-full">
             <div class="text-center mb-6">
-                <img src="./logo.png" alt="RSK Odessa" 
-                     class="h-20 mx-auto object-contain"
+                <img src="./logo.png" alt="RSK Odessa" class="h-20 mx-auto object-contain"
                      onerror="this.outerHTML='<div class=\'bg-[#15803d] w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl font-bold shadow-lg\'>R</div>'">
                 <h2 class="text-xl font-bold text-gray-800 mt-4">RSK Odessa</h2>
                 <p class="text-xs text-gray-500 mt-1">Управление строительством</p>
@@ -26,82 +23,55 @@
 
             <div class="flex bg-gray-100 rounded-lg p-1 mb-4">
                 <button type="button" onclick="switchAuthTab('login')" id="auth-tab-login"
-                        class="flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow">
-                    Войти
-                </button>
+                        class="flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow">Войти</button>
                 <button type="button" onclick="switchAuthTab('register')" id="auth-tab-register"
-                        class="flex-1 py-2 text-sm font-semibold rounded-md transition text-gray-600 hover:text-gray-800">
-                    Регистрация
-                </button>
+                        class="flex-1 py-2 text-sm font-semibold rounded-md transition text-gray-600 hover:text-gray-800">Регистрация</button>
             </div>
 
             <form id="login-form" class="space-y-3">
-                <input type="email" id="login-email" placeholder="Email" required autocomplete="email"
+                <input type="email" id="login-email" placeholder="Email" required
                        class="w-full border rounded-lg p-3 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                <input type="password" id="login-password" placeholder="Пароль" required autocomplete="current-password"
+                <input type="password" id="login-password" placeholder="Пароль" required
                        class="w-full border rounded-lg p-3 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 <button type="submit" id="login-btn"
-                        class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-3 rounded-lg text-sm transition">
-                    Войти
-                </button>
+                        class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-3 rounded-lg text-sm transition">Войти</button>
             </form>
 
             <form id="register-form" class="space-y-3 hidden">
-                <input type="email" id="register-email" placeholder="Email" required autocomplete="email"
+                <input type="email" id="register-email" placeholder="Email" required
                        class="w-full border rounded-lg p-3 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                <input type="password" id="register-password" placeholder="Пароль (минимум 6 символов)" required minlength="6" autocomplete="new-password"
+                <input type="password" id="register-password" placeholder="Пароль (минимум 6 символов)" required minlength="6"
                        class="w-full border rounded-lg p-3 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                <input type="password" id="register-password2" placeholder="Повторите пароль" required minlength="6" autocomplete="new-password"
+                <input type="password" id="register-password2" placeholder="Повторите пароль" required minlength="6"
                        class="w-full border rounded-lg p-3 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 <button type="submit" id="register-btn"
-                        class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-3 rounded-lg text-sm transition">
-                    Зарегистрироваться
-                </button>
-                <p class="text-[11px] text-gray-500 text-center">
-                    После регистрации обратитесь к администратору для получения доступа.
-                </p>
+                        class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-3 rounded-lg text-sm transition">Зарегистрироваться</button>
+                <p class="text-[11px] text-gray-500 text-center">После регистрации обратитесь к администратору.</p>
             </form>
 
             <p id="login-error" class="text-red-500 text-xs mt-3 text-center hidden"></p>
         </div>
     </div>
 
-    <!-- ============================================================
-         ЭКРАН «ДОСТУП НЕ АКТИВИРОВАН»
-         ============================================================ -->
+    <!-- ЭКРАН «ДОСТУП НЕ АКТИВИРОВАН» -->
     <div id="pending-screen" class="fixed inset-0 bg-gray-900 flex items-center justify-center z-[100] p-4 hidden">
         <div class="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full text-center space-y-4">
             <div class="bg-amber-100 w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-3xl">🔒</div>
             <h2 class="text-xl font-bold text-gray-800">Доступ не активирован</h2>
-            <p class="text-sm text-gray-600">
-                Ваш аккаунт создан, но пока не привязан к сотруднику компании.
-            </p>
+            <p class="text-sm text-gray-600">Ваш аккаунт создан, но пока не привязан к сотруднику компании.</p>
             <div class="bg-gray-50 p-3 rounded-lg border text-xs">
                 <p class="text-gray-500">Email аккаунта:</p>
                 <p class="font-semibold text-gray-800 break-all" id="pending-email">—</p>
             </div>
-            <p class="text-xs text-gray-500">
-                Обратитесь к администратору, чтобы он привязал ваш аккаунт. 
-                После этого нажмите «Обновить».
-            </p>
             <div class="flex gap-2 pt-2">
-                <button onclick="location.reload()" 
-                        class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">
-                    🔄 Обновить
-                </button>
-                <button onclick="logout()" 
-                        class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">
-                    🚪 Выйти
-                </button>
+                <button onclick="location.reload()" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">🔄 Обновить</button>
+                <button onclick="logout()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">🚪 Выйти</button>
             </div>
         </div>
     </div>
 
-    <!-- ============================================================
-         ОСНОВНОЕ ПРИЛОЖЕНИЕ
-         ============================================================ -->
+    <!-- ОСНОВНОЕ ПРИЛОЖЕНИЕ -->
     <div id="app-container" class="hidden">
-
         <header class="bg-[#15803d] text-white shadow-md border-b-4 border-[#16a34a]">
             <div class="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
                 <div class="flex items-center gap-3">
@@ -126,9 +96,7 @@
                                 class="flex items-center gap-2 px-2 py-1.5 bg-[#16a34a] hover:bg-[#166534] rounded-lg text-xs sm:text-sm font-semibold transition shadow text-white">
                             <span id="profile-avatar" class="w-7 h-7 rounded-full bg-white text-[#15803d] flex items-center justify-center font-bold text-xs">?</span>
                             <span id="profile-name-short" class="hidden sm:inline max-w-[80px] truncate">Кабинет</span>
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                            </svg>
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                         </button>
 
                         <div id="profile-menu" class="hidden absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden">
@@ -140,15 +108,9 @@
                                     <span class="text-gray-500 font-bold text-sm ml-1">⚪ 0,00 грн</span>
                                 </div>
                             </div>
-                            <button onclick="openMyCard()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">
-                                👤 <span>Карточка сотрудника</span>
-                            </button>
-                            <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">
-                                💰 <span>Финансовый отчёт</span>
-                            </button>
-                            <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">
-                                🚪 <span>Выйти</span>
-                            </button>
+                            <button onclick="openMyCard()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">👤 <span>Карточка сотрудника</span></button>
+                            <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Финансовый отчёт</span></button>
+                            <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
                         </div>
                     </div>
                 </div>
@@ -156,10 +118,6 @@
         </header>
 
         <main class="max-w-6xl mx-auto p-4 mt-2">
-
-            <!-- ==================================================
-                 ВКЛАДКА: ПРИВЕТСТВИЕ
-                 ================================================== -->
             <section id="tab-welcome" class="space-y-4">
                 <div class="bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                     <div class="text-5xl">🚧</div>
@@ -168,9 +126,6 @@
                 </div>
             </section>
 
-            <!-- ==================================================
-                 ВКЛАДКА: ОБЪЕКТЫ (список)
-                 ================================================== -->
             <section id="tab-projects" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
                     <div>
@@ -182,14 +137,9 @@
                 <div id="projects-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </section>
 
-            <!-- ==================================================
-                 ЭКРАН: КАРТОЧКА ОБЪЕКТА
-                 ================================================== -->
             <section id="tab-project-detail" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
-                    <button onclick="switchTab('projects')" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1">
-                        ← Назад к списку объектов
-                    </button>
+                    <button onclick="switchTab('projects')" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition">← Назад к списку объектов</button>
                     <button id="card-proj-delete-btn" class="text-red-500 hover:text-red-700 text-xs font-semibold">🗑 Удалить объект</button>
                 </div>
 
@@ -198,7 +148,6 @@
                         <h2 class="text-xl font-bold text-[#166534]" id="card-proj-title">🏗 Название объекта</h2>
                     </div>
 
-                    <!-- 4 подвкладки внутри карточки -->
                     <div class="flex flex-wrap gap-2 border-b pb-4">
                         <button onclick="switchProjectSubTab('info')" id="subbtn-info" class="px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow">📌 Общая информация</button>
                         <button onclick="switchProjectSubTab('planfact')" id="subbtn-planfact" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📊 План-факт</button>
@@ -206,16 +155,9 @@
                         <button onclick="switchProjectSubTab('schedule')" id="subbtn-schedule" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📅 График</button>
                     </div>
 
-                    <!-- ПОДВКЛАДКА 1: Общая информация (заполняется JS) -->
                     <div id="proj-subtab-info" class="space-y-4"></div>
-
-                    <!-- ПОДВКЛАДКА 2: План-факт (заполняется JS) -->
                     <div id="proj-subtab-planfact" class="hidden space-y-4"></div>
-
-                    <!-- ПОДВКЛАДКА 3: Файлы (заполняется JS) -->
                     <div id="proj-subtab-files" class="hidden space-y-4"></div>
-
-                    <!-- ПОДВКЛАДКА 4: График (заглушка) -->
                     <div id="proj-subtab-schedule" class="hidden space-y-4">
                         <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
                             <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📅 График производства работ</h3>
@@ -225,9 +167,6 @@
                 </div>
             </section>
 
-            <!-- ==================================================
-                 ВКЛАДКА: СОТРУДНИКИ
-                 ================================================== -->
             <section id="tab-employees" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
                     <div>
@@ -239,9 +178,6 @@
                 <div id="employees-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </section>
 
-            <!-- ==================================================
-                 ЗАГЛУШКИ: Снабжение / Реестр / Новая заявка
-                 ================================================== -->
             <section id="tab-orders" class="hidden bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                 <div class="text-5xl">📦</div>
                 <h2 class="text-lg font-bold text-gray-800">Раздел «Снабжение»</h2>
@@ -259,13 +195,146 @@
                 <h2 class="text-lg font-bold text-gray-800">Новая заявка</h2>
                 <p class="text-sm text-gray-500">В разработке.</p>
             </section>
-
         </main>
     </div>
 
     <!-- ============================================================
-         МОДАЛКА: НОВЫЙ ОБЪЕКТ
+         МОДАЛКА: ВЫДАЧА ПОДОТЧЁТА
          ============================================================ -->
+    <div id="cash-issue-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" id="cash-issue-title">💵 Выдать подотчёт</h3>
+                <button onclick="hideModal('cash-issue-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="cash-issue-form" class="space-y-3">
+                <input type="hidden" id="cash-issue-employee-id">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Сумма, грн: *</label>
+                    <input type="number" step="0.01" id="cash-issue-amount" required placeholder="5000"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
+                    <input type="text" id="cash-issue-comment" placeholder="На закупку материалов"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💵 Выдать</button>
+                    <button type="button" onclick="hideModal('cash-issue-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         МОДАЛКА: РАСХОД
+         ============================================================ -->
+    <div id="cash-expense-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" id="cash-expense-title">🛒 Внести расход</h3>
+                <button onclick="hideModal('cash-expense-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="cash-expense-form" class="space-y-4">
+                <input type="hidden" id="cash-expense-employee-id">
+
+                <!-- Объект + Раздел + Категория -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Объект:</label>
+                        <select id="cash-expense-project" onchange="loadSectionsForExpense()"
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">— Выбери объект —</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы:</label>
+                        <select id="cash-expense-section"
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">Сначала выбери объект</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Категория: *</label>
+                        <select id="cash-expense-category" required
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="materials">📦 Материалы</option>
+                            <option value="works">🛠 Работы</option>
+                            <option value="delivery">🚚 Доставка</option>
+                            <option value="other">📋 Прочее</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Чек -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">📎 Чек / Накладная (фото):</label>
+                    <input type="file" id="cash-expense-receipt" accept="image/*,application/pdf"
+                           class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-[#15803d] hover:file:bg-emerald-100 cursor-pointer border rounded-lg bg-white">
+                </div>
+
+                <!-- Позиции -->
+                <div class="border-t border-b py-3 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">📦 Позиции расхода:</label>
+                        <button type="button" onclick="addExpenseItemRow()" 
+                                class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
+                    </div>
+                    <div id="cash-expense-items" class="space-y-2"></div>
+                </div>
+
+                <!-- Итого -->
+                <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
+                    <span class="text-xs font-bold text-gray-600 uppercase">Итого расход:</span>
+                    <span class="text-lg font-bold text-[#166534]" id="cash-expense-total">0,00 грн</span>
+                </div>
+
+                <!-- Комментарий -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
+                    <input type="text" id="cash-expense-comment" placeholder="Например: Закупка в Эпицентре"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить расход</button>
+                    <button type="button" onclick="hideModal('cash-expense-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         МОДАЛКА: ВОЗВРАТ
+         ============================================================ -->
+    <div id="cash-return-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" id="cash-return-title">↩️ Возврат в кассу</h3>
+                <button onclick="hideModal('cash-return-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="cash-return-form" class="space-y-3">
+                <input type="hidden" id="cash-return-employee-id">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Сумма, грн: *</label>
+                    <input type="number" step="0.01" id="cash-return-amount" required placeholder="1000"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
+                    <input type="text" id="cash-return-comment" placeholder="Возврат остатка"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">↩️ Вернуть</button>
+                    <button type="button" onclick="hideModal('cash-return-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- СУЩЕСТВУЮЩИЕ МОДАЛКИ (объект, сотрудник, блокировка, привязка, отчёт) -->
     <div id="project-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
@@ -275,7 +344,7 @@
             <form id="project-form" class="space-y-3">
                 <div>
                     <label class="block text-xs font-semibold text-gray-600 mb-1">Название объекта: *</label>
-                    <input type="text" id="new-proj-name" required placeholder="Например: Частный дом (Ивановка)"
+                    <input type="text" id="new-proj-name" required placeholder="Например: Частный дом"
                            class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 </div>
                 <div>
@@ -290,9 +359,6 @@
         </div>
     </div>
 
-    <!-- ============================================================
-         МОДАЛКА: ДОБАВЛЕНИЕ СОТРУДНИКА
-         ============================================================ -->
     <div id="employee-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
@@ -315,7 +381,7 @@
                            class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Заметки (необязательно):</label>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Заметки:</label>
                     <textarea id="emp-notes" placeholder="Паспортные данные, примечания..."
                               class="w-full border rounded-lg p-2.5 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d] h-20"></textarea>
                 </div>
@@ -327,11 +393,8 @@
         </div>
     </div>
 
-    <!-- ============================================================
-         МОДАЛКА: КАРТОЧКА СОТРУДНИКА
-         ============================================================ -->
     <div id="employee-card-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">👤 Карточка сотрудника</h3>
                 <button onclick="hideModal('employee-card-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
@@ -344,9 +407,6 @@
         </div>
     </div>
 
-    <!-- ============================================================
-         МОДАЛКА: БЛОКИРОВКА СОТРУДНИКА
-         ============================================================ -->
     <div id="deactivate-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
@@ -356,12 +416,12 @@
             <form id="deactivate-form" class="space-y-3">
                 <input type="hidden" id="deactivate-emp-id">
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Причина (необязательно):</label>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Причина:</label>
                     <textarea id="deactivate-reason" placeholder="Отпуск / Увольнение / ..."
                               class="w-full border rounded-lg p-2.5 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d] h-20"></textarea>
                 </div>
                 <p class="text-xs text-gray-500 bg-amber-50 p-2.5 rounded-lg border border-amber-200">
-                    ⚠️ Сотрудник потеряет доступ к приложению. Его объекты, заявки и задачи <b>сохранятся</b>.
+                    ⚠️ Сотрудник потеряет доступ к приложению. Данные сохранятся.
                 </p>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">🚫 Заблокировать</button>
@@ -371,9 +431,6 @@
         </div>
     </div>
 
-    <!-- ============================================================
-         МОДАЛКА: ПРИВЯЗКА АККАУНТА
-         ============================================================ -->
     <div id="link-user-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
@@ -387,9 +444,6 @@
         </div>
     </div>
 
-    <!-- ============================================================
-         МОДАЛКА: ФИНАНСОВЫЙ ОТЧЁТ (операции подотчёта)
-         ============================================================ -->
     <div id="my-operations-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">

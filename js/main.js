@@ -22,7 +22,12 @@ import {
     saveNewProject
 } from './modules/projects.js';
 
-import { renderProfileBalance } from './modules/cash.js';
+import {
+    renderProfileBalance,
+    saveIssue,
+    saveExpense,
+    saveReturn
+} from './modules/cash.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -43,24 +48,19 @@ const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'orders'
 const TAB_BUTTONS = ['projects', 'employees', 'orders', 'registry', 'new-order'];
 
 export function switchTab(tabId) {
-    // Проверка прав: пропускаем 'welcome' и 'project-detail' (они открываются только изнутри)
     if (!canSeeTab(tabId) && tabId !== 'welcome' && tabId !== 'project-detail') {
         toast('Недостаточно прав для этого раздела', 'error');
         return;
     }
 
-    // Скрываем все вкладки
     ALL_TABS.forEach(t => {
         const el = document.getElementById(`tab-${t}`);
         if (el) el.classList.add('hidden');
     });
 
-    // Показываем нужную
     const target = document.getElementById(`tab-${tabId}`);
     if (target) target.classList.remove('hidden');
 
-    // Подсветка активной кнопки
-    // При открытии карточки объекта — подсвечиваем кнопку «Объекты»
     const highlightTab = tabId === 'project-detail' ? 'projects' : tabId;
 
     TAB_BUTTONS.forEach(t => {
@@ -77,13 +77,8 @@ export function switchTab(tabId) {
 
     AppState.currentTab = tabId;
 
-    // Триггеры загрузки данных
-    if (tabId === 'projects') {
-        loadProjects();
-    }
-    if (tabId === 'employees') {
-        loadEmployees();
-    }
+    if (tabId === 'projects') loadProjects();
+    if (tabId === 'employees') loadEmployees();
 }
 
 window.switchTab = switchTab;
@@ -93,7 +88,6 @@ window.switchTab = switchTab;
 // =====================================================================
 
 function applyPermissionsToUI() {
-    // Вкладка «Сотрудники» — только если есть право
     const employeesBtn = document.getElementById('btn-employees');
     if (employeesBtn) {
         employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
@@ -101,7 +95,7 @@ function applyPermissionsToUI() {
 }
 
 // =====================================================================
-// ПРОФИЛЬ В ШАПКЕ
+// ПРОФИЛЬ
 // =====================================================================
 
 export function toggleProfileMenu() {
@@ -114,7 +108,6 @@ window.toggleProfileMenu = toggleProfileMenu;
 
 export function openMyCard() {
     const emp = getEmployee();
-
     if (!emp) {
         toast('Ваш аккаунт не привязан к сотруднику', 'warning');
         return;
@@ -140,9 +133,7 @@ function renderProfile() {
     if (avatarEl) avatarEl.textContent = initials;
 
     const nameShortEl = document.getElementById('profile-name-short');
-    if (nameShortEl) {
-        nameShortEl.textContent = 'Кабинет';
-    }
+    if (nameShortEl) nameShortEl.textContent = 'Кабинет';
 
     const nameEl = document.getElementById('profile-name');
     if (nameEl) nameEl.textContent = emp.name || '—';
@@ -150,12 +141,11 @@ function renderProfile() {
     const posEl = document.getElementById('profile-position');
     if (posEl) posEl.textContent = emp.position || '—';
 
-    // Баланс (асинхронно)
     renderProfileBalance().catch(err => log.error('Ошибка баланса:', err));
 }
 
 // =====================================================================
-// ЗАКРЫТИЕ DROPDOWN ПРИ КЛИКЕ ВНЕ
+// КЛИК ВНЕ DROPDOWN
 // =====================================================================
 
 document.addEventListener('click', (e) => {
@@ -185,12 +175,10 @@ async function startApp(user) {
 
     toast(`Добро пожаловать, ${user?.email || 'гость'}!`, 'success');
 
-    // Права доступа
     await loadPermissions();
     applyPermissionsToUI();
     renderProfile();
 
-    // Загружаем данные параллельно
     try {
         await Promise.all([
             loadEmployees(),
@@ -217,21 +205,30 @@ function stopApp() {
 }
 
 // =====================================================================
-// ОБРАБОТЧИКИ ФОРМ
+// ФОРМЫ
 // =====================================================================
 
 function bindForms() {
-    // Форма добавления сотрудника
+    // Сотрудники
     const empForm = document.getElementById('employee-form');
     if (empForm) empForm.addEventListener('submit', saveNewEmployee);
 
-    // Форма блокировки
     const deactForm = document.getElementById('deactivate-form');
     if (deactForm) deactForm.addEventListener('submit', confirmDeactivate);
 
-    // Форма создания объекта
+    // Объекты
     const projForm = document.getElementById('project-form');
     if (projForm) projForm.addEventListener('submit', saveNewProject);
+
+    // Подотчёт
+    const issueForm = document.getElementById('cash-issue-form');
+    if (issueForm) issueForm.addEventListener('submit', saveIssue);
+
+    const expenseForm = document.getElementById('cash-expense-form');
+    if (expenseForm) expenseForm.addEventListener('submit', saveExpense);
+
+    const returnForm = document.getElementById('cash-return-form');
+    if (returnForm) returnForm.addEventListener('submit', saveReturn);
 }
 
 // =====================================================================

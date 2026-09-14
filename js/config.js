@@ -12,8 +12,9 @@ export const CONFIG = {
 
     // ----- STORAGE (бакеты для файлов) -----
     STORAGE: {
-        ESTIMATES_BUCKET: 'estimates',
-        TASK_PHOTOS_BUCKET: 'task-photos'
+        ESTIMATES_BUCKET: 'estimates',      // Excel-файлы смет
+        TASK_PHOTOS_BUCKET: 'task-photos',  // Фотографии задач
+        RECEIPTS_BUCKET: 'receipts'         // Фото чеков / накладных
     },
 
     // ----- ПРИЛОЖЕНИЕ -----
@@ -34,33 +35,56 @@ export const CONFIG = {
     ],
 
     UNITS: [
-        { value: 'шт', label: 'шт' },
-        { value: 'м', label: 'м' },
-        { value: 'кг', label: 'кг' },
-        { value: 'т', label: 'т' },
-        { value: 'м²', label: 'м²' },
-        { value: 'м³', label: 'м³' },
-        { value: 'уп', label: 'уп' },
-        { value: 'л', label: 'л' }
+        { value: 'шт',  label: 'шт' },
+        { value: 'м',   label: 'м' },
+        { value: 'кг',  label: 'кг' },
+        { value: 'т',   label: 'т' },
+        { value: 'м²',  label: 'м²' },
+        { value: 'м³',  label: 'м³' },
+        { value: 'уп',  label: 'уп' },
+        { value: 'л',   label: 'л' },
+        { value: 'меш', label: 'меш' }
     ],
 
     PRIORITIES: [
-        { value: 'urgent', label: '⚡ Срочно' },
+        { value: 'urgent',    label: '⚡ Срочно' },
         { value: 'important', label: '⭐ Важный' },
-        { value: 'normal', label: 'Обычная' }
+        { value: 'normal',    label: 'Обычная' }
     ],
+
+    // ----- КАТЕГОРИИ РАСХОДОВ -----
+    EXPENSE_CATEGORIES: [
+        { value: 'materials', label: '📦 Материалы', icon: '📦' },
+        { value: 'works',     label: '🛠 Работы',    icon: '🛠' },
+        { value: 'delivery',  label: '🚚 Доставка',  icon: '🚚' },
+        { value: 'other',     label: '📋 Прочее',    icon: '📋' }
+    ],
+
+    // ----- ТИПЫ ОПЕРАЦИЙ ПОДОТЧЁТА -----
+    CASH_OPERATION_TYPES: {
+        ISSUE:      'issue',       // Выдача подотчёта (+)
+        EXPENSE:    'expense',     // Расход (−)
+        RETURN:     'return',      // Возврат в кассу (−)
+        ADJUSTMENT: 'adjustment'   // Корректировка (+)
+    },
 
     // ----- СТАТУСЫ -----
     ORDER_STATUS: {
-        NEW: 'new',
+        NEW:         'new',
         IN_PROGRESS: 'in_progress',
-        CLOSED: 'closed',
-        ARCHIVED: 'archived'
+        CLOSED:      'closed',
+        ARCHIVED:    'archived'
     },
 
     PAYMENT_STATUS: {
         PAID: 'paid',
         DEBT: 'debt'
+    },
+
+    EMPLOYEE_STATUS: {
+        ACTIVE:  'active',
+        BLOCKED: 'blocked',
+        FIRED:   'fired'
     },
 
     // ----- UI -----
