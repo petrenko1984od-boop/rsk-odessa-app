@@ -46,6 +46,21 @@ import {
 } from './modules/orders.js';
 
 import {
+    loadCashRequests,
+    switchCashRequestsTab,
+    openNewCashRequestForm,
+    loadSectionsForCashRequest,
+    addCashRequestItemRow,
+    removeCashRequestItemRow,
+    recalcCashRequestTotal,
+    saveNewCashRequest,
+    approveCashRequest,
+    rejectCashRequest,
+    issueCashRequest,
+    deleteCashRequest
+} from './modules/cash-requests.js';
+
+import {
     loadRegistry
 } from './modules/registry.js';
 
@@ -64,8 +79,8 @@ export const AppState = {
 // НАВИГАЦИЯ
 // =====================================================================
 
-const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'orders', 'registry', 'new-order'];
-const TAB_BUTTONS = ['projects', 'employees', 'orders', 'registry', 'new-order'];
+const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'orders', 'cash-requests', 'registry', 'new-order'];
+const TAB_BUTTONS = ['projects', 'employees', 'orders', 'cash-requests', 'registry', 'new-order'];
 
 export function switchTab(tabId) {
     if (!canSeeTab(tabId) && tabId !== 'welcome' && tabId !== 'project-detail') {
@@ -101,11 +116,8 @@ export function switchTab(tabId) {
     if (tabId === 'projects') loadProjects();
     if (tabId === 'employees') loadEmployees();
     if (tabId === 'orders') loadOrders();
+    if (tabId === 'cash-requests') loadCashRequests();
     if (tabId === 'registry') loadRegistry();
-    if (tabId === 'new-order') {
-        // Открываем модалку новой заявки, а саму вкладку оставляем с кнопкой
-        // Пользователь увидит кнопку «Создать заявку»
-    }
 }
 
 window.switchTab = switchTab;
@@ -115,9 +127,19 @@ window.switchTab = switchTab;
 // =====================================================================
 
 function applyPermissionsToUI() {
+    // Сотрудники — только если есть право
     const employeesBtn = document.getElementById('btn-employees');
     if (employeesBtn) {
         employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
+    }
+
+    // Заявки финансов в шапке — только для кассиров (роль проверит cash-requests.js)
+    // Кнопка скрывается/показывается в updateCashRequestsBadge() при загрузке
+    const cashReqBtn = document.getElementById('btn-cash-requests');
+    if (cashReqBtn) {
+        const role = getEmployee()?.position;
+        const isCashier = role === 'Администратор' || role === 'Директор' || role === 'Главный инженер';
+        cashReqBtn.style.display = isCashier ? '' : 'none';
     }
 }
 
@@ -147,6 +169,151 @@ export function openMyCard() {
 }
 
 window.openMyCard = openMyCard;
+
+/**
+ * Открыть модалку «Мои заявки» (объединённый список: материалы + финансы).
+ */
+export async function openMyRequests() {
+    const emp = getEmployee();
+    if (!emp) {
+        toast('Ваш аккаунт не привязан', 'warning');
+        return;
+    }
+
+    const menu = document.getElementById('profile-menu');
+    if (menu) menu.classList.add('hidden');
+
+    // По умолчанию — вкладка «Материалы»
+    await switchMyRequestsTab('materials');
+
+    const modal = document.getElementById('my-requests-modal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+window.openMyRequests = openMyRequests;
+
+window.closeMyRequests = () => {
+    document.getElementById('my-requests-modal')?.classList.add('hidden');
+};
+
+/**
+ * Переключение вкладок в «Моих заявках».
+ */
+export async function switchMyRequestsTab(tab) {
+    // Подсветка кнопок
+    const matBtn = document.getElementById('myreq-tab-materials');
+    const finBtn = document.getElementById('myreq-tab-finance');
+
+    if (tab === 'materials') {
+        if (matBtn) { matBtn.classList.add('bg-[#15803d]', 'text-white'); matBtn.classList.remove('bg-gray-100', 'text-gray-600', 'hover:bg-gray-200'); }
+        if (finBtn) { finBtn.classList.remove('bg-[#15803d]', 'text-white'); finBtn.classList.add('bg-gray-100', 'text-gray-600', 'hover:bg-gray-200'); }
+    } else {
+        if (finBtn) { finBtn.classList.add('bg-[#15803d]', 'text-white'); finBtn.classList.remove('bg-gray-100', 'text-gray-600', 'hover:bg-gray-200'); }
+        if (matBtn) { matBtn.classList.remove('bg-[#15803d]', 'text-white'); matBtn.classList.add('bg-gray-100', 'text-gray-600', 'hover:bg-gray-200'); }
+    }
+
+    const container = document.getElementById('my-requests-content');
+    if (!container) return;
+
+    container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Загрузка...</p>';
+
+    const emp = getEmployee();
+    if (!emp) return;
+
+    // Загружаем заявки автора
+    const { db } = await import('./database.js');
+    const { escapeHtml, formatDate, formatMoney } = await import('./utils.js');
+
+    if (tab === 'materials') {
+        // Заявки на материалы
+        const { data: orders } = await db.select('orders', {
+            filters: { created_by_employee_id: emp.id },
+            orderBy: { column: 'created_at', asc: false }
+        });
+
+        if (!orders || orders.length === 0) {
+            container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Заявок на материалы нет</p>';
+            return;
+        }
+
+        // Загружаем разделы и проекты
+        const { data: projects } = await db.select('projects');
+        const { data: sections } = await db.select('sections');
+        const projMap = {};
+        (projects || []).forEach(p => { projMap[p.id] = p.name; });
+        const secMap = {};
+        (sections || []).forEach(s => { secMap[s.id] = s.name; });
+
+        const statusLabels = {
+            'new':         { text: '🔴 Новая',      cls: 'bg-red-100 text-red-700' },
+            'in_progress': { text: '🟡 В работе',   cls: 'bg-yellow-100 text-yellow-800' },
+            'closed':      { text: '🟢 Закрыта',    cls: 'bg-green-100 text-green-700' },
+            'archived':    { text: '📥 Архив',      cls: 'bg-gray-200 text-gray-600' }
+        };
+
+        container.innerHTML = orders.map(o => {
+            const st = statusLabels[o.status] || { text: o.status, cls: 'bg-gray-100' };
+            return `
+                <div class="bg-white border rounded-lg p-3 text-xs space-y-1">
+                    <div class="flex justify-between items-start gap-2">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-bold text-[#15803d] font-mono">${escapeHtml(o.request_number)}</span>
+                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${st.cls}">${st.text}</span>
+                        </div>
+                        ${o.total_sum > 0 ? `<span class="font-bold text-[#166534]">${formatMoney(o.total_sum)}</span>` : ''}
+                    </div>
+                    <p class="text-gray-600">🏗 ${escapeHtml(projMap[o.project_id] || '—')} / ${escapeHtml(secMap[o.section_id] || '—')}</p>
+                    <p class="text-[10px] text-gray-400">📅 ${formatDate(o.created_at)}</p>
+                </div>
+            `;
+        }).join('');
+
+    } else {
+        // Заявки финансов
+        const { data: requests } = await db.select('cash_requests', {
+            filters: { employee_id: emp.id },
+            orderBy: { column: 'created_at', asc: false }
+        });
+
+        if (!requests || requests.length === 0) {
+            container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Заявок финансов нет</p>';
+            return;
+        }
+
+        const { data: projects } = await db.select('projects');
+        const { data: sections } = await db.select('sections');
+        const projMap = {};
+        (projects || []).forEach(p => { projMap[p.id] = p.name; });
+        const secMap = {};
+        (sections || []).forEach(s => { secMap[s.id] = s.name; });
+
+        const statusLabels = {
+            'pending':  { text: '🔴 Ожидает',   cls: 'bg-red-100 text-red-700' },
+            'approved': { text: '🟡 Одобрено',  cls: 'bg-yellow-100 text-yellow-800' },
+            'issued':   { text: '🟢 Выдано',    cls: 'bg-green-100 text-green-700' },
+            'rejected': { text: '❌ Отклонено', cls: 'bg-gray-200 text-gray-600' }
+        };
+
+        container.innerHTML = requests.map(r => {
+            const st = statusLabels[r.status] || { text: r.status, cls: 'bg-gray-100' };
+            return `
+                <div class="bg-white border rounded-lg p-3 text-xs space-y-1">
+                    <div class="flex justify-between items-start gap-2">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-bold text-[#15803d] font-mono">${escapeHtml(r.request_number)}</span>
+                            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${st.cls}">${st.text}</span>
+                        </div>
+                        <span class="font-bold text-[#166534]">${formatMoney(r.total_sum)}</span>
+                    </div>
+                    <p class="text-gray-600">🏗 ${escapeHtml(projMap[r.project_id] || '—')} / ${escapeHtml(secMap[r.section_id] || '—')}</p>
+                    <p class="text-[10px] text-gray-400">📅 ${formatDate(r.created_at)}</p>
+                </div>
+            `;
+        }).join('');
+    }
+}
+
+window.switchMyRequestsTab = switchMyRequestsTab;
 
 function renderProfile() {
     const emp = getEmployee();
@@ -202,7 +369,7 @@ async function startApp(user) {
 
     toast(`Добро пожаловать, ${user?.email || 'гость'}!`, 'success');
 
-    // Права доступа
+    // Права
     await loadPermissions();
     applyPermissionsToUI();
     renderProfile();
@@ -212,7 +379,8 @@ async function startApp(user) {
         await Promise.all([
             loadEmployees(),
             loadProjects(),
-            loadOrders()
+            loadOrders(),
+            loadCashRequests()
         ]);
     } catch (err) {
         log.error('Ошибка загрузки данных:', err);
@@ -257,12 +425,16 @@ function bindForms() {
     const returnForm = document.getElementById('cash-return-form');
     if (returnForm) returnForm.addEventListener('submit', saveReturn);
 
-    // Заявки
+    // Заявки на материалы
     const newOrderForm = document.getElementById('new-order-form');
     if (newOrderForm) newOrderForm.addEventListener('submit', saveNewOrder);
 
     const closeOrderForm = document.getElementById('close-order-form');
     if (closeOrderForm) closeOrderForm.addEventListener('submit', closeOrder);
+
+    // Заявки финансов
+    const newCashReqForm = document.getElementById('new-cashreq-form');
+    if (newCashReqForm) newCashReqForm.addEventListener('submit', saveNewCashRequest);
 }
 
 // =====================================================================
@@ -271,14 +443,6 @@ function bindForms() {
 
 window.showModal = (id) => document.getElementById(id)?.classList.remove('hidden');
 window.hideModal = (id) => document.getElementById(id)?.classList.add('hidden');
-
-// Глобальные функции для onclick в HTML
-window.openNewOrderForm = openNewOrderForm;
-window.switchOrdersTab = switchOrdersTab;
-window.takeOrderToWork = takeOrderToWork;
-window.openCloseOrderModal = openCloseOrderModal;
-window.archiveOrder = archiveOrder;
-window.deleteOrder = deleteOrder;
 
 // =====================================================================
 // BOOT
