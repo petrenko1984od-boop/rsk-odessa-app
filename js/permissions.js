@@ -15,11 +15,6 @@ let currentEmployee = null;
 // =====================================================================
 // МАТРИЦА ПРАВ ПО РОЛЯМ
 // =====================================================================
-// Логика подотчёта:
-//   - Расход/возврат — только за себя (cash_expense_self, cash_return_self)
-//   - Выдача подотчёта — кассиры (cash_issue)
-//   - Просмотр всех балансов — кассиры (cash_view_all)
-// =====================================================================
 
 const ROLE_PERMISSIONS = {
     'Администратор': [
@@ -42,7 +37,9 @@ const ROLE_PERMISSIONS = {
         'view_projects_all',
         'add_project',
         'edit_project',
-        'delete_project'
+        'delete_project',
+        // Реестр
+        'view_registry'
     ],
     'Директор': [
         'view_employees',
@@ -51,7 +48,8 @@ const ROLE_PERMISSIONS = {
         'cash_return_self',
         'cash_issue',
         'cash_view_all',
-        'view_projects_all'
+        'view_projects_all',
+        'view_registry'
     ],
     'Главный инженер': [
         'view_employees',
@@ -60,23 +58,27 @@ const ROLE_PERMISSIONS = {
         'cash_return_self',
         'cash_issue',
         'cash_view_all',
-        'view_projects_all'
+        'view_projects_all',
+        'view_registry'
     ],
     'Снабженец': [
         'view_employees',
         'view_tab_employees',
         'cash_expense_self',
         'cash_return_self',
-        'view_projects_all'
+        'view_projects_all',
+        'view_registry'
     ],
     'Инженер ПТО': [
         'view_employees',
         'view_tab_employees',
         'cash_expense_self',
         'cash_return_self',
-        'view_projects_all'
+        'view_projects_all',
+        'view_registry'
     ],
     'Прораб': [
+        // Не видит сотрудников, реестр
         'cash_expense_self',
         'cash_return_self',
         'view_projects_own'
@@ -88,11 +90,12 @@ const ROLE_PERMISSIONS = {
 // =====================================================================
 
 const TAB_REQUIREMENTS = {
-    'projects':  null,
-    'employees': 'view_tab_employees',
-    'orders':    null,
-    'registry':  null,
-    'new-order': null
+    'projects':      null,                   // Видна всем
+    'employees':     'view_tab_employees',   // Только по праву
+    'orders':        null,                   // Видна всем
+    'cash-requests': null,                   // Видна всем (кнопка отдельно для кассиров в main.js)
+    'registry':      'view_registry',        // Только по праву
+    'new-order':     null                    // Видна всем
 };
 
 // =====================================================================
@@ -140,12 +143,18 @@ export function isLinked() {
     return currentEmployee !== null;
 }
 
+/**
+ * Проверяет, может ли текущий пользователь ВИДЕТЬ вкладку.
+ */
 export function canSeeTab(tabId) {
     const required = TAB_REQUIREMENTS[tabId];
     if (!required) return true;
     return can(required);
 }
 
+/**
+ * Требует наличия права. Если нет — тост + возврат false.
+ */
 export function requirePermission(action) {
     if (can(action)) return true;
 

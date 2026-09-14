@@ -132,7 +132,15 @@ function applyPermissionsToUI() {
     if (employeesBtn) {
         employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
     }
-
+// Реестр — только с правом view_registry                       // 
+    const registryBtn = document.getElementById('btn-registry');    // 
+    if (registryBtn) {                                              // 
+        if (canSeeTab('registry')) {                                // 
+            registryBtn.style.display = '';                         // 
+        } else {                                                    // 
+            registryBtn.style.display = 'none';                     // 
+        }                                                           // 
+    }                                                               // 
     // Заявки финансов — только для кассиров
     const cashReqBtn = document.getElementById('btn-cash-requests');
     if (cashReqBtn) {
