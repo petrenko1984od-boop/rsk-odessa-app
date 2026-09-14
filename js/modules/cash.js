@@ -85,29 +85,53 @@ export async function loadOperations(employeeId, limit = 50) {
 }
 
 /**
- * Загружает все расходы по разделу сметы.
- * Используется в план-факте объекта.
+ * Загружает ВСЕ расходы объекта ОДНИМ запросом.
+ * Возвращает map: { [section_id]: [operations] }
+ * 
+ * Используется в план-факте — вместо N запросов по каждому разделу.
+ * 
+ * @param {number} projectId
+ * @returns {Promise<{ map: Object, data: Array, error }>}
  */
-export async function loadExpensesBySection(sectionId) {
-    if (!sectionId) return { data: [], error: null };
+export async function loadExpensesForProject(projectId) {
+    if (!projectId) return { map: {}, data: [], error: null };
 
-    const { data, error } = await db.select('cash_operations', {
+    // 1. Получаем список разделов объекта
+    const { data: sections, error: secError } = await db.select('sections', {
+        select: 'id',
+        filters: { project_id: projectId }
+    });
+
+    if (secError) {
+        log.error('Ошибка загрузки разделов для расходов:', secError.message);
+        return { map: {}, data: [], error: secError };
+    }
+
+    const sectionIds = (sections || []).map(s => s.id);
+
+    if (sectionIds.length === 0) {
+        return { map: {}, data: [], error: null };
+    }
+
+    // 2. ОДИН запрос со списком section_id
+    const { data: ops, error } = await db.select('cash_operations', {
         filters: {
-            section_id: sectionId,
+            'section_id.in': sectionIds,
             operation_type: 'expense'
         },
         orderBy: { column: 'created_at', asc: false }
     });
 
     if (error) {
-        log.error('Ошибка загрузки расходов по разделу:', error.message);
-        return { data: [], error };
+        log.error('Ошибка загрузки расходов объекта:', error.message);
+        return { map: {}, data: [], error };
     }
 
-    // Догружаем данные сотрудников
-    const ops = data || [];
-    if (ops.length > 0) {
-        const employeeIds = [...new Set(ops.map(o => o.employee_id).filter(Boolean))];
+    const allOps = ops || [];
+
+    // 3. Догружаем сотрудников (кто внёс расход)
+    if (allOps.length > 0) {
+        const employeeIds = [...new Set(allOps.map(o => o.employee_id).filter(Boolean))];
         if (employeeIds.length > 0) {
             const { data: employees } = await db.select('employees', {
                 filters: { 'id.in': employeeIds }
@@ -116,18 +140,27 @@ export async function loadExpensesBySection(sectionId) {
             const empMap = {};
             (employees || []).forEach(e => { empMap[e.id] = e; });
 
-            ops.forEach(op => {
+            allOps.forEach(op => {
                 op._employee = empMap[op.employee_id] || null;
             });
         }
     }
 
-    return { data: ops, error: null };
+    // 4. Группируем по section_id
+    const map = {};
+    sectionIds.forEach(id => { map[id] = []; });
+    allOps.forEach(op => {
+        if (!map[op.section_id]) map[op.section_id] = [];
+        map[op.section_id].push(op);
+    });
+
+    log.db(`Загружено расходов объекта #${projectId}: ${allOps.length}`);
+
+    return { map, data: allOps, error: null };
 }
 
 /**
- * Выдача подотчёта.
- * Пока не вызывается из UI (интерфейс отложен), но функция готова.
+ * Выдача подотчёта (для будущего интерфейса кассира).
  */
 export async function addIssue(employeeId, amount, comment = '') {
     if (!requirePermission('cash_issue')) return { success: false };

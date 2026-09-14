@@ -25,7 +25,7 @@ import {
     renderSectionsUI,
     loadSections
 } from './estimate.js';
-import { loadExpensesBySection } from './cash.js';
+import { loadExpensesForProject } from './cash.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -177,20 +177,23 @@ export async function openProjectDetail(id) {
     const titleEl = document.getElementById('card-proj-title');
     if (titleEl) titleEl.textContent = `🏗 ${project.name}`;
 
-    // Загружаем разделы для отображения
+    // 1. Загружаем разделы объекта
     const { data: sections } = await loadSections(project.id);
     currentSectionsCache = sections || [];
 
-    // Отрисовываем общую информацию (с асинхронной подгрузкой факта)
-    await renderProjectInfo(project);
+    // 2. ОДИН запрос — все расходы объекта (map: { [section_id]: [ops] })
+    const { map: expensesMap } = await loadExpensesForProject(project.id);
 
-    // Отрисовываем вкладку «Файлы»
+    // 3. Рендерим общую информацию (передаём готовые расходы)
+    renderProjectInfo(project, expensesMap);
+
+    // 4. Рендерим вкладку «Файлы»
     renderEstimateUI(project);
 
-    // Отрисовываем «План-факт»
-    await renderSectionsUI(project);
+    // 5. Рендерим «План-факт» (передаём готовые расходы)
+    renderSectionsUI(project, expensesMap);
 
-    // Кнопка удаления
+    // 6. Кнопка удаления
     const deleteBtn = document.getElementById('card-proj-delete-btn');
     if (deleteBtn) {
         if (can('delete_project')) {
@@ -201,7 +204,7 @@ export async function openProjectDetail(id) {
         }
     }
 
-    // Показываем карточку
+    // 7. Показываем карточку
     const detailEl = document.getElementById('tab-project-detail');
     if (detailEl) {
         ['welcome', 'projects', 'employees', 'orders', 'registry', 'new-order'].forEach(t => {
@@ -214,7 +217,50 @@ export async function openProjectDetail(id) {
     switchProjectSubTab('info');
 }
 
-async function renderProjectInfo(project) {
+/**
+ * Считает план по разделам (сумма plan_works, plan_materials, plan_total).
+ */
+function calcPlan(sections) {
+    let works = 0;
+    let materials = 0;
+    let total = 0;
+
+    (sections || []).forEach(s => {
+        works += Number(s.plan_works) || 0;
+        materials += Number(s.plan_materials) || 0;
+        total += Number(s.plan_total) || 0;
+    });
+
+    return { works, materials, total };
+}
+
+/**
+ * Считает факт по всем разделам из map.
+ * materials включает: materials + delivery
+ * works включает: works
+ */
+function calcFact(expensesMap) {
+    let works = 0;
+    let materials = 0;
+    let total = 0;
+
+    Object.values(expensesMap || {}).forEach(ops => {
+        (ops || []).forEach(op => {
+            const amount = Number(op.amount) || 0;
+            total += amount;
+
+            if (op.category === 'works') {
+                works += amount;
+            } else if (op.category === 'materials' || op.category === 'delivery') {
+                materials += amount;
+            }
+        });
+    });
+
+    return { works, materials, total };
+}
+
+function renderProjectInfo(project, expensesMap = {}) {
     const container = document.getElementById('proj-subtab-info');
     if (!container) return;
 
@@ -223,49 +269,17 @@ async function renderProjectInfo(project) {
     const foremanPhone = foreman?.phone || '';
     const foremanPosition = foreman?.position || '—';
 
-    // Считаем план
-    let planWorks = 0;
-    let planMaterials = 0;
-    let planTotal = 0;
+    const plan = calcPlan(currentSectionsCache);
+    const fact = calcFact(expensesMap);
 
-    currentSectionsCache.forEach(s => {
-        planWorks += Number(s.plan_works) || 0;
-        planMaterials += Number(s.plan_materials) || 0;
-        planTotal += Number(s.plan_total) || 0;
-    });
+    const balanceWorks = plan.works - fact.works;
+    const balanceMaterials = plan.materials - fact.materials;
+    const balanceTotal = plan.total - fact.total;
 
-    const hasSections = currentSectionsCache.length > 0;
+    const isOverWorks = fact.works > plan.works;
+    const isOverMaterials = fact.materials > plan.materials;
+    const isOverTotal = fact.total > plan.total;
 
-    // Считаем факт — загружаем операции по всем разделам
-    let factWorks = 0;
-    let factMaterials = 0;
-    let factTotal = 0;
-
-    if (hasSections) {
-        for (const sec of currentSectionsCache) {
-            const { data: ops } = await loadExpensesBySection(sec.id);
-            (ops || []).forEach(op => {
-                const amount = Number(op.amount) || 0;
-                factTotal += amount;
-
-                if (op.category === 'works') {
-                    factWorks += amount;
-                } else if (op.category === 'materials' || op.category === 'delivery') {
-                    factMaterials += amount;
-                }
-            });
-        }
-    }
-
-    const balanceWorks = planWorks - factWorks;
-    const balanceMaterials = planMaterials - factMaterials;
-    const balanceTotal = planTotal - factTotal;
-
-    const isOverWorks = factWorks > planWorks;
-    const isOverMaterials = factMaterials > planMaterials;
-    const isOverTotal = factTotal > planTotal;
-
-    // Цвета
     const colorFactWorks = isOverWorks ? 'text-red-600' : 'text-emerald-700';
     const colorFactMaterials = isOverMaterials ? 'text-red-600' : 'text-emerald-700';
     const colorFactTotal = isOverTotal ? 'text-red-600' : 'text-emerald-700';
@@ -273,6 +287,8 @@ async function renderProjectInfo(project) {
     const colorBalanceWorks = balanceWorks >= 0 ? 'text-emerald-700' : 'text-red-600';
     const colorBalanceMaterials = balanceMaterials >= 0 ? 'text-emerald-700' : 'text-red-600';
     const colorBalanceTotal = balanceTotal >= 0 ? 'text-emerald-700' : 'text-red-600';
+
+    const hasSections = currentSectionsCache.length > 0;
 
     container.innerHTML = `
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -309,20 +325,20 @@ async function renderProjectInfo(project) {
                     <tbody class="divide-y">
                         <tr>
                             <td class="p-2 text-gray-700">🛠 Работы</td>
-                            <td class="p-2 text-right font-semibold text-gray-800">${formatMoney(planWorks)}</td>
-                            <td class="p-2 text-right font-semibold ${colorFactWorks}">${formatMoney(factWorks)}</td>
+                            <td class="p-2 text-right font-semibold text-gray-800">${formatMoney(plan.works)}</td>
+                            <td class="p-2 text-right font-semibold ${colorFactWorks}">${formatMoney(fact.works)}</td>
                             <td class="p-2 text-right font-bold ${colorBalanceWorks}">${formatMoney(Math.abs(balanceWorks))}</td>
                         </tr>
                         <tr>
                             <td class="p-2 text-gray-700">📦 Материалы</td>
-                            <td class="p-2 text-right font-semibold text-gray-800">${formatMoney(planMaterials)}</td>
-                            <td class="p-2 text-right font-semibold ${colorFactMaterials}">${formatMoney(factMaterials)}</td>
+                            <td class="p-2 text-right font-semibold text-gray-800">${formatMoney(plan.materials)}</td>
+                            <td class="p-2 text-right font-semibold ${colorFactMaterials}">${formatMoney(fact.materials)}</td>
                             <td class="p-2 text-right font-bold ${colorBalanceMaterials}">${formatMoney(Math.abs(balanceMaterials))}</td>
                         </tr>
                         <tr class="bg-emerald-50">
                             <td class="p-2 font-bold text-[#166534]">💰 ИТОГО</td>
-                            <td class="p-2 text-right font-bold text-[#166534]">${formatMoney(planTotal)}</td>
-                            <td class="p-2 text-right font-bold ${colorFactTotal}">${formatMoney(factTotal)}</td>
+                            <td class="p-2 text-right font-bold text-[#166534]">${formatMoney(plan.total)}</td>
+                            <td class="p-2 text-right font-bold ${colorFactTotal}">${formatMoney(fact.total)}</td>
                             <td class="p-2 text-right font-bold ${colorBalanceTotal}">${formatMoney(Math.abs(balanceTotal))}</td>
                         </tr>
                     </tbody>

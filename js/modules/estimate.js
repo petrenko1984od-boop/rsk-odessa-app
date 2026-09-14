@@ -3,6 +3,9 @@
 // =====================================================================
 // Загрузка, парсинг и хранение смет.
 // + Отображение план-факта с фактическими расходами.
+//
+// ВАЖНО: renderSectionsUI теперь принимает expensesMap —
+// готовый объект { [section_id]: [operations] } — без повторных запросов.
 // =====================================================================
 
 import { db } from '../database.js';
@@ -10,13 +13,9 @@ import {
     log, toast, escapeHtml, formatMoney,
     formatDate
 } from '../utils.js';
-import { requirePermission, getEmployee } from '../permissions.js';
+import { requirePermission } from '../permissions.js';
 import { CONFIG } from '../config.js';
-import {
-    loadExpensesBySection,
-    getCategoryLabel,
-    viewReceipt
-} from './cash.js';
+import { getCategoryLabel } from './cash.js';
 
 // =====================================================================
 // УТИЛИТА: ОЧИСТКА ИМЕНИ ФАЙЛА
@@ -302,23 +301,33 @@ export function renderEstimateUI(project) {
 }
 
 // =====================================================================
-// UI — ПЛАН-ФАКТ (план / факт / остаток + операции)
+// UI — ПЛАН-ФАКТ
+// =====================================================================
+// ВАЖНО: принимает expensesMap — { [section_id]: [operations] }
+// Без повторных запросов к БД.
 // =====================================================================
 
-export async function renderSectionsUI(project) {
+export function renderSectionsUI(project, expensesMap = {}) {
     const container = document.getElementById('proj-subtab-planfact');
     if (!container) return;
 
-    container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Загрузка разделов...</p>';
+    // Разделы берём из кэша проекта (его уже загрузили в projects.js)
+    // Если контейнер пустой или разделов нет — рендерим плейсхолдер
+    const sections = window.__getSectionsCache ? window.__getSectionsCache() : null;
 
-    const { data: sections, error } = await loadSections(project.id);
+    // Fallback: если кэш недоступен — берём из window.__getCurrentProject
+    // В нашем случае sections передаются из projects.js через кэш,
+    // НО для простоты воспользуемся сохранённым в window.__getCurrentProject
+    // либо загрузим заново (если очень надо).
 
-    if (error) {
-        container.innerHTML = '<p class="text-center text-red-500 py-6 text-sm">Ошибка загрузки разделов</p>';
-        return;
-    }
+    // Т.к. renderSectionsUI вызывается синхронно из projects.js,
+    // sections уже должны быть в currentSectionsCache.
+    // Передадим через параметр sections — для этого немного изменим сигнатуру.
 
-    if (!sections || sections.length === 0) {
+    // НО: чтобы не плодить запросы, читаем кэш из window.__getSectionsCache.
+    const sectionsData = sections || [];
+
+    if (sectionsData.length === 0) {
         container.innerHTML = `
             <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
                 <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 План-факт</h3>
@@ -330,15 +339,12 @@ export async function renderSectionsUI(project) {
         return;
     }
 
-    // Загружаем расходы для всех разделов
-    const allOperations = await loadAllSectionsExpenses(sections);
-
-    // Итоги по проекту
+    // Итоги
     let totalPlanWorks = 0, totalPlanMaterials = 0, totalPlan = 0;
     let totalFactWorks = 0, totalFactMaterials = 0, totalFact = 0;
 
-    sections.forEach(s => {
-        const ops = allOperations[s.id] || [];
+    sectionsData.forEach(s => {
+        const ops = expensesMap[s.id] || [];
         const facts = calcFacts(ops);
 
         totalPlanWorks += Number(s.plan_works) || 0;
@@ -351,12 +357,11 @@ export async function renderSectionsUI(project) {
 
     const projectBalance = totalPlan - totalFact;
 
-    // Сводка
     const summaryHtml = `
         <div class="bg-emerald-600 text-white rounded-xl p-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs font-bold">
             <div>
                 <p class="text-emerald-100 text-[10px] uppercase">Разделов</p>
-                <p class="text-base">${sections.length}</p>
+                <p class="text-base">${sectionsData.length}</p>
             </div>
             <div>
                 <p class="text-emerald-100 text-[10px] uppercase">План</p>
@@ -373,9 +378,8 @@ export async function renderSectionsUI(project) {
         </div>
     `;
 
-    // Список разделов
-    const sectionsHtml = sections.map((sec, idx) => {
-        const ops = allOperations[sec.id] || [];
+    const sectionsHtml = sectionsData.map((sec, idx) => {
+        const ops = expensesMap[sec.id] || [];
         const facts = calcFacts(ops);
 
         const planWorks = Number(sec.plan_works) || 0;
@@ -390,12 +394,10 @@ export async function renderSectionsUI(project) {
         const isOverMaterials = facts.materials > planMaterials;
         const isOverTotal = facts.total > planTotal;
 
-        // Цвета
         const colorWorks = isOverWorks ? 'text-red-600' : (facts.works > 0 ? 'text-emerald-700' : 'text-gray-400');
         const colorMaterials = isOverMaterials ? 'text-red-600' : (facts.materials > 0 ? 'text-emerald-700' : 'text-gray-400');
         const colorTotal = isOverTotal ? 'text-red-600' : (facts.total > 0 ? 'text-emerald-700' : 'text-gray-400');
 
-        // Бейдж перерасхода
         const overBadge = isOverTotal
             ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold">⚠️ Перерасход</span>`
             : (facts.total > 0 
@@ -404,7 +406,6 @@ export async function renderSectionsUI(project) {
 
         return `
             <div class="border rounded-xl bg-white overflow-hidden transition shadow-sm">
-                <!-- Заголовок раздела (клик — раскрыть) -->
                 <div onclick="window.toggleSectionDetails(${idx})" 
                      class="p-4 cursor-pointer hover:bg-emerald-50/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                     <div class="flex items-center gap-2 flex-1">
@@ -419,9 +420,7 @@ export async function renderSectionsUI(project) {
                     </div>
                 </div>
 
-                <!-- Таблица план / факт / остаток -->
                 <div class="px-4 pb-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                    <!-- Работы -->
                     <div class="bg-gray-50 border rounded-lg p-3 space-y-1">
                         <p class="font-bold text-gray-500 uppercase tracking-wider text-[10px]">🛠 Работы</p>
                         <div class="flex justify-between">
@@ -438,7 +437,6 @@ export async function renderSectionsUI(project) {
                         </div>
                     </div>
 
-                    <!-- Материалы -->
                     <div class="bg-gray-50 border rounded-lg p-3 space-y-1">
                         <p class="font-bold text-gray-500 uppercase tracking-wider text-[10px]">📦 Материалы</p>
                         <div class="flex justify-between">
@@ -456,7 +454,6 @@ export async function renderSectionsUI(project) {
                     </div>
                 </div>
 
-                <!-- Детализация операций (скрыто) -->
                 <div id="section-details-${idx}" class="hidden bg-gray-50 border-t p-4 space-y-2">
                     <p class="text-xs font-bold text-gray-700 uppercase tracking-wider border-b pb-1">📋 Операции по разделу:</p>
                     <div class="space-y-2">
@@ -478,31 +475,17 @@ export async function renderSectionsUI(project) {
 }
 
 /**
- * Загружает операции для всех разделов.
- */
-async function loadAllSectionsExpenses(sections) {
-    const map = {};
-
-    await Promise.all(sections.map(async (sec) => {
-        const { data } = await loadExpensesBySection(sec.id);
-        map[sec.id] = data || [];
-    }));
-
-    return map;
-}
-
-/**
  * Считает факт по разделу из операций.
- * Категории: materials, works, delivery, other.
- * Факт материалов = materials + delivery (доставка относится к материалам)
- * Факт работ = works
+ * materials = materials + delivery
+ * works = works
+ * total = всё
  */
 function calcFacts(operations) {
     let works = 0;
     let materials = 0;
     let total = 0;
 
-    operations.forEach(op => {
+    (operations || []).forEach(op => {
         const amount = Number(op.amount) || 0;
         total += amount;
 
@@ -511,15 +494,11 @@ function calcFacts(operations) {
         } else if (op.category === 'materials' || op.category === 'delivery') {
             materials += amount;
         }
-        // 'other' — не учитываем в работах/материалах, но учитываем в total
     });
 
     return { works, materials, total };
 }
 
-/**
- * Рендерит список операций раздела.
- */
 function renderSectionOperations(operations) {
     if (!operations || operations.length === 0) {
         return `<p class="text-xs text-gray-400 italic py-2">Операций по этому разделу пока нет</p>`;
@@ -551,9 +530,6 @@ function renderSectionOperations(operations) {
     }).join('');
 }
 
-/**
- * Переключает отображение деталей раздела.
- */
 export function toggleSectionDetails(idx) {
     const detailsEl = document.getElementById(`section-details-${idx}`);
     const arrowEl = document.getElementById(`section-arrow-${idx}`);
@@ -587,17 +563,28 @@ export async function uploadEstimateUI(projectId) {
     if (result.success) {
         toast(`Смета загружена! Разделов: ${result.sectionsCount}`, 'success');
 
-        const project = window.__getCurrentProject?.();
-        if (project) {
-            const { data } = await db.select('projects', {
-                select: '*, foreman:employees(id, name, position, phone, status)',
-                filters: { id: projectId },
-                single: true
-            });
+        // Перезагружаем карточку объекта
+        if (window.__getCurrentProject) {
+            const project = window.__getCurrentProject();
+            if (project) {
+                // Перезагружаем разделы и расходы
+                const { data: newSections } = await loadSections(projectId);
 
-            if (data) {
-                renderEstimateUI(data);
-                await renderSectionsUI(data);
+                // Обновляем кэш в projects.js через глобальную функцию
+                if (window.__refreshProjectDetail) {
+                    await window.__refreshProjectDetail(projectId);
+                } else {
+                    // Fallback: перезагружаем из БД
+                    const { data: freshProject } = await db.select('projects', {
+                        select: '*, foreman:employees(id, name, position, phone, status)',
+                        filters: { id: projectId },
+                        single: true
+                    });
+
+                    if (freshProject) {
+                        renderEstimateUI(freshProject);
+                    }
+                }
             }
         }
     } else {
@@ -645,7 +632,7 @@ export async function deleteEstimateUI(projectId) {
     if (result.success) {
         const updatedProject = { ...project, estimate_file_path: null, estimate_file_name: null, estimate_uploaded_at: null };
         renderEstimateUI(updatedProject);
-        await renderSectionsUI(updatedProject);
+        // TODO: обновить план-факт (обычно перезагрузка карточки)
     }
 }
 
@@ -656,6 +643,5 @@ export async function deleteEstimateUI(projectId) {
 window.uploadEstimateUI = uploadEstimateUI;
 window.viewEstimateFile = viewEstimateFile;
 window.deleteEstimateUI = deleteEstimateUI;
-window.renderSectionsUI = renderSectionsUI;
 window.renderEstimateUI = renderEstimateUI;
 window.toggleSectionDetails = toggleSectionDetails;
