@@ -25,6 +25,7 @@ import {
     renderSectionsUI,
     loadSections
 } from './estimate.js';
+import { loadExpensesBySection } from './cash.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -33,7 +34,7 @@ import {
 let projectsCache = [];
 let employeesCache = [];
 let currentActiveProjId = null;
-let currentSectionsCache = [];   // Кэш разделов открытого объекта
+let currentSectionsCache = [];
 
 // =====================================================================
 // ЗАГРУЗКА
@@ -176,12 +177,12 @@ export async function openProjectDetail(id) {
     const titleEl = document.getElementById('card-proj-title');
     if (titleEl) titleEl.textContent = `🏗 ${project.name}`;
 
-    // Загружаем разделы (для финансовых показателей)
+    // Загружаем разделы для отображения
     const { data: sections } = await loadSections(project.id);
     currentSectionsCache = sections || [];
 
-    // Отрисовываем общую информацию
-    renderProjectInfo(project);
+    // Отрисовываем общую информацию (с асинхронной подгрузкой факта)
+    await renderProjectInfo(project);
 
     // Отрисовываем вкладку «Файлы»
     renderEstimateUI(project);
@@ -213,7 +214,7 @@ export async function openProjectDetail(id) {
     switchProjectSubTab('info');
 }
 
-function renderProjectInfo(project) {
+async function renderProjectInfo(project) {
     const container = document.getElementById('proj-subtab-info');
     if (!container) return;
 
@@ -222,18 +223,56 @@ function renderProjectInfo(project) {
     const foremanPhone = foreman?.phone || '';
     const foremanPosition = foreman?.position || '—';
 
-    // Считаем финансовые показатели из разделов
-    let totalWorks = 0;
-    let totalMaterials = 0;
-    let totalAll = 0;
+    // Считаем план
+    let planWorks = 0;
+    let planMaterials = 0;
+    let planTotal = 0;
 
     currentSectionsCache.forEach(s => {
-        totalWorks += Number(s.plan_works) || 0;
-        totalMaterials += Number(s.plan_materials) || 0;
-        totalAll += Number(s.plan_total) || 0;
+        planWorks += Number(s.plan_works) || 0;
+        planMaterials += Number(s.plan_materials) || 0;
+        planTotal += Number(s.plan_total) || 0;
     });
 
     const hasSections = currentSectionsCache.length > 0;
+
+    // Считаем факт — загружаем операции по всем разделам
+    let factWorks = 0;
+    let factMaterials = 0;
+    let factTotal = 0;
+
+    if (hasSections) {
+        for (const sec of currentSectionsCache) {
+            const { data: ops } = await loadExpensesBySection(sec.id);
+            (ops || []).forEach(op => {
+                const amount = Number(op.amount) || 0;
+                factTotal += amount;
+
+                if (op.category === 'works') {
+                    factWorks += amount;
+                } else if (op.category === 'materials' || op.category === 'delivery') {
+                    factMaterials += amount;
+                }
+            });
+        }
+    }
+
+    const balanceWorks = planWorks - factWorks;
+    const balanceMaterials = planMaterials - factMaterials;
+    const balanceTotal = planTotal - factTotal;
+
+    const isOverWorks = factWorks > planWorks;
+    const isOverMaterials = factMaterials > planMaterials;
+    const isOverTotal = factTotal > planTotal;
+
+    // Цвета
+    const colorFactWorks = isOverWorks ? 'text-red-600' : 'text-emerald-700';
+    const colorFactMaterials = isOverMaterials ? 'text-red-600' : 'text-emerald-700';
+    const colorFactTotal = isOverTotal ? 'text-red-600' : 'text-emerald-700';
+
+    const colorBalanceWorks = balanceWorks >= 0 ? 'text-emerald-700' : 'text-red-600';
+    const colorBalanceMaterials = balanceMaterials >= 0 ? 'text-emerald-700' : 'text-red-600';
+    const colorBalanceTotal = balanceTotal >= 0 ? 'text-emerald-700' : 'text-red-600';
 
     container.innerHTML = `
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -250,28 +289,44 @@ function renderProjectInfo(project) {
                 </p>
             </div>
 
-            <!-- Финансы -->
-            <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-                <div class="rounded-lg border border-emerald-200 text-xs overflow-hidden">
-                    <div class="bg-emerald-600 text-white font-bold px-3 py-2 flex justify-between items-center">
-                        <span>📊 Финансовые показатели</span>
-                        <span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">${hasSections ? 'Смета загружена' : 'Смета: 0 грн'}</span>
-                    </div>
-                    <div class="divide-y divide-emerald-100 bg-emerald-50/50">
-                        <div class="flex justify-between items-center px-3 py-2">
-                            <span class="text-gray-600 font-medium">🛠 Работы:</span>
-                            <span class="font-bold text-gray-800">${formatMoney(totalWorks)}</span>
-                        </div>
-                        <div class="flex justify-between items-center px-3 py-2">
-                            <span class="text-gray-600 font-medium">📦 Материалы:</span>
-                            <span class="font-bold text-gray-800">${formatMoney(totalMaterials)}</span>
-                        </div>
-                        <div class="flex justify-between items-center px-3 py-2 bg-emerald-100">
-                            <span class="text-emerald-800 font-bold">💰 Итого:</span>
-                            <span class="font-bold text-[#166534]">${formatMoney(totalAll)}</span>
-                        </div>
-                    </div>
+            <!-- Финансовая таблица -->
+            <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div class="bg-emerald-600 text-white font-bold px-3 py-2 flex justify-between items-center text-sm">
+                    <span>📊 Финансы по объекту</span>
+                    ${isOverTotal 
+                        ? `<span class="bg-red-500 px-2 py-0.5 rounded text-[11px]">⚠️ Перерасход</span>` 
+                        : (hasSections ? `<span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">✔ В норме</span>` : `<span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">Сметы нет</span>`)}
                 </div>
+                <table class="w-full text-xs">
+                    <thead class="bg-gray-100 text-gray-600 uppercase text-[10px]">
+                        <tr>
+                            <th class="p-2 text-left">Категория</th>
+                            <th class="p-2 text-right">План</th>
+                            <th class="p-2 text-right">Факт</th>
+                            <th class="p-2 text-right">Остаток</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y">
+                        <tr>
+                            <td class="p-2 text-gray-700">🛠 Работы</td>
+                            <td class="p-2 text-right font-semibold text-gray-800">${formatMoney(planWorks)}</td>
+                            <td class="p-2 text-right font-semibold ${colorFactWorks}">${formatMoney(factWorks)}</td>
+                            <td class="p-2 text-right font-bold ${colorBalanceWorks}">${formatMoney(Math.abs(balanceWorks))}</td>
+                        </tr>
+                        <tr>
+                            <td class="p-2 text-gray-700">📦 Материалы</td>
+                            <td class="p-2 text-right font-semibold text-gray-800">${formatMoney(planMaterials)}</td>
+                            <td class="p-2 text-right font-semibold ${colorFactMaterials}">${formatMoney(factMaterials)}</td>
+                            <td class="p-2 text-right font-bold ${colorBalanceMaterials}">${formatMoney(Math.abs(balanceMaterials))}</td>
+                        </tr>
+                        <tr class="bg-emerald-50">
+                            <td class="p-2 font-bold text-[#166534]">💰 ИТОГО</td>
+                            <td class="p-2 text-right font-bold text-[#166534]">${formatMoney(planTotal)}</td>
+                            <td class="p-2 text-right font-bold ${colorFactTotal}">${formatMoney(factTotal)}</td>
+                            <td class="p-2 text-right font-bold ${colorBalanceTotal}">${formatMoney(Math.abs(balanceTotal))}</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     `;

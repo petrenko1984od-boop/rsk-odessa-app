@@ -2,32 +2,26 @@
 // МОДУЛЬ: СМЕТЫ (Excel)
 // =====================================================================
 // Загрузка, парсинг и хранение смет.
-//
-// Логика:
-//   1. Пользователь выбирает .xlsx файл.
-//   2. Файл грузится в Supabase Storage (bucket 'estimates').
-//   3. Файл парсится через SheetJS (ищем «Раздел:» и «Итого по разделу»).
-//   4. Старые разделы объекта УДАЛЯЮТСЯ.
-//   5. Новые разделы пишутся в таблицу 'sections'.
-//   6. Обновляется путь к файлу в таблице 'projects'.
+// + Отображение план-факта с фактическими расходами.
 // =====================================================================
 
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, formatMoney,
-    formatDate, lockButton
+    formatDate
 } from '../utils.js';
-import { requirePermission } from '../permissions.js';
+import { requirePermission, getEmployee } from '../permissions.js';
 import { CONFIG } from '../config.js';
+import {
+    loadExpensesBySection,
+    getCategoryLabel,
+    viewReceipt
+} from './cash.js';
 
 // =====================================================================
-// УТИЛИТА: ОЧИСТКА ИМЕНИ ФАЙЛА ДЛЯ STORAGE
+// УТИЛИТА: ОЧИСТКА ИМЕНИ ФАЙЛА
 // =====================================================================
 
-/**
- * Очищает имя файла от запрещённых символов.
- * Транслитерирует кириллицу, заменяет спецсимволы на _.
- */
 function sanitizeFileName(originalName) {
     const lastDot = originalName.lastIndexOf('.');
     const namePart = lastDot > 0 ? originalName.slice(0, lastDot) : originalName;
@@ -46,15 +40,10 @@ function sanitizeFileName(originalName) {
 
     let result = '';
     for (const ch of namePart) {
-        if (translitMap[ch]) {
-            result += translitMap[ch];
-        } else if (/[a-zA-Z0-9._-]/.test(ch)) {
-            result += ch;
-        } else {
-            result += '_';
-        }
+        if (translitMap[ch]) result += translitMap[ch];
+        else if (/[a-zA-Z0-9._-]/.test(ch)) result += ch;
+        else result += '_';
     }
-
     result = result.replace(/_+/g, '_').replace(/^_|_$/g, '');
     if (!result) result = 'estimate';
     if (result.length > 80) result = result.slice(0, 80);
@@ -63,23 +52,15 @@ function sanitizeFileName(originalName) {
 }
 
 // =====================================================================
-// ЗАГРУЗКА ФАЙЛА + ПАРСИНГ + СОХРАНЕНИЕ
+// ЗАГРУЗКА ФАЙЛА + ПАРСИНГ
 // =====================================================================
 
 export async function uploadEstimate(projectId, file) {
-    if (!projectId) {
-        toast('Объект не выбран', 'error');
-        return { success: false };
-    }
-
-    if (!file) {
-        toast('Файл не выбран', 'error');
-        return { success: false };
-    }
+    if (!projectId) { toast('Объект не выбран', 'error'); return { success: false }; }
+    if (!file) { toast('Файл не выбран', 'error'); return { success: false }; }
 
     log.info(`Загрузка сметы: ${file.name} для объекта #${projectId}`);
 
-    // 1. Парсим Excel
     const parseResult = await parseExcelFile(file);
 
     if (!parseResult.success) {
@@ -95,30 +76,18 @@ export async function uploadEstimate(projectId, file) {
         return { success: false };
     }
 
-    // 2. Загружаем файл в Storage — с безопасным именем
     const safeName = sanitizeFileName(file.name);
     const path = `project_${projectId}/${Date.now()}_${safeName}`;
-
-    log.info(`Безопасный путь: ${path}`);
 
     const uploadResult = await db.uploadFile(CONFIG.STORAGE.ESTIMATES_BUCKET, path, file);
 
     if (uploadResult.error) {
         toast('Ошибка загрузки файла: ' + uploadResult.error.message, 'error');
-        log.error('Детали ошибки загрузки:', uploadResult.error);
         return { success: false };
     }
 
-    log.info(`Файл загружен: ${uploadResult.path}`);
+    await db.remove('sections', { project_id: projectId });
 
-    // 3. Удаляем старые разделы объекта
-    const { error: deleteError } = await db.remove('sections', { project_id: projectId });
-
-    if (deleteError) {
-        log.error('Не удалось удалить старые разделы:', deleteError.message);
-    }
-
-    // 4. Вставляем новые разделы
     const sectionsPayload = sections.map(s => ({
         project_id: projectId,
         name: s.name,
@@ -134,24 +103,15 @@ export async function uploadEstimate(projectId, file) {
         return { success: false };
     }
 
-    // 5. Обновляем запись объекта — здесь ХРАНИМ ОРИГИНАЛЬНОЕ ИМЯ
-    const { error: updateError } = await db.update('projects', {
+    await db.update('projects', {
         estimate_file_path: uploadResult.path,
-        estimate_file_name: file.name,       // ← оригинал для отображения
+        estimate_file_name: file.name,
         estimate_uploaded_at: new Date().toISOString()
     }, { id: projectId });
-
-    if (updateError) {
-        log.error('Не удалось обновить объект:', updateError.message);
-    }
 
     log.info('✅ Смета успешно загружена и разобрана');
     return { success: true, sectionsCount: sections.length };
 }
-
-// =====================================================================
-// ПАРСИНГ EXCEL
-// =====================================================================
 
 function parseExcelFile(file) {
     return new Promise((resolve) => {
@@ -180,10 +140,7 @@ function parseExcelFile(file) {
             }
         };
 
-        reader.onerror = () => {
-            resolve({ success: false, error: 'Ошибка чтения файла' });
-        };
-
+        reader.onerror = () => resolve({ success: false, error: 'Ошибка чтения файла' });
         reader.readAsArrayBuffer(file);
     });
 }
@@ -237,10 +194,7 @@ function parseRows(rows) {
     }
 
     if (sections.length === 0) {
-        return {
-            success: false,
-            error: 'Не найдено ни одного раздела.'
-        };
+        return { success: false, error: 'Не найдено ни одного раздела.' };
     }
 
     return { success: true, sections };
@@ -295,7 +249,7 @@ export async function deleteEstimate(project) {
 }
 
 // =====================================================================
-// UI — БЛОК ФАЙЛОВ (загрузка сметы)
+// UI — БЛОК ФАЙЛОВ
 // =====================================================================
 
 export function renderEstimateUI(project) {
@@ -334,8 +288,7 @@ export function renderEstimateUI(project) {
                 <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 Загрузка файла сметы (Excel)</h3>
                 <div class="p-4 bg-gray-50 rounded-xl border space-y-3">
                     <p class="text-xs text-gray-500">
-                        Смета ещё не загружена. Загрузи файл Excel (.xlsx), чтобы автоматически сформировать разделы,
-                        объёмы и сметную стоимость.
+                        Смета ещё не загружена. Загрузи файл Excel (.xlsx), чтобы автоматически сформировать разделы.
                     </p>
                     <div class="flex flex-col sm:flex-row gap-2">
                         <input type="file" id="estimate-file-input-${project.id}" accept=".xlsx, .xls"
@@ -349,7 +302,7 @@ export function renderEstimateUI(project) {
 }
 
 // =====================================================================
-// UI — ПЛАН-ФАКТ (список разделов)
+// UI — ПЛАН-ФАКТ (план / факт / остаток + операции)
 // =====================================================================
 
 export async function renderSectionsUI(project) {
@@ -377,41 +330,137 @@ export async function renderSectionsUI(project) {
         return;
     }
 
-    let totalWorks = 0;
-    let totalMaterials = 0;
-    let totalAll = 0;
+    // Загружаем расходы для всех разделов
+    const allOperations = await loadAllSectionsExpenses(sections);
+
+    // Итоги по проекту
+    let totalPlanWorks = 0, totalPlanMaterials = 0, totalPlan = 0;
+    let totalFactWorks = 0, totalFactMaterials = 0, totalFact = 0;
 
     sections.forEach(s => {
-        totalWorks += Number(s.plan_works) || 0;
-        totalMaterials += Number(s.plan_materials) || 0;
-        totalAll += Number(s.plan_total) || 0;
+        const ops = allOperations[s.id] || [];
+        const facts = calcFacts(ops);
+
+        totalPlanWorks += Number(s.plan_works) || 0;
+        totalPlanMaterials += Number(s.plan_materials) || 0;
+        totalPlan += Number(s.plan_total) || 0;
+        totalFactWorks += facts.works;
+        totalFactMaterials += facts.materials;
+        totalFact += facts.total;
     });
 
-    const headerHtml = `
-        <div class="bg-emerald-600 text-white rounded-xl p-3 flex flex-wrap justify-between items-center gap-2 text-xs font-bold">
-            <span>📊 Всего разделов: ${sections.length}</span>
-            <span>🛠 Работы: ${formatMoney(totalWorks)}</span>
-            <span>📦 Материалы: ${formatMoney(totalMaterials)}</span>
-            <span class="bg-emerald-700 px-2 py-1 rounded">💰 Итого: ${formatMoney(totalAll)}</span>
+    const projectBalance = totalPlan - totalFact;
+
+    // Сводка
+    const summaryHtml = `
+        <div class="bg-emerald-600 text-white rounded-xl p-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs font-bold">
+            <div>
+                <p class="text-emerald-100 text-[10px] uppercase">Разделов</p>
+                <p class="text-base">${sections.length}</p>
+            </div>
+            <div>
+                <p class="text-emerald-100 text-[10px] uppercase">План</p>
+                <p class="text-base">${formatMoney(totalPlan)}</p>
+            </div>
+            <div>
+                <p class="text-emerald-100 text-[10px] uppercase">Факт</p>
+                <p class="text-base">${formatMoney(totalFact)}</p>
+            </div>
+            <div>
+                <p class="text-emerald-100 text-[10px] uppercase">${projectBalance >= 0 ? 'Осталось' : 'Перерасход'}</p>
+                <p class="text-base ${projectBalance >= 0 ? 'text-white' : 'text-red-200'}">${formatMoney(Math.abs(projectBalance))}</p>
+            </div>
         </div>
     `;
 
+    // Список разделов
     const sectionsHtml = sections.map((sec, idx) => {
-        const planTotal = Number(sec.plan_total) || 0;
+        const ops = allOperations[sec.id] || [];
+        const facts = calcFacts(ops);
+
         const planWorks = Number(sec.plan_works) || 0;
         const planMaterials = Number(sec.plan_materials) || 0;
+        const planTotal = Number(sec.plan_total) || 0;
+
+        const balanceWorks = planWorks - facts.works;
+        const balanceMaterials = planMaterials - facts.materials;
+        const balanceTotal = planTotal - facts.total;
+
+        const isOverWorks = facts.works > planWorks;
+        const isOverMaterials = facts.materials > planMaterials;
+        const isOverTotal = facts.total > planTotal;
+
+        // Цвета
+        const colorWorks = isOverWorks ? 'text-red-600' : (facts.works > 0 ? 'text-emerald-700' : 'text-gray-400');
+        const colorMaterials = isOverMaterials ? 'text-red-600' : (facts.materials > 0 ? 'text-emerald-700' : 'text-gray-400');
+        const colorTotal = isOverTotal ? 'text-red-600' : (facts.total > 0 ? 'text-emerald-700' : 'text-gray-400');
+
+        // Бейдж перерасхода
+        const overBadge = isOverTotal
+            ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold">⚠️ Перерасход</span>`
+            : (facts.total > 0 
+                ? `<span class="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">✔ В норме</span>` 
+                : '');
 
         return `
             <div class="border rounded-xl bg-white overflow-hidden transition shadow-sm">
-                <div class="p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                <!-- Заголовок раздела (клик — раскрыть) -->
+                <div onclick="window.toggleSectionDetails(${idx})" 
+                     class="p-4 cursor-pointer hover:bg-emerald-50/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                     <div class="flex items-center gap-2 flex-1">
+                        <span id="section-arrow-${idx}" class="text-xs font-bold text-[#15803d] transition-transform">▼</span>
                         <span class="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">${idx + 1}</span>
                         <h4 class="font-bold text-[#166534] text-sm">${escapeHtml(sec.name)}</h4>
+                        ${overBadge}
                     </div>
-                    <div class="text-xs text-gray-600 flex flex-wrap gap-3">
-                        <span>🛠 <b>${formatMoney(planWorks)}</b></span>
-                        <span>📦 <b>${formatMoney(planMaterials)}</b></span>
-                        <span class="text-[#15803d] font-bold">💰 ${formatMoney(planTotal)}</span>
+                    <div class="text-xs flex flex-wrap gap-2 items-center">
+                        <span class="text-gray-500">План: <b class="text-gray-800">${formatMoney(planTotal)}</b></span>
+                        <span class="text-gray-500">Факт: <b class="${colorTotal}">${formatMoney(facts.total)}</b></span>
+                    </div>
+                </div>
+
+                <!-- Таблица план / факт / остаток -->
+                <div class="px-4 pb-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                    <!-- Работы -->
+                    <div class="bg-gray-50 border rounded-lg p-3 space-y-1">
+                        <p class="font-bold text-gray-500 uppercase tracking-wider text-[10px]">🛠 Работы</p>
+                        <div class="flex justify-between">
+                            <span class="text-gray-500">План:</span>
+                            <span class="font-semibold text-gray-800">${formatMoney(planWorks)}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-500">Факт:</span>
+                            <span class="font-semibold ${colorWorks}">${formatMoney(facts.works)}</span>
+                        </div>
+                        <div class="flex justify-between pt-1 border-t">
+                            <span class="font-bold text-gray-600">${balanceWorks >= 0 ? 'Осталось:' : 'Перерасход:'}</span>
+                            <span class="font-bold ${balanceWorks >= 0 ? 'text-emerald-700' : 'text-red-600'}">${formatMoney(Math.abs(balanceWorks))}</span>
+                        </div>
+                    </div>
+
+                    <!-- Материалы -->
+                    <div class="bg-gray-50 border rounded-lg p-3 space-y-1">
+                        <p class="font-bold text-gray-500 uppercase tracking-wider text-[10px]">📦 Материалы</p>
+                        <div class="flex justify-between">
+                            <span class="text-gray-500">План:</span>
+                            <span class="font-semibold text-gray-800">${formatMoney(planMaterials)}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-500">Факт:</span>
+                            <span class="font-semibold ${colorMaterials}">${formatMoney(facts.materials)}</span>
+                        </div>
+                        <div class="flex justify-between pt-1 border-t">
+                            <span class="font-bold text-gray-600">${balanceMaterials >= 0 ? 'Осталось:' : 'Перерасход:'}</span>
+                            <span class="font-bold ${balanceMaterials >= 0 ? 'text-emerald-700' : 'text-red-600'}">${formatMoney(Math.abs(balanceMaterials))}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Детализация операций (скрыто) -->
+                <div id="section-details-${idx}" class="hidden bg-gray-50 border-t p-4 space-y-2">
+                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider border-b pb-1">📋 Операции по разделу:</p>
+                    <div class="space-y-2">
+                        ${renderSectionOperations(ops)}
                     </div>
                 </div>
             </div>
@@ -420,12 +469,103 @@ export async function renderSectionsUI(project) {
 
     container.innerHTML = `
         <div class="space-y-3">
-            ${headerHtml}
+            ${summaryHtml}
             <div class="space-y-2">
                 ${sectionsHtml}
             </div>
         </div>
     `;
+}
+
+/**
+ * Загружает операции для всех разделов.
+ */
+async function loadAllSectionsExpenses(sections) {
+    const map = {};
+
+    await Promise.all(sections.map(async (sec) => {
+        const { data } = await loadExpensesBySection(sec.id);
+        map[sec.id] = data || [];
+    }));
+
+    return map;
+}
+
+/**
+ * Считает факт по разделу из операций.
+ * Категории: materials, works, delivery, other.
+ * Факт материалов = materials + delivery (доставка относится к материалам)
+ * Факт работ = works
+ */
+function calcFacts(operations) {
+    let works = 0;
+    let materials = 0;
+    let total = 0;
+
+    operations.forEach(op => {
+        const amount = Number(op.amount) || 0;
+        total += amount;
+
+        if (op.category === 'works') {
+            works += amount;
+        } else if (op.category === 'materials' || op.category === 'delivery') {
+            materials += amount;
+        }
+        // 'other' — не учитываем в работах/материалах, но учитываем в total
+    });
+
+    return { works, materials, total };
+}
+
+/**
+ * Рендерит список операций раздела.
+ */
+function renderSectionOperations(operations) {
+    if (!operations || operations.length === 0) {
+        return `<p class="text-xs text-gray-400 italic py-2">Операций по этому разделу пока нет</p>`;
+    }
+
+    return operations.map(op => {
+        const empName = op._employee?.name || 'Сотрудник';
+        const categoryLabel = getCategoryLabel(op.category);
+        const itemsCount = Array.isArray(op.items) ? op.items.length : 0;
+
+        return `
+            <div class="flex justify-between items-start gap-2 bg-white border rounded-lg p-2.5 text-xs">
+                <div class="flex-1 min-w-0">
+                    <p class="font-semibold text-gray-800">
+                        ${categoryLabel} 
+                        ${itemsCount > 0 ? `<span class="text-[10px] text-gray-500">(${itemsCount} поз.)</span>` : ''}
+                    </p>
+                    <p class="text-[11px] text-gray-500 truncate">${escapeHtml(op.description || '')}</p>
+                    <p class="text-[10px] text-gray-400 mt-0.5">
+                        👤 ${escapeHtml(empName)} · 📅 ${formatDate(op.operation_date || op.created_at)}
+                    </p>
+                </div>
+                <div class="flex flex-col items-end gap-1 shrink-0">
+                    <span class="font-bold text-red-600">− ${formatMoney(op.amount)}</span>
+                    ${op.receipt_path ? `<button onclick="event.stopPropagation(); window.viewReceipt('${escapeHtml(op.receipt_path)}')" class="text-[10px] text-blue-600 hover:underline">📎 Чек</button>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Переключает отображение деталей раздела.
+ */
+export function toggleSectionDetails(idx) {
+    const detailsEl = document.getElementById(`section-details-${idx}`);
+    const arrowEl = document.getElementById(`section-arrow-${idx}`);
+    if (!detailsEl) return;
+
+    if (detailsEl.classList.contains('hidden')) {
+        detailsEl.classList.remove('hidden');
+        if (arrowEl) arrowEl.style.transform = 'rotate(180deg)';
+    } else {
+        detailsEl.classList.add('hidden');
+        if (arrowEl) arrowEl.style.transform = 'rotate(0deg)';
+    }
 }
 
 // =====================================================================
@@ -440,7 +580,6 @@ export async function uploadEstimateUI(projectId) {
     }
 
     const file = input.files[0];
-
     toast('Загружаем смету...', 'info');
 
     const result = await uploadEstimate(projectId, file);
@@ -519,3 +658,4 @@ window.viewEstimateFile = viewEstimateFile;
 window.deleteEstimateUI = deleteEstimateUI;
 window.renderSectionsUI = renderSectionsUI;
 window.renderEstimateUI = renderEstimateUI;
+window.toggleSectionDetails = toggleSectionDetails;

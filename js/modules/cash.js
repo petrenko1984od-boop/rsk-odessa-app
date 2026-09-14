@@ -85,6 +85,47 @@ export async function loadOperations(employeeId, limit = 50) {
 }
 
 /**
+ * Загружает все расходы по разделу сметы.
+ * Используется в план-факте объекта.
+ */
+export async function loadExpensesBySection(sectionId) {
+    if (!sectionId) return { data: [], error: null };
+
+    const { data, error } = await db.select('cash_operations', {
+        filters: {
+            section_id: sectionId,
+            operation_type: 'expense'
+        },
+        orderBy: { column: 'created_at', asc: false }
+    });
+
+    if (error) {
+        log.error('Ошибка загрузки расходов по разделу:', error.message);
+        return { data: [], error };
+    }
+
+    // Догружаем данные сотрудников
+    const ops = data || [];
+    if (ops.length > 0) {
+        const employeeIds = [...new Set(ops.map(o => o.employee_id).filter(Boolean))];
+        if (employeeIds.length > 0) {
+            const { data: employees } = await db.select('employees', {
+                filters: { 'id.in': employeeIds }
+            });
+
+            const empMap = {};
+            (employees || []).forEach(e => { empMap[e.id] = e; });
+
+            ops.forEach(op => {
+                op._employee = empMap[op.employee_id] || null;
+            });
+        }
+    }
+
+    return { data: ops, error: null };
+}
+
+/**
  * Выдача подотчёта.
  * Пока не вызывается из UI (интерфейс отложен), но функция готова.
  */
@@ -122,7 +163,6 @@ export async function addExpenseMulti(payload) {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
-    // Только за себя
     if (!isSelf) {
         toast('Можно вносить расход только за себя', 'error');
         return { success: false };
@@ -150,7 +190,6 @@ export async function addExpenseMulti(payload) {
         return { success: false };
     }
 
-    // Загрузка чека
     let receiptPath = null;
     if (receiptFile) {
         const path = `expense_${employeeId}/${Date.now()}_${sanitizeFileName(receiptFile.name)}`;
@@ -279,7 +318,6 @@ async function renderMyOperationsContent(emp) {
         ? operations.map(op => renderOperationRow(op)).join('')
         : '<p class="text-center text-gray-400 italic py-6 text-sm">Операций пока нет</p>';
 
-    // Кнопки — только для активных сотрудников с правом self
     const isActive = !emp.status || emp.status === 'active';
     const canExpense = can('cash_expense_self') && isActive;
     const canReturn = can('cash_return_self') && isActive;
@@ -389,7 +427,6 @@ export async function openExpenseModal(employeeId, returnToReport = false) {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
-    // Только за себя
     if (!isSelf) {
         toast('Можно вносить расход только за себя', 'error');
         return;
