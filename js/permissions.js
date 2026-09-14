@@ -20,6 +20,7 @@ let currentEmployee = null;
 
 const ROLE_PERMISSIONS = {
     'Администратор': [
+        // Сотрудники
         'view_employees',
         'add_employee',
         'edit_employee',
@@ -28,39 +29,56 @@ const ROLE_PERMISSIONS = {
         'delete_employee',
         'link_account',
         'unlink_account',
-        'view_tab_employees'      // ← Видит вкладку «Сотрудники»
+        'view_tab_employees',
+        // Подотчёт
+        'cash_issue',            // Выдавать подотчёт
+        'cash_expense_any',      // Вносить расход за любого
+        'cash_return_any',       // Возврат за любого
+        'cash_view_all'          // Видеть балансы всех
     ],
     'Директор': [
         'view_employees',
-        'view_tab_employees'      // ← Видит вкладку, но не управляет
+        'view_tab_employees',
+        'cash_issue',
+        'cash_expense_any',
+        'cash_return_any',
+        'cash_view_all'
     ],
     'Главный инженер': [
         'view_employees',
-        'view_tab_employees'
+        'view_tab_employees',
+        'cash_issue',
+        'cash_expense_any',
+        'cash_return_any',
+        'cash_view_all'
     ],
     'Снабженец': [
         'view_employees',
-        'view_tab_employees'
+        'view_tab_employees',
+        'cash_expense_self',     // Только свои расходы
+        'cash_return_self'       // Только свой возврат
     ],
     'Инженер ПТО': [
         'view_employees',
-        'view_tab_employees'
+        'view_tab_employees',
+        'cash_expense_self',
+        'cash_return_self'
     ],
     'Прораб': [
-        // Прораб НЕ видит вкладку «Сотрудники»
+        // Вкладку «Сотрудники» НЕ видит
         // Свою карточку смотрит через профиль в шапке
+        'cash_expense_self',     // Может вносить свои расходы
+        'cash_return_self'       // Может делать возврат
     ]
 };
 
 // =====================================================================
 // КАКИЕ ВКЛАДКИ ВИДНЫ ПО РОЛЯМ
 // =====================================================================
-// Вкладка видна, если в её правах есть указанное разрешение.
-// =====================================================================
 
 const TAB_REQUIREMENTS = {
-    'projects':  null,              // Видна всем
-    'employees': 'view_tab_employees', // Только по правам
+    'projects':  null,
+    'employees': 'view_tab_employees',
     'orders':    null,
     'registry':  null,
     'new-order': null
@@ -113,11 +131,10 @@ export function isLinked() {
 
 /**
  * Проверяет, может ли текущий пользователь ВИДЕТЬ вкладку.
- * Используется для скрытия кнопок в шапке.
  */
 export function canSeeTab(tabId) {
     const required = TAB_REQUIREMENTS[tabId];
-    if (!required) return true; // Вкладка без требований — видна всем
+    if (!required) return true;
     return can(required);
 }
 

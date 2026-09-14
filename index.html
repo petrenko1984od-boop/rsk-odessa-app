@@ -24,7 +24,6 @@
                 <p class="text-xs text-gray-500 mt-1">Управление строительством</p>
             </div>
 
-            <!-- Табы: Вход / Регистрация -->
             <div class="flex bg-gray-100 rounded-lg p-1 mb-4">
                 <button type="button" onclick="switchAuthTab('login')" id="auth-tab-login"
                         class="flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow">
@@ -36,7 +35,6 @@
                 </button>
             </div>
 
-            <!-- Форма ВХОДА -->
             <form id="login-form" class="space-y-3">
                 <input type="email" id="login-email" placeholder="Email" required autocomplete="email"
                        class="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
@@ -48,7 +46,6 @@
                 </button>
             </form>
 
-            <!-- Форма РЕГИСТРАЦИИ -->
             <form id="register-form" class="space-y-3 hidden">
                 <input type="email" id="register-email" placeholder="Email" required autocomplete="email"
                        class="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
@@ -124,26 +121,30 @@
                     <button onclick="switchTab('registry')" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
                     <button onclick="switchTab('new-order')" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">➕ Новая заявка</button>
 
-                    <!-- ПРОФИЛЬ (dropdown) -->
                     <div class="relative">
                         <button onclick="toggleProfileMenu()" id="profile-btn"
                                 class="flex items-center gap-2 px-2 py-1.5 bg-[#16a34a] hover:bg-[#166534] rounded-lg text-xs sm:text-sm font-semibold transition shadow">
                             <span id="profile-avatar" class="w-7 h-7 rounded-full bg-white text-[#15803d] flex items-center justify-center font-bold text-xs">?</span>
-                            <span id="profile-name-short" class="hidden sm:inline max-w-[80px] truncate">Профиль</span>
+                            <span id="profile-name-short" class="hidden sm:inline max-w-[80px] truncate">Кабинет</span>
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                             </svg>
                         </button>
 
-                        <!-- Меню -->
                         <div id="profile-menu" class="hidden absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden">
-                            <div class="bg-emerald-50 p-3 border-b">
+                            <div class="bg-emerald-50 p-3 border-b space-y-1">
                                 <p class="font-bold text-[#166534] text-sm" id="profile-name">—</p>
                                 <p class="text-xs text-gray-600" id="profile-position">—</p>
-                                <p class="text-xs text-gray-500 mt-1" id="profile-phone">—</p>
+                                <div id="profile-balance" class="pt-1">
+                                    <span class="text-xs text-gray-500">💰 Подотчёт:</span>
+                                    <span class="text-gray-500 font-bold text-sm ml-1">⚪ 0,00 грн</span>
+                                </div>
                             </div>
                             <button onclick="openMyCard()" class="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 transition flex items-center gap-2 border-b">
                                 👤 <span>Моя карточка</span>
+                            </button>
+                            <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 transition flex items-center gap-2 border-b">
+                                💰 <span>Мои операции</span>
                             </button>
                             <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm hover:bg-red-50 text-red-600 transition flex items-center gap-2">
                                 🚪 <span>Выйти</span>
@@ -297,6 +298,22 @@
             <div id="link-user-content" class="space-y-3 text-sm"></div>
             <div class="flex gap-2 pt-2 border-t">
                 <button type="button" onclick="hideModal('link-user-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         МОДАЛКА: МОИ ОПЕРАЦИИ (подотчёт)
+         ============================================================ -->
+    <div id="my-operations-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
+        <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">💰 Мои операции</h3>
+                <button onclick="closeMyOperations()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="my-operations-content" class="space-y-3"></div>
+            <div class="pt-2 border-t flex justify-end">
+                <button onclick="closeMyOperations()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
             </div>
         </div>
     </div>
