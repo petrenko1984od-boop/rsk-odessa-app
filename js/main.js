@@ -1,28 +1,23 @@
 // =====================================================================
 // RSK ODESSA — ТОЧКА ВХОДА ПРИЛОЖЕНИЯ
 // =====================================================================
-// Запускается первым. Он:
-//   1. Инициализирует экран логина
-//   2. После входа показывает приложение
-//   3. Загружает права доступа
-//   4. Подключает модули разделов
-// =====================================================================
 
 import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
-import { loadPermissions } from './permissions.js';
+import { loadPermissions, canSeeTab, getEmployee } from './permissions.js';
 
 // Модули разделов
 import {
     loadEmployees,
     openAddEmployeeModal,
     saveNewEmployee,
-    confirmDeactivate
+    confirmDeactivate,
+    openEmployeeCard
 } from './modules/employees.js';
 
 // =====================================================================
-// СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+// СОСТОЯНИЕ
 // =====================================================================
 
 export const AppState = {
@@ -40,6 +35,12 @@ const ALL_TABS = ['welcome', 'projects', 'employees', 'orders', 'registry', 'new
 const TAB_BUTTONS = ['projects', 'employees', 'orders', 'registry', 'new-order'];
 
 export function switchTab(tabId) {
+    // Проверка прав: есть ли доступ к вкладке?
+    if (!canSeeTab(tabId) && tabId !== 'welcome') {
+        toast('Недостаточно прав для этого раздела', 'error');
+        return;
+    }
+
     // Скрываем все вкладки
     ALL_TABS.forEach(t => {
         const el = document.getElementById(`tab-${t}`);
@@ -74,16 +75,126 @@ export function switchTab(tabId) {
 window.switchTab = switchTab;
 
 // =====================================================================
-// СТАРТ ПРИЛОЖЕНИЯ
+// ПРИМЕНЕНИЕ ПРАВ К UI
 // =====================================================================
 
-async function startApp(user) {
-    if (AppState.isReady) {
-        log.warn('Приложение уже запущено');
+/**
+ * Скрывает/показывает вкладки по правам текущего пользователя.
+ * Вызывается после loadPermissions().
+ */
+function applyPermissionsToUI() {
+    // Вкладка «Сотрудники» — только если есть право
+    const employeesBtn = document.getElementById('btn-employees');
+    if (employeesBtn) {
+        if (canSeeTab('employees')) {
+            employeesBtn.style.display = '';
+        } else {
+            employeesBtn.style.display = 'none';
+        }
+    }
+
+    // Остальные вкладки — видны всем (пока без ограничений)
+    // Но структура готова: можно добавить аналогичные проверки
+}
+
+// =====================================================================
+// ПРОФИЛЬ В ШАПКЕ
+// =====================================================================
+
+/**
+ * Открывает/закрывает dropdown профиля.
+ */
+export function toggleProfileMenu() {
+    const menu = document.getElementById('profile-menu');
+    if (!menu) return;
+    menu.classList.toggle('hidden');
+}
+
+window.toggleProfileMenu = toggleProfileMenu;
+
+/**
+ * Открывает карточку ТЕКУЩЕГО сотрудника (свой профиль).
+ */
+export function openMyCard() {
+    const emp = getEmployee();
+
+    if (!emp) {
+        toast('Ваш аккаунт не привязан к сотруднику', 'warning');
         return;
     }
 
+    // Закрываем dropdown
+    const menu = document.getElementById('profile-menu');
+    if (menu) menu.classList.add('hidden');
+
+    // Открываем карточку
+    openEmployeeCard(emp.id);
+}
+
+window.openMyCard = openMyCard;
+
+/**
+ * Заполняет шапку данными профиля.
+ */
+function renderProfile() {
+    const emp = getEmployee();
+    if (!emp) {
+        // Если нет привязки — просто показываем "?"
+        return;
+    }
+
+    // Инициалы
+    const initials = emp.name
+        ? emp.name.trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase()
+        : '?';
+
+    const avatarEl = document.getElementById('profile-avatar');
+    if (avatarEl) avatarEl.textContent = initials;
+
+    const nameShortEl = document.getElementById('profile-name-short');
+    if (nameShortEl) {
+        nameShortEl.textContent = emp.name?.split(' ')[0] || 'Профиль';
+    }
+
+    const nameEl = document.getElementById('profile-name');
+    if (nameEl) nameEl.textContent = emp.name || '—';
+
+    const posEl = document.getElementById('profile-position');
+    if (posEl) posEl.textContent = emp.position || '—';
+
+    const phoneEl = document.getElementById('profile-phone');
+    if (phoneEl) {
+        phoneEl.innerHTML = emp.phone 
+            ? `📞 <a href="tel:${emp.phone}" class="text-[#15803d] hover:underline">${emp.phone}</a>`
+            : '📞 —';
+    }
+}
+
+// =====================================================================
+// ЗАКРЫТИЕ DROPDOWN ПРИ КЛИКЕ ВНЕ НЕГО
+// =====================================================================
+
+document.addEventListener('click', (e) => {
+    const menu = document.getElementById('profile-menu');
+    const btn = document.getElementById('profile-btn');
+    if (!menu || !btn) return;
+    if (menu.classList.contains('hidden')) return;
+
+    // Если клик НЕ по кнопке и НЕ по меню → закрываем
+    if (!btn.contains(e.target) && !menu.contains(e.target)) {
+        menu.classList.add('hidden');
+    }
+});
+
+// =====================================================================
+// СТАРТ / СТОП ПРИЛОЖЕНИЯ
+// =====================================================================
+
+async function startApp(user) {
+    if (AppState.isReady) return;
+
     document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('pending-screen').classList.add('hidden');
     document.getElementById('app-container').classList.remove('hidden');
 
     log.info('🚀 Запуск приложения для:', user?.email);
@@ -91,8 +202,14 @@ async function startApp(user) {
 
     toast(`Добро пожаловать, ${user?.email || 'гость'}!`, 'success');
 
-    // Загружаем права доступа ДО загрузки данных
+    // Загружаем права ДО любых проверок
     await loadPermissions();
+
+    // Применяем права к UI (скрытие вкладок)
+    applyPermissionsToUI();
+
+    // Обновляем профиль в шапке
+    renderProfile();
 
     // Загружаем данные
     try {
@@ -109,7 +226,7 @@ async function startApp(user) {
 }
 
 function stopApp() {
-    log.info('Приложение остановлено (выход пользователя)');
+    log.info('Приложение остановлено (выход)');
     AppState.isReady = false;
     AppState.currentUserEmail = null;
     AppState.currentTab = 'welcome';
@@ -143,7 +260,6 @@ window.hideModal = (id) => document.getElementById(id)?.classList.add('hidden');
 
 function boot() {
     log.info(`Загрузка ${CONFIG.APP.NAME} v${CONFIG.APP.VERSION}`);
-
     bindForms();
 
     initLoginScreen({

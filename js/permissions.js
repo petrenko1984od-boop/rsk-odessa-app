@@ -2,12 +2,6 @@
 // RSK ODESSA — ПРАВА ДОСТУПА
 // =====================================================================
 // Единое место для всех правил доступа.
-//
-// Использование:
-//   import { loadPermissions, can, getRole, isAdmin } from './permissions.js';
-//
-//   await loadPermissions();
-//   if (can('block_employee')) ...
 // =====================================================================
 
 import { getCurrentEmployee } from './auth.js';
@@ -17,8 +11,8 @@ import { log } from './utils.js';
 // СОСТОЯНИЕ
 // =====================================================================
 
-let currentRole = null;      // 'Администратор' | 'Директор' | 'Прораб' | ...
-let currentEmployee = null;  // объект сотрудника или null
+let currentRole = null;
+let currentEmployee = null;
 
 // =====================================================================
 // МАТРИЦА ПРАВ ПО РОЛЯМ
@@ -29,36 +23,60 @@ const ROLE_PERMISSIONS = {
         'view_employees',
         'add_employee',
         'edit_employee',
-        'block_employee',      // Блокировка (замена увольнения)
-        'restore_employee',    // Восстановление
-        'delete_employee',     // Полное удаление
-        'link_account',        // Привязка аккаунта
-        'unlink_account'       // Отвязка аккаунта
+        'block_employee',
+        'restore_employee',
+        'delete_employee',
+        'link_account',
+        'unlink_account',
+        'view_tab_employees'      // ← Видит вкладку «Сотрудники»
     ],
     'Директор': [
-        'view_employees'
+        'view_employees',
+        'view_tab_employees'      // ← Видит вкладку, но не управляет
     ],
-    'Главный инженер': ['view_employees'],
-    'Прораб':          ['view_employees'],
-    'Снабженец':       ['view_employees'],
-    'Инженер ПТО':     ['view_employees']
+    'Главный инженер': [
+        'view_employees',
+        'view_tab_employees'
+    ],
+    'Снабженец': [
+        'view_employees',
+        'view_tab_employees'
+    ],
+    'Инженер ПТО': [
+        'view_employees',
+        'view_tab_employees'
+    ],
+    'Прораб': [
+        // Прораб НЕ видит вкладку «Сотрудники»
+        // Свою карточку смотрит через профиль в шапке
+    ]
+};
+
+// =====================================================================
+// КАКИЕ ВКЛАДКИ ВИДНЫ ПО РОЛЯМ
+// =====================================================================
+// Вкладка видна, если в её правах есть указанное разрешение.
+// =====================================================================
+
+const TAB_REQUIREMENTS = {
+    'projects':  null,              // Видна всем
+    'employees': 'view_tab_employees', // Только по правам
+    'orders':    null,
+    'registry':  null,
+    'new-order': null
 };
 
 // =====================================================================
 // ЗАГРУЗКА ПРАВ
 // =====================================================================
 
-/**
- * Загружает текущего сотрудника и определяет его роль.
- * Вызывается один раз после логина.
- */
 export async function loadPermissions() {
     const { employee, error } = await getCurrentEmployee();
 
     if (error || !employee) {
         currentRole = null;
         currentEmployee = null;
-        log.warn('⚠️ Пользователь не привязан к сотруднику. Права: только просмотр.');
+        log.warn('⚠️ Пользователь не привязан к сотруднику. Права: минимум.');
         return;
     }
 
@@ -94,6 +112,16 @@ export function isLinked() {
 }
 
 /**
+ * Проверяет, может ли текущий пользователь ВИДЕТЬ вкладку.
+ * Используется для скрытия кнопок в шапке.
+ */
+export function canSeeTab(tabId) {
+    const required = TAB_REQUIREMENTS[tabId];
+    if (!required) return true; // Вкладка без требований — видна всем
+    return can(required);
+}
+
+/**
  * Требует наличия права. Если нет — тост + возврат false.
  */
 export function requirePermission(action) {
@@ -115,6 +143,7 @@ export function getAllPermissions() {
 // Отладка через консоль
 window.Permissions = {
     can,
+    canSeeTab,
     getRole,
     isAdmin,
     getAllPermissions
