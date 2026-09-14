@@ -2,16 +2,7 @@
 // МОДУЛЬ: ПОДОТЧЁТНЫЕ СРЕДСТВА
 // =====================================================================
 // Учёт денег, выданных сотрудникам в подотчёт.
-//
-// Типы операций:
-//   - issue      (выдача)         → + к балансу
-//   - expense    (расход)         → − к балансу
-//   - return     (возврат)        → − к балансу
-//   - adjustment (корректировка)  → + к балансу
-//
-// Расход (expense) содержит:
-//   - items: JSONB массив позиций [{name, unit, qty, price, sum}]
-//   - receipt_path: путь к фото чека в Storage (bucket 'receipts')
+// Все действия сотрудника — в своём кабинете (Финансовый отчёт).
 // =====================================================================
 
 import { db } from '../database.js';
@@ -40,7 +31,7 @@ export function formatBalance(balance) {
 }
 
 // =====================================================================
-// ЗАГРУЗКА БАЛАНСА
+// БАЛАНС
 // =====================================================================
 
 export async function loadBalance(employeeId) {
@@ -71,7 +62,7 @@ export async function loadAllBalances() {
 }
 
 // =====================================================================
-// ЗАГРУЗКА ИСТОРИИ ОПЕРАЦИЙ
+// ОПЕРАЦИИ
 // =====================================================================
 
 export async function loadOperations(employeeId, limit = 50) {
@@ -89,12 +80,8 @@ export async function loadOperations(employeeId, limit = 50) {
     return { data: data || [], error: null };
 }
 
-// =====================================================================
-// СОЗДАНИЕ ОПЕРАЦИЙ
-// =====================================================================
-
 /**
- * Выдача подотчёта (issue).
+ * Выдача подотчёта (только кассир — пригодится позже).
  */
 export async function addIssue(employeeId, amount, comment = '') {
     if (!requirePermission('cash_issue')) return { success: false };
@@ -114,15 +101,7 @@ export async function addIssue(employeeId, amount, comment = '') {
 }
 
 /**
- * Расход с позициями и чеком.
- * @param {Object} payload
- *   - employeeId — кому в подотчёт (обычно тот, кто тратит)
- *   - projectId — объект (nullable)
- *   - sectionId — раздел сметы (nullable)
- *   - category — 'materials' | 'works' | 'delivery' | 'other'
- *   - items — массив [{name, unit, qty, price, sum}]
- *   - receiptFile — File (фото чека, nullable)
- *   - comment — комментарий
+ * Расход (для своего кабинета).
  */
 export async function addExpenseMulti(payload) {
     const {
@@ -153,7 +132,6 @@ export async function addExpenseMulti(payload) {
         return { success: false };
     }
 
-    // Считаем общую сумму
     const totalAmount = items.reduce((sum, it) => sum + (Number(it.sum) || 0), 0);
 
     if (totalAmount <= 0) {
@@ -161,7 +139,7 @@ export async function addExpenseMulti(payload) {
         return { success: false };
     }
 
-    // Загрузка чека (если есть)
+    // Загрузка чека
     let receiptPath = null;
     if (receiptFile) {
         const path = `expense_${employeeId}/${Date.now()}_${sanitizeFileName(receiptFile.name)}`;
@@ -182,14 +160,14 @@ export async function addExpenseMulti(payload) {
         category,
         project_id: projectId || null,
         section_id: sectionId || null,
-        items: items,           // JSONB
+        items: items,
         receipt_path: receiptPath,
         description: comment || 'Расход'
     });
 }
 
 /**
- * Возврат в кассу (return).
+ * Возврат в кассу.
  */
 export async function addReturn(employeeId, amount, comment = '') {
     const current = getEmployee();
@@ -214,9 +192,6 @@ export async function addReturn(employeeId, amount, comment = '') {
     });
 }
 
-/**
- * Внутренняя: создаёт запись в cash_operations.
- */
 async function createOperation(payload) {
     const { user } = await getCurrentUser();
 
@@ -239,7 +214,7 @@ async function createOperation(payload) {
 }
 
 // =====================================================================
-// UI — БАЛАНС В ПРОФИЛЕ (шапка)
+// ПРОФИЛЬ В ШАПКЕ
 // =====================================================================
 
 export async function renderProfileBalance() {
@@ -259,9 +234,12 @@ export async function renderProfileBalance() {
 }
 
 // =====================================================================
-// UI — МОДАЛКА «ФИНАНСОВЫЙ ОТЧЁТ»
+// UI — «ФИНАНСОВЫЙ ОТЧЁТ» (расширенный)
 // =====================================================================
 
+/**
+ * Открывает модалку «Финансовый отчёт» с балансом, кнопками и историей.
+ */
 export async function openMyOperations() {
     const emp = getEmployee();
     if (!emp) {
@@ -272,42 +250,53 @@ export async function openMyOperations() {
     const menu = document.getElementById('profile-menu');
     if (menu) menu.classList.add('hidden');
 
-    await renderFinancialReport(emp.id, 'my-operations-content', false);
+    await renderMyOperationsContent(emp);
     document.getElementById('my-operations-modal').classList.remove('hidden');
 }
 
 /**
- * Отрисовывает финансовый отчёт (баланс + операции) в указанный контейнер.
- * @param {number} employeeId
- * @param {string} containerId
- * @param {boolean} isReadOnly — если true, не показываем кнопки (для чужих карточек)
+ * Отрисовывает содержимое финансового отчёта.
  */
-export async function renderFinancialReport(employeeId, containerId, isReadOnly = false) {
-    const container = document.getElementById(containerId);
+async function renderMyOperationsContent(emp) {
+    const container = document.getElementById('my-operations-content');
     if (!container) return;
 
-    const { data: operations } = await loadOperations(employeeId, 50);
-    const { balance } = await loadBalance(employeeId);
+    const { data: operations } = await loadOperations(emp.id, 50);
+    const { balance } = await loadBalance(emp.id);
     const formatted = formatBalance(balance);
 
     const opsHtml = operations.length > 0
         ? operations.map(op => renderOperationRow(op)).join('')
         : '<p class="text-center text-gray-400 italic py-6 text-sm">Операций пока нет</p>';
 
+    // Кнопки — только для активных сотрудников
+    const isActive = !emp.status || emp.status === 'active';
+    const canExpense = can('cash_expense_self') && isActive;
+    const canReturn = can('cash_return_self') && isActive;
+
+    let buttonsHtml = '';
+    if (canExpense || canReturn) {
+        buttonsHtml = `
+            <div class="flex flex-wrap gap-2 pt-2">
+                ${canExpense ? `<button onclick="window.myOpenExpense()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">🛒 Внести расход</button>` : ''}
+                ${canReturn ? `<button onclick="window.myOpenReturn()" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">↩️ Возврат</button>` : ''}
+            </div>
+        `;
+    }
+
     container.innerHTML = `
         <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex justify-between items-center">
             <span class="text-xs font-bold text-gray-600 uppercase">Текущий баланс</span>
             <span class="${formatted.color} font-bold text-lg">${formatted.icon} ${formatted.text}</span>
         </div>
-        <div class="space-y-2 pt-2">
+        ${buttonsHtml}
+        <div class="space-y-2 pt-2 border-t mt-2">
+            <p class="text-xs font-bold text-gray-500 uppercase tracking-wider pt-2">📋 История операций</p>
             ${opsHtml}
         </div>
     `;
 }
 
-/**
- * Рендер одной строки операции (с разворачиванием позиций).
- */
 function renderOperationRow(op) {
     const typeInfo = getOperationTypeInfo(op.operation_type);
     const isIncome = op.operation_type === 'issue' || op.operation_type === 'adjustment';
@@ -316,7 +305,6 @@ function renderOperationRow(op) {
 
     const categoryLabel = op.category ? getCategoryLabel(op.category) : '';
 
-    // Позиции (для expense)
     let itemsHtml = '';
     if (op.operation_type === 'expense' && Array.isArray(op.items) && op.items.length > 0) {
         itemsHtml = `
@@ -332,7 +320,6 @@ function renderOperationRow(op) {
         `;
     }
 
-    // Чек
     const receiptHtml = op.receipt_path 
         ? `<button onclick="window.viewReceipt('${escapeHtml(op.receipt_path)}')" class="text-[10px] text-blue-600 hover:underline mt-1">📎 Просмотреть чек</button>`
         : '';
@@ -359,20 +346,40 @@ function renderOperationRow(op) {
 }
 
 // =====================================================================
-// UI — МОДАЛКИ СОЗДАНИЯ ОПЕРАЦИЙ
+// КНОПКИ В КАБИНЕТЕ (свои операции)
 // =====================================================================
 
-/**
- * Открывает модалку выдачи подотчёта для сотрудника.
- */
+export function myOpenExpense() {
+    const emp = getEmployee();
+    if (!emp) {
+        toast('Ваш аккаунт не привязан', 'warning');
+        return;
+    }
+
+    hideModal('my-operations-modal');
+    openExpenseModal(emp.id, true); // true = возврат в отчёт после сохранения
+}
+
+export function myOpenReturn() {
+    const emp = getEmployee();
+    if (!emp) {
+        toast('Ваш аккаунт не привязан', 'warning');
+        return;
+    }
+
+    hideModal('my-operations-modal');
+    openReturnModal(emp.id, true);
+}
+
+// =====================================================================
+// МОДАЛКИ
+// =====================================================================
+
 export function openIssueModal(employeeId) {
     if (!requirePermission('cash_issue')) return;
 
     const emp = window.__getEmployeeById?.(employeeId);
-    if (!emp) {
-        toast('Сотрудник не найден', 'error');
-        return;
-    }
+    if (!emp) { toast('Сотрудник не найден', 'error'); return; }
 
     document.getElementById('cash-issue-employee-id').value = employeeId;
     document.getElementById('cash-issue-title').textContent = `💵 Выдать подотчёт — ${emp.name}`;
@@ -382,10 +389,7 @@ export function openIssueModal(employeeId) {
     window.showModal('cash-issue-modal');
 }
 
-/**
- * Открывает модалку расхода.
- */
-export async function openExpenseModal(employeeId) {
+export async function openExpenseModal(employeeId, returnToReport = false) {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
@@ -395,39 +399,30 @@ export async function openExpenseModal(employeeId) {
     }
 
     const emp = window.__getEmployeeById?.(employeeId);
-    if (!emp) {
-        toast('Сотрудник не найден', 'error');
-        return;
-    }
+    if (!emp) { toast('Сотрудник не найден', 'error'); return; }
 
     document.getElementById('cash-expense-employee-id').value = employeeId;
+    document.getElementById('cash-expense-employee-id').dataset.returnToReport = returnToReport ? '1' : '';
     document.getElementById('cash-expense-title').textContent = `🛒 Внести расход — ${emp.name}`;
 
-    // Очищаем форму
+    // Очищаем
     document.getElementById('cash-expense-project').value = '';
     document.getElementById('cash-expense-section').innerHTML = '<option value="">Сначала выбери объект</option>';
     document.getElementById('cash-expense-category').value = 'materials';
     document.getElementById('cash-expense-comment').value = '';
     document.getElementById('cash-expense-receipt').value = '';
 
-    // Позиции — начинаем с одной пустой строки
     const itemsContainer = document.getElementById('cash-expense-items');
     itemsContainer.innerHTML = '';
     addExpenseItemRow();
 
-    // Загружаем объекты (для dropdown)
     await loadProjectsForSelect();
-
-    // Обновляем итог
     recalcExpenseTotal();
 
     window.showModal('cash-expense-modal');
 }
 
-/**
- * Открывает модалку возврата.
- */
-export function openReturnModal(employeeId) {
+export function openReturnModal(employeeId, returnToReport = false) {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
@@ -437,12 +432,10 @@ export function openReturnModal(employeeId) {
     }
 
     const emp = window.__getEmployeeById?.(employeeId);
-    if (!emp) {
-        toast('Сотрудник не найден', 'error');
-        return;
-    }
+    if (!emp) { toast('Сотрудник не найден', 'error'); return; }
 
     document.getElementById('cash-return-employee-id').value = employeeId;
+    document.getElementById('cash-return-employee-id').dataset.returnToReport = returnToReport ? '1' : '';
     document.getElementById('cash-return-title').textContent = `↩️ Возврат — ${emp.name}`;
     document.getElementById('cash-return-amount').value = '';
     document.getElementById('cash-return-comment').value = '';
@@ -451,12 +444,9 @@ export function openReturnModal(employeeId) {
 }
 
 // =====================================================================
-// UI — ФОРМА РАСХОДА: ДИНАМИЧЕСКИЕ ПОЗИЦИИ
+// ФОРМА РАСХОДА: ДИНАМИЧЕСКИЕ ПОЗИЦИИ
 // =====================================================================
 
-/**
- * Добавляет строку позиции в форму расхода.
- */
 export function addExpenseItemRow() {
     const container = document.getElementById('cash-expense-items');
     if (!container) return;
@@ -496,13 +486,9 @@ export function addExpenseItemRow() {
         </div>
     `;
     container.appendChild(row);
-
     recalcExpenseTotal();
 }
 
-/**
- * Пересчитывает итоговую сумму расхода.
- */
 export function recalcExpenseTotal() {
     const rows = document.querySelectorAll('.expense-item-row');
     let total = 0;
@@ -517,9 +503,6 @@ export function recalcExpenseTotal() {
     if (totalEl) totalEl.textContent = formatMoney(total);
 }
 
-/**
- * Загружает объекты в dropdown формы расхода.
- */
 async function loadProjectsForSelect() {
     const select = document.getElementById('cash-expense-project');
     if (!select) return;
@@ -537,9 +520,6 @@ async function loadProjectsForSelect() {
         data.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
 }
 
-/**
- * Загружает разделы выбранного объекта.
- */
 export async function loadSectionsForExpense() {
     const projectId = parseInt(document.getElementById('cash-expense-project')?.value, 10);
     const sectionSelect = document.getElementById('cash-expense-section');
@@ -564,20 +544,22 @@ export async function loadSectionsForExpense() {
         data.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
 }
 
-/**
- * Обработчик сохранения расхода из формы.
- */
+// =====================================================================
+// СОХРАНЕНИЕ ФОРМ
+// =====================================================================
+
 export async function saveExpense(event) {
     event.preventDefault();
 
     const employeeId = parseInt(document.getElementById('cash-expense-employee-id').value, 10);
+    const returnToReport = document.getElementById('cash-expense-employee-id').dataset.returnToReport === '1';
+
     const projectId = parseInt(document.getElementById('cash-expense-project').value, 10) || null;
     const sectionId = parseInt(document.getElementById('cash-expense-section').value, 10) || null;
     const category = document.getElementById('cash-expense-category').value;
     const comment = document.getElementById('cash-expense-comment').value.trim();
     const receiptFile = document.getElementById('cash-expense-receipt')?.files[0] || null;
 
-    // Собираем позиции
     const rows = document.querySelectorAll('.expense-item-row');
     const items = [];
 
@@ -587,60 +569,39 @@ export async function saveExpense(event) {
         const unit = row.querySelector('.item-unit')?.value || 'шт';
         const price = parseNumber(row.querySelector('.item-price')?.value);
 
-        if (!name) {
-            toast('Заполни наименование во всех позициях', 'error');
-            return;
-        }
-        if (qty <= 0 || price <= 0) {
-            toast('Кол-во и цена должны быть больше нуля', 'error');
-            return;
-        }
+        if (!name) { toast('Заполни наименование во всех позициях', 'error'); return; }
+        if (qty <= 0 || price <= 0) { toast('Кол-во и цена должны быть больше нуля', 'error'); return; }
 
-        items.push({
-            name,
-            qty,
-            unit,
-            price,
-            sum: qty * price
-        });
+        items.push({ name, qty, unit, price, sum: qty * price });
     }
 
-    if (items.length === 0) {
-        toast('Добавь хотя бы одну позицию', 'error');
-        return;
-    }
+    if (items.length === 0) { toast('Добавь хотя бы одну позицию', 'error'); return; }
 
-    // Отправляем
     const result = await addExpenseMulti({
-        employeeId,
-        projectId,
-        sectionId,
-        category,
-        items,
-        receiptFile,
-        comment
+        employeeId, projectId, sectionId, category, items, receiptFile, comment
     });
 
     if (result.success) {
         toast(`Расход на ${formatMoney(items.reduce((s, i) => s + i.sum, 0))} сохранён`, 'success');
         window.hideModal('cash-expense-modal');
 
-        // Обновляем отчёт в модалке карточки, если она открыта
-        if (window.refreshEmployeeFinancials) {
-            await window.refreshEmployeeFinancials(employeeId);
-        }
-
-        // Обновляем баланс в профиле (если это свой расход)
+        // Обновляем баланс в профиле
         const current = getEmployee();
         if (current && current.id === employeeId) {
             await renderProfileBalance();
         }
+
+        // Возвращаемся в отчёт
+        if (returnToReport) {
+            const emp = window.__getEmployeeById?.(employeeId);
+            if (emp) {
+                await renderMyOperationsContent(emp);
+                document.getElementById('my-operations-modal').classList.remove('hidden');
+            }
+        }
     }
 }
 
-/**
- * Обработчик сохранения выдачи.
- */
 export async function saveIssue(event) {
     event.preventDefault();
 
@@ -654,10 +615,6 @@ export async function saveIssue(event) {
         toast(`Выдано ${formatMoney(amount)}`, 'success');
         window.hideModal('cash-issue-modal');
 
-        if (window.refreshEmployeeFinancials) {
-            await window.refreshEmployeeFinancials(employeeId);
-        }
-
         const current = getEmployee();
         if (current && current.id === employeeId) {
             await renderProfileBalance();
@@ -665,13 +622,12 @@ export async function saveIssue(event) {
     }
 }
 
-/**
- * Обработчик сохранения возврата.
- */
 export async function saveReturn(event) {
     event.preventDefault();
 
     const employeeId = parseInt(document.getElementById('cash-return-employee-id').value, 10);
+    const returnToReport = document.getElementById('cash-return-employee-id').dataset.returnToReport === '1';
+
     const amount = parseNumber(document.getElementById('cash-return-amount').value);
     const comment = document.getElementById('cash-return-comment').value.trim();
 
@@ -681,13 +637,17 @@ export async function saveReturn(event) {
         toast(`Возврат ${formatMoney(amount)} сохранён`, 'success');
         window.hideModal('cash-return-modal');
 
-        if (window.refreshEmployeeFinancials) {
-            await window.refreshEmployeeFinancials(employeeId);
-        }
-
         const current = getEmployee();
         if (current && current.id === employeeId) {
             await renderProfileBalance();
+        }
+
+        if (returnToReport) {
+            const emp = window.__getEmployeeById?.(employeeId);
+            if (emp) {
+                await renderMyOperationsContent(emp);
+                document.getElementById('my-operations-modal').classList.remove('hidden');
+            }
         }
     }
 }
@@ -763,7 +723,7 @@ function sanitizeFileName(originalName) {
 }
 
 // =====================================================================
-// ЭКСПОРТ ГЛОБАЛЬНЫХ ФУНКЦИЙ
+// ГЛОБАЛЬНЫЕ ФУНКЦИИ
 // =====================================================================
 
 window.openMyOperations = openMyOperations;
@@ -774,3 +734,5 @@ window.viewReceipt = viewReceipt;
 window.addExpenseItemRow = addExpenseItemRow;
 window.recalcExpenseTotal = recalcExpenseTotal;
 window.loadSectionsForExpense = loadSectionsForExpense;
+window.myOpenExpense = myOpenExpense;
+window.myOpenReturn = myOpenReturn;
