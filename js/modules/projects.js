@@ -20,6 +20,7 @@ import {
 import {
     can, requirePermission, getEmployee, isAdmin
 } from '../permissions.js';
+import { renderEstimateUI, renderSectionsUI } from './estimate.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -185,6 +186,12 @@ export async function openProjectDetail(id) {
     // Информация о прорабе
     renderProjectInfo(project);
 
+    // Отрисовываем вкладку «Файлы» (загрузка/просмотр сметы)
+    renderEstimateUI(project);
+
+    // Загружаем разделы для план-факта
+    await renderSectionsUI(project);
+
     // Кнопка удаления (только для Администратора)
     const deleteBtn = document.getElementById('card-proj-delete-btn');
     if (deleteBtn) {
@@ -196,10 +203,9 @@ export async function openProjectDetail(id) {
         }
     }
 
-    // Переключаемся на вкладку «Объекты» и открываем карточку
+    // Открываем карточку объекта
     const appContainer = document.getElementById('tab-project-detail');
     if (appContainer) {
-        // Скрываем все разделы приложения
         ['welcome', 'projects', 'employees', 'orders', 'registry', 'new-order'].forEach(t => {
             const el = document.getElementById(`tab-${t}`);
             if (el) el.classList.add('hidden');
@@ -380,6 +386,14 @@ export function updateProjectsBadge() {
 }
 
 // =====================================================================
+// ПОЛУЧИТЬ ТЕКУЩИЙ ОБЪЕКТ (для estimate.js)
+// =====================================================================
+
+export function getCurrentProject() {
+    return projectsCache.find(p => p.id === currentActiveProjId) || null;
+}
+
+// =====================================================================
 // ГЛОБАЛЬНЫЕ ФУНКЦИИ
 // =====================================================================
 
@@ -387,3 +401,4 @@ window.openProjectDetail = openProjectDetail;
 window.openAddProjectModal = openAddProjectModal;
 window.saveNewProject = saveNewProject;
 window.switchProjectSubTab = switchProjectSubTab;
+window.__getCurrentProject = getCurrentProject;
