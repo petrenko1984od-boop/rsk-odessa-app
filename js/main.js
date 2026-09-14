@@ -1,111 +1,138 @@
 // =====================================================================
 // RSK ODESSA — ТОЧКА ВХОДА ПРИЛОЖЕНИЯ
 // =====================================================================
-// Этот файл запускается первым. Он:
-//   1. Инициализирует экран логина через auth.js
-//   2. После успешного входа показывает приложение
-//   3. Загружает данные из Supabase по мере готовности модулей
-// =====================================================================
 
 import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
 
+// Модули разделов
+import {
+    loadEmployees,
+    openAddEmployeeModal,
+    saveNewEmployee,
+    confirmDeactivate
+} from './modules/employees.js';
+
 // =====================================================================
-// СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+// СОСТОЯНИЕ
 // =====================================================================
 
 export const AppState = {
     currentUserEmail: null,
     currentEmployee: null,
-    projects: [],
-    employees: [],
-    orders: [],
+    currentTab: 'welcome',
     isReady: false
 };
 
 // =====================================================================
-// ЗАПУСК ПРИЛОЖЕНИЯ ПОСЛЕ ВХОДА
+// НАВИГАЦИЯ ПО ВКЛАДКАМ
+// =====================================================================
+
+const ALL_TABS = ['welcome', 'projects', 'employees', 'orders', 'registry', 'new-order'];
+
+export function switchTab(tabId) {
+    // Скрываем все вкладки
+    ALL_TABS.forEach(t => {
+        const el = document.getElementById(`tab-${t}`);
+        if (el) el.classList.add('hidden');
+    });
+
+    // Показываем нужную
+    const target = document.getElementById(`tab-${tabId}`);
+    if (target) target.classList.remove('hidden');
+
+    // Подсветка кнопки
+    ['projects', 'employees', 'orders', 'registry', 'new-order'].forEach(t => {
+        const btn = document.getElementById(`btn-${t}`);
+        if (!btn) return;
+        if (t === tabId) {
+            btn.classList.remove('bg-[#16a34a]/70', 'hover:bg-[#16a34a]');
+            btn.classList.add('bg-[#16a34a]');
+        } else {
+            btn.classList.add('bg-[#16a34a]/70', 'hover:bg-[#16a34a]');
+            btn.classList.remove('bg-[#16a34a]');
+        }
+    });
+
+    AppState.currentTab = tabId;
+
+    // Триггеры на загрузку данных
+    if (tabId === 'employees') {
+        loadEmployees();
+    }
+}
+
+window.switchTab = switchTab;
+
+// =====================================================================
+// СТАРТ ПРИЛОЖЕНИЯ
 // =====================================================================
 
 async function startApp(user) {
-    if (AppState.isReady) {
-        log.warn('Приложение уже запущено, пропускаем повторную инициализацию');
-        return;
-    }
+    if (AppState.isReady) return;
 
-    // ---- Показываем приложение, скрываем экран логина ----
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('app-container').classList.remove('hidden');
 
     log.info('🚀 Запуск приложения для:', user?.email);
     AppState.currentUserEmail = user?.email || null;
 
-    // Приветствие
     toast(`Добро пожаловать, ${user?.email || 'гость'}!`, 'success');
 
-    // =================================================================
-    // ЗДЕСЬ ПОЗЖЕ БУДУТ ЗАГРУЖАТЬСЯ ДАННЫЕ
-    // Пример (когда напишем модули):
-    //
-    //   import { loadEmployees } from './modules/employees.js';
-    //   import { loadProjects }  from './modules/projects.js';
-    //   import { loadOrders }    from './modules/orders.js';
-    //
-    //   await Promise.all([
-    //       loadEmployees(),
-    //       loadProjects(),
-    //       loadOrders()
-    //   ]);
-    // =================================================================
+    // Загружаем данные
+    try {
+        await loadEmployees();
+    } catch (err) {
+        log.error('Ошибка загрузки данных:', err);
+    }
+
+    // Открываем приветственную вкладку
+    switchTab('welcome');
 
     AppState.isReady = true;
     log.info('✅ Приложение готово');
 }
 
-/**
- * Вызывается при выходе пользователя.
- */
 function stopApp() {
     log.info('Приложение остановлено (выход пользователя)');
     AppState.isReady = false;
     AppState.currentUserEmail = null;
-    AppState.currentEmployee = null;
-    AppState.projects = [];
-    AppState.employees = [];
-    AppState.orders = [];
+    AppState.currentTab = 'welcome';
 
-    // Скрываем приложение, показываем логин
     document.getElementById('app-container').classList.add('hidden');
     document.getElementById('auth-screen').classList.remove('hidden');
 }
 
 // =====================================================================
-// ИНИЦИАЛИЗАЦИЯ ВКЛАДОК (заглушка — полноценно в модулях)
+// ОБРАБОТЧИКИ ФОРМ
 // =====================================================================
 
-window.switchTab = function(tab) {
-    log.info('switchTab:', tab, '(модуль ещё не подключён)');
-    toast(`Раздел «${tab}» ещё в разработке`, 'info');
-};
+function bindForms() {
+    // Форма добавления сотрудника
+    const empForm = document.getElementById('employee-form');
+    if (empForm) empForm.addEventListener('submit', saveNewEmployee);
 
-// Глобальные хелперы для модальных окон (используются в onclick HTML)
-window.showModal = function(id) {
-    const el = document.getElementById(id);
-    if (el) el.classList.remove('hidden');
-};
-
-window.hideModal = function(id) {
-    const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
-};
+    // Форма деактивации
+    const deactForm = document.getElementById('deactivate-form');
+    if (deactForm) deactForm.addEventListener('submit', confirmDeactivate);
+}
 
 // =====================================================================
-// СТАРТ
+// ГЛОБАЛЬНЫЕ ХЕЛПЕРЫ
+// =====================================================================
+
+window.showModal = (id) => document.getElementById(id)?.classList.remove('hidden');
+window.hideModal = (id) => document.getElementById(id)?.classList.add('hidden');
+
+// =====================================================================
+// BOOT
 // =====================================================================
 
 function boot() {
     log.info(`Загрузка ${CONFIG.APP.NAME} v${CONFIG.APP.VERSION}`);
+
+    bindForms();
 
     initLoginScreen({
         onSuccess: (user) => {
@@ -119,12 +146,10 @@ function boot() {
     });
 }
 
-// Запускаем приложение, когда DOM готов
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
 } else {
     boot();
 }
 
-// Отладка через консоль
 window.AppState = AppState;
