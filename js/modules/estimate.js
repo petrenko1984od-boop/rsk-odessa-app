@@ -10,11 +10,6 @@
 //   4. Старые разделы объекта УДАЛЯЮТСЯ.
 //   5. Новые разделы пишутся в таблицу 'sections'.
 //   6. Обновляется путь к файлу в таблице 'projects'.
-//
-// Формат Excel (как в старом коде):
-//   - Строка с «Раздел:» — начало раздела
-//   - Строка с «Итого по разделу» — конец раздела
-//   - Колонки: 1/0 = название, 6 = работы, 7 = материалы, 8 = итого
 // =====================================================================
 
 import { db } from '../database.js';
@@ -22,18 +17,55 @@ import {
     log, toast, escapeHtml, formatMoney,
     formatDate, lockButton
 } from '../utils.js';
-import { requirePermission, getEmployee } from '../permissions.js';
+import { requirePermission } from '../permissions.js';
 import { CONFIG } from '../config.js';
+
+// =====================================================================
+// УТИЛИТА: ОЧИСТКА ИМЕНИ ФАЙЛА ДЛЯ STORAGE
+// =====================================================================
+
+/**
+ * Очищает имя файла от запрещённых символов.
+ * Транслитерирует кириллицу, заменяет спецсимволы на _.
+ */
+function sanitizeFileName(originalName) {
+    const lastDot = originalName.lastIndexOf('.');
+    const namePart = lastDot > 0 ? originalName.slice(0, lastDot) : originalName;
+    const ext = lastDot > 0 ? originalName.slice(lastDot) : '';
+
+    const translitMap = {
+        'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z',
+        'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+        'с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'ts','ч':'ch','ш':'sh','щ':'shch',
+        'ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+        'А':'A','Б':'B','В':'V','Г':'G','Д':'D','Е':'E','Ё':'E','Ж':'Zh','З':'Z',
+        'И':'I','Й':'Y','К':'K','Л':'L','М':'M','Н':'N','О':'O','П':'P','Р':'R',
+        'С':'S','Т':'T','У':'U','Ф':'F','Х':'H','Ц':'Ts','Ч':'Ch','Ш':'Sh','Щ':'Shch',
+        'Ъ':'','Ы':'Y','Ь':'','Э':'E','Ю':'Yu','Я':'Ya'
+    };
+
+    let result = '';
+    for (const ch of namePart) {
+        if (translitMap[ch]) {
+            result += translitMap[ch];
+        } else if (/[a-zA-Z0-9._-]/.test(ch)) {
+            result += ch;
+        } else {
+            result += '_';
+        }
+    }
+
+    result = result.replace(/_+/g, '_').replace(/^_|_$/g, '');
+    if (!result) result = 'estimate';
+    if (result.length > 80) result = result.slice(0, 80);
+
+    return result + ext.toLowerCase();
+}
 
 // =====================================================================
 // ЗАГРУЗКА ФАЙЛА + ПАРСИНГ + СОХРАНЕНИЕ
 // =====================================================================
 
-/**
- * Загружает и парсит смету для указанного объекта.
- * @param {number} projectId
- * @param {File} file — .xlsx файл
- */
 export async function uploadEstimate(projectId, file) {
     if (!projectId) {
         toast('Объект не выбран', 'error');
@@ -59,16 +91,21 @@ export async function uploadEstimate(projectId, file) {
     log.info(`Распарсено разделов: ${sections.length}`);
 
     if (sections.length === 0) {
-        toast('В файле не найдено ни одного раздела. Проверь формат сметы.', 'error');
+        toast('В файле не найдено ни одного раздела.', 'error');
         return { success: false };
     }
 
-    // 2. Загружаем файл в Storage
-    const path = `project_${projectId}/${Date.now()}_${file.name}`;
+    // 2. Загружаем файл в Storage — с безопасным именем
+    const safeName = sanitizeFileName(file.name);
+    const path = `project_${projectId}/${Date.now()}_${safeName}`;
+
+    log.info(`Безопасный путь: ${path}`);
+
     const uploadResult = await db.uploadFile(CONFIG.STORAGE.ESTIMATES_BUCKET, path, file);
 
     if (uploadResult.error) {
         toast('Ошибка загрузки файла: ' + uploadResult.error.message, 'error');
+        log.error('Детали ошибки загрузки:', uploadResult.error);
         return { success: false };
     }
 
@@ -97,10 +134,10 @@ export async function uploadEstimate(projectId, file) {
         return { success: false };
     }
 
-    // 5. Обновляем запись объекта (путь, имя, дата)
+    // 5. Обновляем запись объекта — здесь ХРАНИМ ОРИГИНАЛЬНОЕ ИМЯ
     const { error: updateError } = await db.update('projects', {
         estimate_file_path: uploadResult.path,
-        estimate_file_name: file.name,
+        estimate_file_name: file.name,       // ← оригинал для отображения
         estimate_uploaded_at: new Date().toISOString()
     }, { id: projectId });
 
@@ -116,11 +153,6 @@ export async function uploadEstimate(projectId, file) {
 // ПАРСИНГ EXCEL
 // =====================================================================
 
-/**
- * Парсит Excel-файл и возвращает массив разделов.
- * @param {File} file
- * @returns {Promise<{ success: boolean, sections?: Array, error?: string }>}
- */
 function parseExcelFile(file) {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -156,10 +188,6 @@ function parseExcelFile(file) {
     });
 }
 
-/**
- * Парсит строки Excel и возвращает разделы.
- * Логика: ищем «Раздел:» (начало) и «Итого по разделу» (конец).
- */
 function parseRows(rows) {
     const sections = [];
     let currentSection = null;
@@ -168,16 +196,13 @@ function parseRows(rows) {
         const row = rows[i];
         if (!row || row.length === 0) continue;
 
-        // Ищем текст в колонках 0 и 1 (иногда текст в одной из них)
         const rowText = String(row[1] || row[0] || '').trim().toLowerCase();
 
-        // Начало раздела
         if (rowText.includes('раздел:')) {
             if (currentSection) {
-                // Предыдущий раздел не был закрыт «Итого» — ошибка
                 return {
                     success: false,
-                    error: `Раздел «${currentSection.name}» не имеет строки «Итого по разделу». Проверь формат файла.`
+                    error: `Раздел «${currentSection.name}» не имеет строки «Итого по разделу».`
                 };
             }
 
@@ -190,7 +215,6 @@ function parseRows(rows) {
             continue;
         }
 
-        // Конец раздела — «Итого по разделу»
         if (rowText.includes('итого по разделу') && currentSection) {
             const pWorks = parseFloat(row[6]) || 0;
             const pMat = parseFloat(row[7]) || 0;
@@ -205,18 +229,17 @@ function parseRows(rows) {
         }
     }
 
-    // Если последний раздел не закрыт «Итого» — ошибка
     if (currentSection) {
         return {
             success: false,
-            error: `Раздел «${currentSection.name}» не имеет строки «Итого по разделу». Проверь формат файла.`
+            error: `Раздел «${currentSection.name}» не имеет строки «Итого по разделу».`
         };
     }
 
     if (sections.length === 0) {
         return {
             success: false,
-            error: 'Не найдено ни одного раздела. Проверь, что в файле есть строки «Раздел:» и «Итого по разделу».'
+            error: 'Не найдено ни одного раздела.'
         };
     }
 
@@ -255,15 +278,12 @@ export async function deleteEstimate(project) {
         return { success: false };
     }
 
-    // Удаляем файл из Storage
     if (project.estimate_file_path) {
         await db.deleteFile(CONFIG.STORAGE.ESTIMATES_BUCKET, project.estimate_file_path);
     }
 
-    // Удаляем разделы
     await db.remove('sections', { project_id: project.id });
 
-    // Обнуляем путь в проекте
     await db.update('projects', {
         estimate_file_path: null,
         estimate_file_name: null,
@@ -278,15 +298,11 @@ export async function deleteEstimate(project) {
 // UI — БЛОК ФАЙЛОВ (загрузка сметы)
 // =====================================================================
 
-/**
- * Отрисовывает блок «Файлы» в карточке объекта.
- */
 export function renderEstimateUI(project) {
     const container = document.getElementById('proj-subtab-files');
     if (!container) return;
 
     const hasEstimate = !!project.estimate_file_path;
-    const canEdit = requirePermission ? true : false; // Проверку сделает requirePermission при действии
 
     if (hasEstimate) {
         container.innerHTML = `
@@ -336,9 +352,6 @@ export function renderEstimateUI(project) {
 // UI — ПЛАН-ФАКТ (список разделов)
 // =====================================================================
 
-/**
- * Отрисовывает список разделов в подвкладке «План-факт».
- */
 export async function renderSectionsUI(project) {
     const container = document.getElementById('proj-subtab-planfact');
     if (!container) return;
@@ -364,7 +377,6 @@ export async function renderSectionsUI(project) {
         return;
     }
 
-    // Итоги
     let totalWorks = 0;
     let totalMaterials = 0;
     let totalAll = 0;
@@ -375,7 +387,6 @@ export async function renderSectionsUI(project) {
         totalAll += Number(s.plan_total) || 0;
     });
 
-    // Заголовок с итогами
     const headerHtml = `
         <div class="bg-emerald-600 text-white rounded-xl p-3 flex flex-wrap justify-between items-center gap-2 text-xs font-bold">
             <span>📊 Всего разделов: ${sections.length}</span>
@@ -385,7 +396,6 @@ export async function renderSectionsUI(project) {
         </div>
     `;
 
-    // Список разделов
     const sectionsHtml = sections.map((sec, idx) => {
         const planTotal = Number(sec.plan_total) || 0;
         const planWorks = Number(sec.plan_works) || 0;
@@ -422,9 +432,6 @@ export async function renderSectionsUI(project) {
 // UI — ОБРАБОТЧИКИ
 // =====================================================================
 
-/**
- * Обработчик кнопки «Загрузить и разобрать».
- */
 export async function uploadEstimateUI(projectId) {
     const input = document.getElementById(`estimate-file-input-${projectId}`);
     if (!input || input.files.length === 0) {
@@ -441,10 +448,8 @@ export async function uploadEstimateUI(projectId) {
     if (result.success) {
         toast(`Смета загружена! Разделов: ${result.sectionsCount}`, 'success');
 
-        // Обновляем карточку объекта
         const project = window.__getCurrentProject?.();
         if (project) {
-            // Перезагружаем проект из БД (обновляем пути)
             const { data } = await db.select('projects', {
                 select: '*, foreman:employees(id, name, position, phone, status)',
                 filters: { id: projectId },
@@ -461,9 +466,6 @@ export async function uploadEstimateUI(projectId) {
     }
 }
 
-/**
- * Просмотр оригинала сметы (скачивание).
- */
 export async function viewEstimateFile(projectId) {
     const { data: project } = await db.select('projects', {
         filters: { id: projectId },
@@ -480,7 +482,7 @@ export async function viewEstimateFile(projectId) {
     const { url, error } = await db.getFileUrl(
         CONFIG.STORAGE.ESTIMATES_BUCKET,
         project.estimate_file_path,
-        3600 // 1 час
+        3600
     );
 
     if (error || !url) {
@@ -488,13 +490,9 @@ export async function viewEstimateFile(projectId) {
         return;
     }
 
-    // Открываем в новой вкладке
     window.open(url, '_blank');
 }
 
-/**
- * Удаление сметы (UI-обёртка).
- */
 export async function deleteEstimateUI(projectId) {
     const { data: project } = await db.select('projects', {
         filters: { id: projectId },
@@ -506,7 +504,6 @@ export async function deleteEstimateUI(projectId) {
     const result = await deleteEstimate(project);
 
     if (result.success) {
-        // Обновляем карточку объекта
         const updatedProject = { ...project, estimate_file_path: null, estimate_file_name: null, estimate_uploaded_at: null };
         renderEstimateUI(updatedProject);
         await renderSectionsUI(updatedProject);
