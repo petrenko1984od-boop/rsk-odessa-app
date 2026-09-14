@@ -121,9 +121,6 @@
                     <button onclick="switchTab('registry')" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
                     <button onclick="switchTab('new-order')" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">➕ Новая заявка</button>
 
-                    <!-- ==================================================
-                         ПРОФИЛЬ (dropdown) — ИСПРАВЛЕН ЦВЕТ ТЕКСТА
-                         ================================================== -->
                     <div class="relative">
                         <button onclick="toggleProfileMenu()" id="profile-btn"
                                 class="flex items-center gap-2 px-2 py-1.5 bg-[#16a34a] hover:bg-[#166534] rounded-lg text-xs sm:text-sm font-semibold transition shadow text-white">
@@ -160,6 +157,9 @@
 
         <main class="max-w-6xl mx-auto p-4 mt-2">
 
+            <!-- ==================================================
+                 ВКЛАДКА: ПРИВЕТСТВИЕ
+                 ================================================== -->
             <section id="tab-welcome" class="space-y-4">
                 <div class="bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                     <div class="text-5xl">🚧</div>
@@ -168,14 +168,76 @@
                 </div>
             </section>
 
+            <!-- ==================================================
+                 ВКЛАДКА: ОБЪЕКТЫ (список)
+                 ================================================== -->
             <section id="tab-projects" class="hidden space-y-4">
-                <div class="bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
-                    <div class="text-5xl">🏗</div>
-                    <h2 class="text-lg font-bold text-gray-800">Раздел «Объекты»</h2>
-                    <p class="text-sm text-gray-500">В разработке.</p>
+                <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-800">🏗 Объекты</h2>
+                        <p class="text-xs text-gray-500">Управление строительными объектами</p>
+                    </div>
+                    <button onclick="openAddProjectModal()" id="add-project-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить объект</button>
+                </div>
+                <div id="projects-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+            </section>
+
+            <!-- ==================================================
+                 ЭКРАН: КАРТОЧКА ОБЪЕКТА
+                 ================================================== -->
+            <section id="tab-project-detail" class="hidden space-y-4">
+                <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
+                    <button onclick="switchTab('projects')" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                        ← Назад к списку объектов
+                    </button>
+                    <button id="card-proj-delete-btn" class="text-red-500 hover:text-red-700 text-xs font-semibold">🗑 Удалить объект</button>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-md p-6 space-y-6 border-t-4 border-[#15803d]">
+                    <div class="border-b pb-4">
+                        <h2 class="text-xl font-bold text-[#166534]" id="card-proj-title">🏗 Название объекта</h2>
+                    </div>
+
+                    <!-- 4 подвкладки внутри карточки -->
+                    <div class="flex flex-wrap gap-2 border-b pb-4">
+                        <button onclick="switchProjectSubTab('info')" id="subbtn-info" class="px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow">📌 Общая информация</button>
+                        <button onclick="switchProjectSubTab('planfact')" id="subbtn-planfact" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📊 План-факт</button>
+                        <button onclick="switchProjectSubTab('files')" id="subbtn-files" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📁 Файлы</button>
+                        <button onclick="switchProjectSubTab('schedule')" id="subbtn-schedule" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📅 График</button>
+                    </div>
+
+                    <!-- ПОДВКЛАДКА 1: Общая информация -->
+                    <div id="proj-subtab-info" class="space-y-4"></div>
+
+                    <!-- ПОДВКЛАДКА 2: План-факт -->
+                    <div id="proj-subtab-planfact" class="hidden space-y-4">
+                        <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
+                            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 План-факт</h3>
+                            <p class="text-xs text-gray-500">Раздел в разработке. Здесь будут разделы сметы с планируемыми и фактическими затратами.</p>
+                        </div>
+                    </div>
+
+                    <!-- ПОДВКЛАДКА 3: Файлы -->
+                    <div id="proj-subtab-files" class="hidden space-y-4">
+                        <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
+                            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📁 Файлы</h3>
+                            <p class="text-xs text-gray-500">Раздел в разработке. Здесь будет загрузка Excel-сметы.</p>
+                        </div>
+                    </div>
+
+                    <!-- ПОДВКЛАДКА 4: График -->
+                    <div id="proj-subtab-schedule" class="hidden space-y-4">
+                        <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
+                            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📅 График производства работ</h3>
+                            <p class="text-xs text-gray-500">Раздел в разработке.</p>
+                        </div>
+                    </div>
                 </div>
             </section>
 
+            <!-- ==================================================
+                 ВКЛАДКА: СОТРУДНИКИ
+                 ================================================== -->
             <section id="tab-employees" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
                     <div>
@@ -187,6 +249,9 @@
                 <div id="employees-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </section>
 
+            <!-- ==================================================
+                 ЗАГЛУШКИ: Снабжение / Реестр / Новая заявка
+                 ================================================== -->
             <section id="tab-orders" class="hidden bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                 <div class="text-5xl">📦</div>
                 <h2 class="text-lg font-bold text-gray-800">Раздел «Снабжение»</h2>
@@ -209,6 +274,33 @@
     </div>
 
     <!-- ============================================================
+         МОДАЛКА: НОВЫЙ ОБЪЕКТ
+         ============================================================ -->
+    <div id="project-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">🏗 Новый объект</h3>
+                <button onclick="hideModal('project-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="project-form" class="space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Название объекта: *</label>
+                    <input type="text" id="new-proj-name" required placeholder="Например: Частный дом (Ивановка)"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Ответственный прораб: *</label>
+                    <select id="new-proj-foreman" required class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить</button>
+                    <button type="button" onclick="hideModal('project-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============================================================
          МОДАЛКА: ДОБАВЛЕНИЕ СОТРУДНИКА
          ============================================================ -->
     <div id="employee-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -225,7 +317,7 @@
                 </div>
                 <div>
                     <label class="block text-xs font-semibold text-gray-600 mb-1">Должность: *</label>
-                    <select id="emp-position" required class="w-full border rounded-lg p-2.5 text-sm text-gray-800 bg-white outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                    <select id="emp-position" required class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
                 </div>
                 <div>
                     <label class="block text-xs font-semibold text-gray-600 mb-1">Телефон: *</label>

@@ -1,8 +1,6 @@
 // =====================================================================
 // RSK ODESSA — ПРАВА ДОСТУПА
 // =====================================================================
-// Единое место для всех правил доступа.
-// =====================================================================
 
 import { getCurrentEmployee } from './auth.js';
 import { log } from './utils.js';
@@ -31,10 +29,15 @@ const ROLE_PERMISSIONS = {
         'unlink_account',
         'view_tab_employees',
         // Подотчёт
-        'cash_issue',            // Выдавать подотчёт
-        'cash_expense_any',      // Вносить расход за любого
-        'cash_return_any',       // Возврат за любого
-        'cash_view_all'          // Видеть балансы всех
+        'cash_issue',
+        'cash_expense_any',
+        'cash_return_any',
+        'cash_view_all',
+        // Объекты
+        'view_projects_all',
+        'add_project',
+        'edit_project',
+        'delete_project'
     ],
     'Директор': [
         'view_employees',
@@ -42,7 +45,8 @@ const ROLE_PERMISSIONS = {
         'cash_issue',
         'cash_expense_any',
         'cash_return_any',
-        'cash_view_all'
+        'cash_view_all',
+        'view_projects_all'
     ],
     'Главный инженер': [
         'view_employees',
@@ -50,25 +54,28 @@ const ROLE_PERMISSIONS = {
         'cash_issue',
         'cash_expense_any',
         'cash_return_any',
-        'cash_view_all'
+        'cash_view_all',
+        'view_projects_all'
     ],
     'Снабженец': [
         'view_employees',
         'view_tab_employees',
-        'cash_expense_self',     // Только свои расходы
-        'cash_return_self'       // Только свой возврат
+        'cash_expense_self',
+        'cash_return_self',
+        'view_projects_all'      // Видит все объекты (для выбора при заявках)
     ],
     'Инженер ПТО': [
         'view_employees',
         'view_tab_employees',
         'cash_expense_self',
-        'cash_return_self'
+        'cash_return_self',
+        'view_projects_all'
     ],
     'Прораб': [
-        // Вкладку «Сотрудники» НЕ видит
-        // Свою карточку смотрит через профиль в шапке
-        'cash_expense_self',     // Может вносить свои расходы
-        'cash_return_self'       // Может делать возврат
+        // Не видит сотрудников
+        'cash_expense_self',
+        'cash_return_self',
+        'view_projects_own'      // Видит ТОЛЬКО свои объекты
     ]
 };
 
@@ -77,7 +84,7 @@ const ROLE_PERMISSIONS = {
 // =====================================================================
 
 const TAB_REQUIREMENTS = {
-    'projects':  null,
+    'projects':  null,           // Видна всем (но фильтруется внутри)
     'employees': 'view_tab_employees',
     'orders':    null,
     'registry':  null,
