@@ -10,7 +10,9 @@
 </head>
 <body class="bg-gray-100 font-sans min-h-screen">
 
-    <!-- ЭКРАН АВТОРИЗАЦИИ -->
+    <!-- ============================================================
+         ЭКРАН АВТОРИЗАЦИИ / РЕГИСТРАЦИИ
+         ============================================================ -->
     <div id="auth-screen" class="fixed inset-0 bg-gray-900 flex items-center justify-center z-[100] p-4">
         <div class="bg-white rounded-xl shadow-2xl p-8 max-w-sm w-full">
             <div class="text-center mb-6">
@@ -18,6 +20,20 @@
                 <h2 class="text-xl font-bold text-gray-800 mt-4">RSK Odessa</h2>
                 <p class="text-xs text-gray-500 mt-1">Управление строительством</p>
             </div>
+
+            <!-- Табы: Вход / Регистрация -->
+            <div class="flex bg-gray-100 rounded-lg p-1 mb-4">
+                <button type="button" onclick="switchAuthTab('login')" id="auth-tab-login"
+                        class="flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow">
+                    Войти
+                </button>
+                <button type="button" onclick="switchAuthTab('register')" id="auth-tab-register"
+                        class="flex-1 py-2 text-sm font-semibold rounded-md transition text-gray-600 hover:text-gray-800">
+                    Регистрация
+                </button>
+            </div>
+
+            <!-- Форма ВХОДА -->
             <form id="login-form" class="space-y-3">
                 <input type="email" id="login-email" placeholder="Email" required autocomplete="email"
                        class="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
@@ -28,14 +44,64 @@
                     Войти
                 </button>
             </form>
+
+            <!-- Форма РЕГИСТРАЦИИ -->
+            <form id="register-form" class="space-y-3 hidden">
+                <input type="email" id="register-email" placeholder="Email" required autocomplete="email"
+                       class="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                <input type="password" id="register-password" placeholder="Пароль (минимум 6 символов)" required minlength="6" autocomplete="new-password"
+                       class="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                <input type="password" id="register-password2" placeholder="Повторите пароль" required minlength="6" autocomplete="new-password"
+                       class="w-full border rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                <button type="submit" id="register-btn"
+                        class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-3 rounded-lg text-sm transition">
+                    Зарегистрироваться
+                </button>
+                <p class="text-[11px] text-gray-500 text-center">
+                    После регистрации обратитесь к администратору для получения доступа.
+                </p>
+            </form>
+
             <p id="login-error" class="text-red-500 text-xs mt-3 text-center hidden"></p>
         </div>
     </div>
 
-    <!-- ОСНОВНОЕ ПРИЛОЖЕНИЕ -->
+    <!-- ============================================================
+         ЭКРАН «ДОСТУП НЕ АКТИВИРОВАН»
+         ============================================================ -->
+    <div id="pending-screen" class="fixed inset-0 bg-gray-900 flex items-center justify-center z-[100] p-4 hidden">
+        <div class="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full text-center space-y-4">
+            <div class="bg-amber-100 w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-3xl">🔒</div>
+            <h2 class="text-xl font-bold text-gray-800">Доступ не активирован</h2>
+            <p class="text-sm text-gray-600">
+                Ваш аккаунт создан, но пока не привязан к сотруднику компании.
+            </p>
+            <div class="bg-gray-50 p-3 rounded-lg border text-xs">
+                <p class="text-gray-500">Email аккаунта:</p>
+                <p class="font-semibold text-gray-800 break-all" id="pending-email">—</p>
+            </div>
+            <p class="text-xs text-gray-500">
+                Обратитесь к администратору, чтобы он привязал ваш аккаунт. 
+                После этого нажмите «Обновить».
+            </p>
+            <div class="flex gap-2 pt-2">
+                <button onclick="location.reload()" 
+                        class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">
+                    🔄 Обновить
+                </button>
+                <button onclick="logout()" 
+                        class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">
+                    🚪 Выйти
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         ОСНОВНОЕ ПРИЛОЖЕНИЕ
+         ============================================================ -->
     <div id="app-container" class="hidden">
 
-        <!-- ШАПКА -->
         <header class="bg-[#15803d] text-white shadow-md border-b-4 border-[#16a34a]">
             <div class="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
                 <div class="flex items-center gap-3">
@@ -60,68 +126,57 @@
 
         <main class="max-w-6xl mx-auto p-4 mt-2">
 
-            <!-- ВКЛАДКА: ОБЪЕКТЫ (заглушка) -->
+            <section id="tab-welcome" class="space-y-4">
+                <div class="bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
+                    <div class="text-5xl">🚧</div>
+                    <h2 class="text-lg font-bold text-gray-800">Приложение загружается</h2>
+                    <p class="text-sm text-gray-500">Выбери раздел в шапке, чтобы начать работу.</p>
+                </div>
+            </section>
+
             <section id="tab-projects" class="hidden space-y-4">
                 <div class="bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                     <div class="text-5xl">🏗</div>
                     <h2 class="text-lg font-bold text-gray-800">Раздел «Объекты»</h2>
-                    <p class="text-sm text-gray-500">В разработке. Будет добавлен после модуля «Сотрудники».</p>
+                    <p class="text-sm text-gray-500">В разработке.</p>
                 </div>
             </section>
 
-            <!-- ВКЛАДКА: СОТРУДНИКИ -->
             <section id="tab-employees" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
                     <div>
                         <h2 class="text-lg font-bold text-gray-800">👥 Сотрудники</h2>
                         <p class="text-xs text-gray-500">Управление персоналом компании</p>
                     </div>
-                    <button onclick="openAddEmployeeModal()" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить сотрудника</button>
+                    <button onclick="openAddEmployeeModal()" id="add-employee-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить сотрудника</button>
                 </div>
                 <div id="employees-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </section>
 
-            <!-- ВКЛАДКА: СНАБЖЕНИЕ (заглушка) -->
             <section id="tab-orders" class="hidden bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                 <div class="text-5xl">📦</div>
                 <h2 class="text-lg font-bold text-gray-800">Раздел «Снабжение»</h2>
                 <p class="text-sm text-gray-500">В разработке.</p>
             </section>
 
-            <!-- ВКЛАДКА: РЕЕСТР (заглушка) -->
             <section id="tab-registry" class="hidden bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                 <div class="text-5xl">📊</div>
                 <h2 class="text-lg font-bold text-gray-800">Раздел «Реестр»</h2>
                 <p class="text-sm text-gray-500">В разработке.</p>
             </section>
 
-            <!-- ВКЛАДКА: НОВАЯ ЗАЯВКА (заглушка) -->
             <section id="tab-new-order" class="hidden bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
                 <div class="text-5xl">➕</div>
                 <h2 class="text-lg font-bold text-gray-800">Новая заявка</h2>
                 <p class="text-sm text-gray-500">В разработке.</p>
             </section>
 
-            <!-- ВКЛАДКА ПО УМОЛЧАНИЮ (приветствие) -->
-            <section id="tab-welcome" class="space-y-4">
-                <div class="bg-white rounded-xl shadow-md p-8 text-center space-y-3 border-t-4 border-[#15803d]">
-                    <div class="text-5xl">🚧</div>
-                    <h2 class="text-lg font-bold text-gray-800">Приложение загружается</h2>
-                    <p class="text-sm text-gray-500">Выбери раздел в шапке, чтобы начать работу.</p>
-                    <div class="text-xs text-gray-400 pt-2 border-t">
-                        <p>✅ Supabase подключён</p>
-                        <p>✅ Авторизация работает</p>
-                        <p>⏳ Модуль «Сотрудники» — следующий шаг</p>
-                    </div>
-                </div>
-            </section>
-
         </main>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- МОДАЛКА: ДОБАВЛЕНИЕ СОТРУДНИКА                                 -->
-    <!-- ============================================================ -->
+    <!-- ============================================================
+         МОДАЛКА: ДОБАВЛЕНИЕ СОТРУДНИКА
+         ============================================================ -->
     <div id="employee-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
@@ -156,9 +211,9 @@
         </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- МОДАЛКА: КАРТОЧКА СОТРУДНИКА                                   -->
-    <!-- ============================================================ -->
+    <!-- ============================================================
+         МОДАЛКА: КАРТОЧКА СОТРУДНИКА
+         ============================================================ -->
     <div id="employee-card-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
@@ -173,37 +228,36 @@
         </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- МОДАЛКА: ДЕАКТИВАЦИЯ (БЛОКИРОВКА / УВОЛЬНЕНИЕ)                  -->
-    <!-- ============================================================ -->
+    <!-- ============================================================
+         МОДАЛКА: БЛОКИРОВКА СОТРУДНИКА
+         ============================================================ -->
     <div id="deactivate-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800" id="deactivate-title">Блокировка сотрудника</h3>
+                <h3 class="text-lg font-bold text-gray-800">🚫 Блокировка сотрудника</h3>
                 <button onclick="hideModal('deactivate-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="deactivate-form" class="space-y-3">
                 <input type="hidden" id="deactivate-emp-id">
-                <input type="hidden" id="deactivate-action">
                 <div>
                     <label class="block text-xs font-semibold text-gray-600 mb-1">Причина (необязательно):</label>
                     <textarea id="deactivate-reason" placeholder="Отпуск / Увольнение / ..."
                               class="w-full border rounded-lg p-2.5 text-xs outline-none focus:ring-2 focus:ring-[#15803d] h-20"></textarea>
                 </div>
                 <p class="text-xs text-gray-500 bg-amber-50 p-2.5 rounded-lg border border-amber-200">
-                    ⚠️ Данные сотрудника (объекты, заявки, задачи) <b>не удаляются</b> — они сохранятся в истории.
+                    ⚠️ Сотрудник потеряет доступ к приложению. Его объекты, заявки и задачи <b>сохранятся</b>.
                 </p>
                 <div class="flex gap-2 pt-2">
-                    <button type="submit" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">Подтвердить</button>
+                    <button type="submit" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">🚫 Заблокировать</button>
                     <button type="button" onclick="hideModal('deactivate-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- МОДАЛКА: ПРИВЯЗКА АККАУНТА К СОТРУДНИКУ                       -->
-    <!-- ============================================================ -->
+    <!-- ============================================================
+         МОДАЛКА: ПРИВЯЗКА АККАУНТА
+         ============================================================ -->
     <div id="link-user-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
@@ -217,7 +271,6 @@
         </div>
     </div>
 
-    <!-- Подключение главного модуля -->
     <script type="module" src="./js/main.js"></script>
 
 </body>

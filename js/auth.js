@@ -1,18 +1,21 @@
 // =====================================================================
-// RSK ODESSA — АВТОРИЗАЦИЯ
+// RSK ODESSA — АВТОРИЗАЦИЯ (полная версия с регистрацией)
 // =====================================================================
-// Всё, что связано с входом/выходом/сессией пользователя.
+// Всё, что связано с входом/регистрацией/выходом/сессией.
 // Работает через Supabase Auth.
 //
-// ВАЖНО: проверяем не только наличие сессии, но и статус сотрудника
-// в таблице employees (active / blocked / fired).
+// Логика доступа:
+//   - Если пользователь привязан к записи employee со status='active' → доступ есть.
+//   - Если пользователь НЕ привязан → доступ закрыт (экран "Доступ не активирован").
+//   - Bootstrap: если в системе НЕТ ни одного Администратора с привязкой —
+//     первый вошедший пользователь получает доступ (для первичной настройки).
 // =====================================================================
 
 import { supabase } from './config.js';
 import { log, toast } from './utils.js';
 
 // =====================================================================
-// ВХОД И ВЫХОД
+// ВХОД / РЕГИСТРАЦИЯ / ВЫХОД
 // =====================================================================
 
 /**
@@ -36,6 +39,32 @@ export async function signIn(email, password) {
 }
 
 /**
+ * Регистрация нового пользователя (email + пароль).
+ * После регистрации пользователь попадает в систему,
+ * но без привязки к сотруднику — доступа к данным не будет.
+ */
+export async function signUp(email, password) {
+    log.auth(`Попытка регистрации: ${email}`);
+
+    const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+            // Автоподтверждение — чтобы не ждать email
+            emailRedirectTo: window.location.origin
+        }
+    });
+
+    if (error) {
+        log.error('Ошибка регистрации:', error.message);
+        return { user: null, error };
+    }
+
+    log.auth('✅ Регистрация успешна:', data.user?.email || '(без email)');
+    return { user: data.user, error: null };
+}
+
+/**
  * Выход из приложения.
  */
 export async function signOut() {
@@ -52,9 +81,6 @@ export async function signOut() {
 // ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ
 // =====================================================================
 
-/**
- * Возвращает текущего авторизованного пользователя (или null).
- */
 export async function getCurrentUser() {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError) {
@@ -69,17 +95,11 @@ export async function getCurrentUser() {
     return { user, session, error: null };
 }
 
-/**
- * Проверяет, авторизован ли пользователь.
- */
 export async function isAuthenticated() {
     const { data: { session } } = await supabase.auth.getSession();
     return !!session;
 }
 
-/**
- * Возвращает email текущего пользователя.
- */
 export async function getCurrentUserEmail() {
     const { data: { user } } = await supabase.auth.getUser();
     return user?.email || null;
@@ -89,9 +109,6 @@ export async function getCurrentUserEmail() {
 // СЛЕЖЕНИЕ ЗА СЕССИЕЙ
 // =====================================================================
 
-/**
- * Подписывается на изменения авторизации.
- */
 export function onAuthChange(callback) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
         log.auth(`Событие: ${event}`, session?.user?.email || 'нет сессии');
@@ -131,31 +148,61 @@ export async function getCurrentEmployee() {
 }
 
 /**
- * Проверяет статус текущего сотрудника.
+ * Проверяет доступ текущего пользователя.
+ *
+ * Возвращает:
+ *   { allowed: true, employee, bootstrap: false }   — привязан, status='active'
+ *   { allowed: true, employee: null, bootstrap: true } — bootstrap (нет админов)
+ *   { allowed: false, reason: 'blocked' | 'fired' | 'not_linked', employee }
  */
 export async function checkEmployeeAccess() {
     const { employee, error } = await getCurrentEmployee();
 
-    if (error || !employee) {
-        log.auth('Сотрудник не привязан к Auth — доступ разрешён');
-        return { allowed: true, employee: null };
+    // Нашли запись и она активна — доступ есть
+    if (employee && (!employee.status || employee.status === 'active')) {
+        return { allowed: true, employee, bootstrap: false };
     }
 
-    if (employee.status === 'active' || !employee.status) {
-        return { allowed: true, employee };
+    // Нашли запись, но она не активна — доступ закрыт
+    if (employee && (employee.status === 'blocked' || employee.status === 'fired')) {
+        log.warn(`Доступ закрыт. Статус: ${employee.status}`);
+        return {
+            allowed: false,
+            reason: employee.status,
+            employee
+        };
     }
 
-    log.warn(`Доступ запрещён. Статус: ${employee.status}`);
+    // Записи нет. Проверяем bootstrap-условие.
+    // Есть ли в системе хотя бы один активный Администратор с привязкой?
+    const { count, error: countError } = await supabase
+        .from('employees')
+        .select('id', { count: 'exact', head: true })
+        .eq('position', 'Администратор')
+        .eq('status', 'active')
+        .not('user_id', 'is', null);
+
+    if (countError) {
+        log.error('Ошибка проверки администраторов:', countError.message);
+    }
+
+    if (!count || count === 0) {
+        // Нет ни одного активного Администратора → bootstrap
+        log.warn('⚠️ Bootstrap-режим: в системе нет активного Администратора');
+        return { allowed: true, employee: null, bootstrap: true };
+    }
+
+    // Администратор есть, но текущий пользователь не привязан
+    log.warn('Доступ закрыт: пользователь не привязан к сотруднику');
     return {
         allowed: false,
-        reason: employee.status,
-        employee
+        reason: 'not_linked',
+        employee: null
     };
 }
 
 /**
  * Привязывает ТЕКУЩЕГО Auth-пользователя к записи сотрудника.
- * Используется при самостоятельной привязке.
  */
 export async function linkUserToEmployee(employeeId) {
     const { data: { user } } = await supabase.auth.getUser();
@@ -178,8 +225,7 @@ export async function linkUserToEmployee(employeeId) {
 }
 
 /**
- * Отвязывает аккаунт от записи сотрудника (user_id = null).
- * Используется Администратором.
+ * Отвязывает аккаунт от записи сотрудника.
  */
 export async function unlinkUserFromEmployee(employeeId) {
     const { error } = await supabase
@@ -198,14 +244,13 @@ export async function unlinkUserFromEmployee(employeeId) {
 
 /**
  * Привязывает ПРОИЗВОЛЬНЫЙ user_id к сотруднику.
- * Используется Администратором для привязки чужих аккаунтов по UID.
+ * Используется Администратором для привязки чужих аккаунтов.
  */
 export async function linkUserById(employeeId, userId) {
     if (!userId || typeof userId !== 'string') {
         return { success: false, error: new Error('user_id не задан') };
     }
 
-    // Проверка формата UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) {
         return { success: false, error: new Error('Некорректный формат UID') };
@@ -229,9 +274,6 @@ export async function linkUserById(employeeId, userId) {
 // СМЕНА ПАРОЛЯ
 // =====================================================================
 
-/**
- * Обновляет пароль текущего пользователя.
- */
 export async function updatePassword(newPassword) {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) {
@@ -242,20 +284,70 @@ export async function updatePassword(newPassword) {
 }
 
 // =====================================================================
-// UI — ЭКРАН ЛОГИНА
+// UI — ЭКРАНЫ ЛОГИНА / РЕГИСТРАЦИИ / ПЕНДИНГА
 // =====================================================================
 
+const AUTH_SCREEN_ID = 'auth-screen';
+const PENDING_SCREEN_ID = 'pending-screen';
+const APP_CONTAINER_ID = 'app-container';
+
+function showScreen(id) {
+    [AUTH_SCREEN_ID, PENDING_SCREEN_ID, APP_CONTAINER_ID].forEach(sid => {
+        const el = document.getElementById(sid);
+        if (el) el.classList.add('hidden');
+    });
+
+    const target = document.getElementById(id);
+    if (target) target.classList.remove('hidden');
+}
+
 /**
- * Инициализирует экран логина.
+ * Переключение вкладок «Войти» / «Регистрация».
+ */
+export function switchAuthTab(tab) {
+    const tabLogin = document.getElementById('auth-tab-login');
+    const tabRegister = document.getElementById('auth-tab-register');
+    const formLogin = document.getElementById('login-form');
+    const formRegister = document.getElementById('register-form');
+    const errEl = document.getElementById('login-error');
+
+    if (errEl) errEl.classList.add('hidden');
+
+    if (tab === 'login') {
+        tabLogin.className = 'flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow';
+        tabRegister.className = 'flex-1 py-2 text-sm font-semibold rounded-md transition text-gray-600 hover:text-gray-800';
+        formLogin.classList.remove('hidden');
+        formRegister.classList.add('hidden');
+    } else {
+        tabRegister.className = 'flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow';
+        tabLogin.className = 'flex-1 py-2 text-sm font-semibold rounded-md transition text-gray-600 hover:text-gray-800';
+        formRegister.classList.remove('hidden');
+        formLogin.classList.add('hidden');
+    }
+}
+
+window.switchAuthTab = switchAuthTab;
+
+/**
+ * Показывает экран «Доступ не активирован».
+ */
+function showPendingScreen(email) {
+    const emailEl = document.getElementById('pending-email');
+    if (emailEl) emailEl.textContent = email || '—';
+    showScreen(PENDING_SCREEN_ID);
+}
+
+/**
+ * Инициализирует экран логина с вкладками и обеими формами.
  */
 export function initLoginScreen(options = {}) {
     const { onSuccess, onLogout } = options;
-    const authScreen = document.getElementById('auth-screen');
+    const authScreen = document.getElementById(AUTH_SCREEN_ID);
     const loginForm = document.getElementById('login-form');
+    const registerForm = document.getElementById('register-form');
     const errorEl = document.getElementById('login-error');
-    const btn = document.getElementById('login-btn');
 
-    if (!authScreen || !loginForm) {
+    if (!authScreen || !loginForm || !registerForm) {
         log.error('Не найдены элементы экрана логина');
         return;
     }
@@ -265,7 +357,7 @@ export function initLoginScreen(options = {}) {
         const { data: { session } } = await supabase.auth.getSession();
 
         if (!session) {
-            authScreen.classList.remove('hidden');
+            showScreen(AUTH_SCREEN_ID);
             log.auth('🔒 Требуется вход');
             return;
         }
@@ -273,27 +365,23 @@ export function initLoginScreen(options = {}) {
         const access = await checkEmployeeAccess();
 
         if (!access.allowed) {
-            log.warn(`Доступ запрещён: ${access.reason}`);
-            await signOut();
-            authScreen.classList.remove('hidden');
-            errorEl.textContent = access.reason === 'fired'
-                ? 'Ваш доступ закрыт. Обратитесь к администратору.'
-                : 'Ваш доступ временно заблокирован.';
-            errorEl.classList.remove('hidden');
+            log.warn(`Доступ закрыт: ${access.reason}`);
+            showPendingScreen(session.user.email);
             return;
         }
 
-        authScreen.classList.add('hidden');
+        showScreen(APP_CONTAINER_ID);
         log.auth('✅ Найдена активная сессия:', session.user.email);
         if (onSuccess) onSuccess(session.user);
     })();
 
-    // ----- Обработка формы входа -----
+    // ----- Обработка формы ВХОДА -----
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
 
         const email = document.getElementById('login-email').value.trim();
         const password = document.getElementById('login-password').value;
+        const btn = document.getElementById('login-btn');
 
         btn.disabled = true;
         btn.textContent = 'Входим...';
@@ -312,30 +400,84 @@ export function initLoginScreen(options = {}) {
         const access = await checkEmployeeAccess();
 
         if (!access.allowed) {
-            log.warn(`Доступ запрещён: ${access.reason}`);
-            await signOut();
-            errorEl.textContent = access.reason === 'fired'
-                ? 'Ваш доступ закрыт. Обратитесь к администратору.'
-                : 'Ваш доступ временно заблокирован.';
-            errorEl.classList.remove('hidden');
+            // Не пускаем — показываем экран "Доступ не активирован"
+            log.warn(`Доступ закрыт: ${access.reason}`);
             btn.disabled = false;
             btn.textContent = 'Войти';
+            showPendingScreen(user?.email || email);
             return;
         }
 
-        authScreen.classList.add('hidden');
+        showScreen(APP_CONTAINER_ID);
         toast('Добро пожаловать!', 'success');
         if (onSuccess) onSuccess(user);
+    });
+
+    // ----- Обработка формы РЕГИСТРАЦИИ -----
+    registerForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const email = document.getElementById('register-email').value.trim();
+        const password = document.getElementById('register-password').value;
+        const password2 = document.getElementById('register-password2').value;
+        const btn = document.getElementById('register-btn');
+
+        errorEl.classList.add('hidden');
+
+        // Проверки
+        if (password.length < 6) {
+            errorEl.textContent = 'Пароль должен быть минимум 6 символов';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+        if (password !== password2) {
+            errorEl.textContent = 'Пароли не совпадают';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Регистрируем...';
+
+        const { user, error } = await signUp(email, password);
+
+        btn.disabled = false;
+        btn.textContent = 'Зарегистрироваться';
+
+        if (error) {
+            errorEl.textContent = 'Ошибка: ' + error.message;
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
+        // Автоматически логиним после регистрации
+        const loginResult = await signIn(email, password);
+
+        if (loginResult.error) {
+            errorEl.textContent = 'Регистрация прошла, но вход не удался: ' + loginResult.error.message;
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
+        const access = await checkEmployeeAccess();
+
+        if (!access.allowed) {
+            toast('Регистрация успешна! Ожидайте привязки к сотруднику.', 'info');
+            showPendingScreen(email);
+            return;
+        }
+
+        // Bootstrap-случай — попал сразу
+        showScreen(APP_CONTAINER_ID);
+        toast('Регистрация успешна! Добро пожаловать!', 'success');
+        if (onSuccess) onSuccess(loginResult.user);
     });
 
     // ----- Слежение за изменениями сессии -----
     onAuthChange((event, session) => {
         if (event === 'SIGNED_OUT') {
-            authScreen.classList.remove('hidden');
+            showScreen(AUTH_SCREEN_ID);
             if (onLogout) onLogout();
-        }
-        if (event === 'SIGNED_IN' && session) {
-            authScreen.classList.add('hidden');
         }
     });
 }
