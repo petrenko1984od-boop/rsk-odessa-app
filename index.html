@@ -136,15 +136,15 @@
                                 <p class="font-bold text-[#166534] text-sm" id="profile-name">—</p>
                                 <p class="text-xs text-gray-600" id="profile-position">—</p>
                                 <div id="profile-balance" class="pt-1">
-                                    <span class="text-xs text-gray-500">💰 Подотчёт:</span>
+                                    <span class="text-xs text-gray-500">💰 Баланс:</span>
                                     <span class="text-gray-500 font-bold text-sm ml-1">⚪ 0,00 грн</span>
                                 </div>
                             </div>
                             <button onclick="openMyCard()" class="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 transition flex items-center gap-2 border-b">
-                                👤 <span>Моя карточка</span>
+                                👤 <span>Карточка сотрудника</span>
                             </button>
                             <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 transition flex items-center gap-2 border-b">
-                                💰 <span>Мои операции</span>
+                                💰 <span>Финансовый отчёт</span>
                             </button>
                             <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm hover:bg-red-50 text-red-600 transition flex items-center gap-2">
                                 🚪 <span>Выйти</span>
@@ -303,12 +303,12 @@
     </div>
 
     <!-- ============================================================
-         МОДАЛКА: МОИ ОПЕРАЦИИ (подотчёт)
+         МОДАЛКА: ФИНАНСОВЫЙ ОТЧЁТ (операции подотчёта)
          ============================================================ -->
     <div id="my-operations-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">💰 Мои операции</h3>
+                <h3 class="text-lg font-bold text-gray-800">💰 Финансовый отчёт</h3>
                 <button onclick="closeMyOperations()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="my-operations-content" class="space-y-3"></div>

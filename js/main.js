@@ -132,7 +132,7 @@ function renderProfile() {
     const posEl = document.getElementById('profile-position');
     if (posEl) posEl.textContent = emp.position || '—';
 
-    // Баланс подотчёта (асинхронно)
+    // Баланс (асинхронно)
     renderProfileBalance().catch(err => log.error('Ошибка баланса:', err));
 }
 

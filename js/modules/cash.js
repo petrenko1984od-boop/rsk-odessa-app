@@ -210,13 +210,13 @@ export async function renderProfileBalance() {
     const formatted = formatBalance(balance);
 
     el.innerHTML = `
-        <span class="text-xs text-gray-500">💰 Подотчёт:</span>
+        <span class="text-xs text-gray-500">💰 Баланс:</span>
         <span class="${formatted.color} font-bold text-sm ml-1">${formatted.icon} ${formatted.text}</span>
     `;
 }
 
 // =====================================================================
-// UI — МОДАЛКА «МОИ ОПЕРАЦИИ»
+// UI — МОДАЛКА «ФИНАНСОВЫЙ ОТЧЁТ»
 // =====================================================================
 
 export async function openMyOperations() {
