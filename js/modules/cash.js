@@ -66,7 +66,7 @@ export async function loadAllBalances() {
 }
 
 // =====================================================================
-// ОПЕРАЦИИ
+// ОПЕРАЦИИ (история)
 // =====================================================================
 
 export async function loadOperations(employeeId, limit = 50) {
@@ -84,80 +84,163 @@ export async function loadOperations(employeeId, limit = 50) {
     return { data: data || [], error: null };
 }
 
-/**
- * Загружает ВСЕ расходы объекта ОДНИМ запросом.
- * Возвращает map: { [section_id]: [operations] }
- * 
- * Используется в план-факте — вместо N запросов по каждому разделу.
- * 
- * @param {number} projectId
- * @returns {Promise<{ map: Object, data: Array, error }>}
- */
+// =====================================================================
+// ФАКТ ПО ОБЪЕКТУ (для план-факта)
+// =====================================================================
+// Загружает ВСЕ источники факта для объекта:
+//   1. cash_operations (расходы из кабинета + заявки, оплаченные сотрудником)
+//   2. order_items (заявки с оплатой фирмой — closed + archived)
+//
+// Возвращает map: { [section_id]: [operations] }
+//
+// ⚠️ .in фильтр не работает — грузим всё, фильтруем в JS.
+// =====================================================================
+
 export async function loadExpensesForProject(projectId) {
     if (!projectId) return { map: {}, data: [], error: null };
 
-    // 1. Получаем список разделов объекта
-    const { data: sections, error: secError } = await db.select('sections', {
-        select: 'id',
+    const allItems = [];
+
+    // ----- 1. Загружаем разделы объекта -----
+    const { data: allSections, error: secError } = await db.select('sections', {
+        select: 'id, name',
         filters: { project_id: projectId }
     });
 
     if (secError) {
-        log.error('Ошибка загрузки разделов для расходов:', secError.message);
+        log.error('Ошибка загрузки разделов:', secError.message);
         return { map: {}, data: [], error: secError };
     }
 
-    const sectionIds = (sections || []).map(s => s.id);
+    const projectSectionIds = (allSections || []).map(s => s.id);
 
-    if (sectionIds.length === 0) {
+    if (projectSectionIds.length === 0) {
         return { map: {}, data: [], error: null };
     }
 
-    // 2. ОДИН запрос со списком section_id
-    const { data: ops, error } = await db.select('cash_operations', {
-        filters: {
-            'section_id.in': sectionIds,
-            operation_type: 'expense'
-        },
-        orderBy: { column: 'created_at', asc: false }
+    // ----- 2. Загружаем ВСЕ расходы из cash_operations -----
+    const { data: allExpenses, error: expError } = await db.select('cash_operations', {
+        filters: { operation_type: 'expense' }
     });
 
-    if (error) {
-        log.error('Ошибка загрузки расходов объекта:', error.message);
-        return { map: {}, data: [], error };
+    if (expError) {
+        log.error('Ошибка загрузки расходов:', expError.message);
     }
 
-    const allOps = ops || [];
+    // Фильтруем по section_id вручную
+    const projectExpenses = (allExpenses || []).filter(exp =>
+        exp.section_id && projectSectionIds.includes(exp.section_id)
+    );
 
-    // 3. Догружаем сотрудников (кто внёс расход)
-    if (allOps.length > 0) {
-        const employeeIds = [...new Set(allOps.map(o => o.employee_id).filter(Boolean))];
+    // Догружаем сотрудников
+    if (projectExpenses.length > 0) {
+        const employeeIds = [...new Set(projectExpenses.map(o => o.employee_id).filter(Boolean))];
         if (employeeIds.length > 0) {
-            const { data: employees } = await db.select('employees', {
-                filters: { 'id.in': employeeIds }
-            });
-
+            const { data: allEmployees } = await db.select('employees');
             const empMap = {};
-            (employees || []).forEach(e => { empMap[e.id] = e; });
-
-            allOps.forEach(op => {
+            (allEmployees || []).forEach(e => {
+                if (employeeIds.includes(e.id)) empMap[e.id] = e;
+            });
+            projectExpenses.forEach(op => {
                 op._employee = empMap[op.employee_id] || null;
             });
         }
+
+        projectExpenses.forEach(exp => {
+            allItems.push({
+                ...exp,
+                _source: exp.source === 'order' ? 'order_employee' : 'expense'
+            });
+        });
     }
 
-    // 4. Группируем по section_id
-    const map = {};
-    sectionIds.forEach(id => { map[id] = []; });
-    allOps.forEach(op => {
-        if (!map[op.section_id]) map[op.section_id] = [];
-        map[op.section_id].push(op);
+    // ----- 3. Загружаем заявки с оплатой ФИРМОЙ -----
+    const { data: allOrders, error: ordersError } = await db.select('orders', {
+        filters: { payment_source: 'company' }
     });
 
-    log.db(`Загружено расходов объекта #${projectId}: ${allOps.length}`);
+    if (ordersError) {
+        log.error('Ошибка загрузки заявок:', ordersError.message);
+    }
 
-    return { map, data: allOps, error: null };
+    // Фильтруем: closed + archived + нужный объект
+    const firmOrders = (allOrders || []).filter(o =>
+        (o.status === 'closed' || o.status === 'archived') &&
+        o.project_id === projectId
+    );
+
+    if (firmOrders.length > 0) {
+        // Загружаем order_items, потом фильтруем в JS
+        const { data: allOrderItems } = await db.select('order_items');
+
+        const orderMap = {};
+        firmOrders.forEach(o => { orderMap[o.id] = o; });
+
+        const firmOrderItems = (allOrderItems || []).filter(it =>
+            orderMap[it.order_id]
+        );
+
+        // Загружаем создателей заявок (для отображения)
+        const creatorIds = [...new Set(firmOrders.map(o => o.created_by_employee_id).filter(Boolean))];
+        let creatorsMap = {};
+        if (creatorIds.length > 0) {
+            const { data: allEmployees } = await db.select('employees');
+            (allEmployees || []).forEach(e => {
+                if (creatorIds.includes(e.id)) creatorsMap[e.id] = e;
+            });
+        }
+
+        // Преобразуем каждую позицию заявки в "псевдо-операцию"
+        firmOrderItems.forEach(it => {
+            const order = orderMap[it.order_id];
+            if (!order) return;
+
+            allItems.push({
+                _source: 'order',
+                _orderId: order.id,
+                _orderNumber: order.request_number,
+                _isOrderItem: true,
+                id: `order_${it.id}`,
+                employee_id: null,
+                _employee: creatorsMap[order.created_by_employee_id] || null,
+                operation_type: 'expense',
+                category: 'materials',
+                project_id: order.project_id,
+                section_id: order.section_id,
+                amount: Number(it.total_price) || 0,
+                items: [{
+                    name: it.name,
+                    qty: it.qty,
+                    unit: it.unit,
+                    price: it.unit_price || 0,
+                    sum: it.total_price || 0
+                }],
+                description: `Заявка ${order.request_number}`,
+                operation_date: order.closed_at || order.created_at,
+                supplier: order.supplier,
+                receipt_path: null
+            });
+        });
+    }
+
+    // ----- 4. Группируем по section_id -----
+    const map = {};
+    projectSectionIds.forEach(id => { map[id] = []; });
+
+    allItems.forEach(item => {
+        if (!item.section_id) return;
+        if (!map[item.section_id]) map[item.section_id] = [];
+        map[item.section_id].push(item);
+    });
+
+    log.db(`Загружено для объекта #${projectId}: ${allItems.length} записей факта`);
+
+    return { map, data: allItems, error: null };
 }
+
+// =====================================================================
+// СОЗДАНИЕ ОПЕРАЦИЙ
+// =====================================================================
 
 /**
  * Выдача подотчёта (для будущего интерфейса кассира).
@@ -245,6 +328,7 @@ export async function addExpenseMulti(payload) {
         section_id: sectionId || null,
         items: items,
         receipt_path: receiptPath,
+        source: 'manual',
         description: comment || 'Расход'
     });
 }
