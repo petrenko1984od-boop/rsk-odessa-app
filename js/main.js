@@ -24,7 +24,6 @@ import {
 
 import {
     renderProfileBalance,
-    saveIssue,
     saveExpense,
     saveReturn
 } from './modules/cash.js';
@@ -221,9 +220,6 @@ function bindForms() {
     if (projForm) projForm.addEventListener('submit', saveNewProject);
 
     // Подотчёт
-    const issueForm = document.getElementById('cash-issue-form');
-    if (issueForm) issueForm.addEventListener('submit', saveIssue);
-
     const expenseForm = document.getElementById('cash-expense-form');
     if (expenseForm) expenseForm.addEventListener('submit', saveExpense);
 
