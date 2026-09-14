@@ -15,6 +15,11 @@ let currentEmployee = null;
 // =====================================================================
 // МАТРИЦА ПРАВ ПО РОЛЯМ
 // =====================================================================
+// Логика подотчёта:
+//   - Расход/возврат — только за себя (cash_expense_self, cash_return_self)
+//   - Выдача подотчёта — кассиры (cash_issue)
+//   - Просмотр всех балансов — кассиры (cash_view_all)
+// =====================================================================
 
 const ROLE_PERMISSIONS = {
     'Администратор': [
@@ -29,9 +34,9 @@ const ROLE_PERMISSIONS = {
         'unlink_account',
         'view_tab_employees',
         // Подотчёт
+        'cash_expense_self',
+        'cash_return_self',
         'cash_issue',
-        'cash_expense_any',
-        'cash_return_any',
         'cash_view_all',
         // Объекты
         'view_projects_all',
@@ -42,18 +47,18 @@ const ROLE_PERMISSIONS = {
     'Директор': [
         'view_employees',
         'view_tab_employees',
+        'cash_expense_self',
+        'cash_return_self',
         'cash_issue',
-        'cash_expense_any',
-        'cash_return_any',
         'cash_view_all',
         'view_projects_all'
     ],
     'Главный инженер': [
         'view_employees',
         'view_tab_employees',
+        'cash_expense_self',
+        'cash_return_self',
         'cash_issue',
-        'cash_expense_any',
-        'cash_return_any',
         'cash_view_all',
         'view_projects_all'
     ],
@@ -62,7 +67,7 @@ const ROLE_PERMISSIONS = {
         'view_tab_employees',
         'cash_expense_self',
         'cash_return_self',
-        'view_projects_all'      // Видит все объекты (для выбора при заявках)
+        'view_projects_all'
     ],
     'Инженер ПТО': [
         'view_employees',
@@ -72,10 +77,9 @@ const ROLE_PERMISSIONS = {
         'view_projects_all'
     ],
     'Прораб': [
-        // Не видит сотрудников
         'cash_expense_self',
         'cash_return_self',
-        'view_projects_own'      // Видит ТОЛЬКО свои объекты
+        'view_projects_own'
     ]
 };
 
@@ -84,7 +88,7 @@ const ROLE_PERMISSIONS = {
 // =====================================================================
 
 const TAB_REQUIREMENTS = {
-    'projects':  null,           // Видна всем (но фильтруется внутри)
+    'projects':  null,
     'employees': 'view_tab_employees',
     'orders':    null,
     'registry':  null,
@@ -136,18 +140,12 @@ export function isLinked() {
     return currentEmployee !== null;
 }
 
-/**
- * Проверяет, может ли текущий пользователь ВИДЕТЬ вкладку.
- */
 export function canSeeTab(tabId) {
     const required = TAB_REQUIREMENTS[tabId];
     if (!required) return true;
     return can(required);
 }
 
-/**
- * Требует наличия права. Если нет — тост + возврат false.
- */
 export function requirePermission(action) {
     if (can(action)) return true;
 

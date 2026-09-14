@@ -2,7 +2,11 @@
 // МОДУЛЬ: ПОДОТЧЁТНЫЕ СРЕДСТВА
 // =====================================================================
 // Учёт денег, выданных сотрудникам в подотчёт.
-// Все действия сотрудника — в своём кабинете (Финансовый отчёт).
+//
+// Логика:
+//   - Расход — только за себя
+//   - Возврат — только за себя
+//   - Выдача подотчёта — кассиры (интерфейс отложен)
 // =====================================================================
 
 import { db } from '../database.js';
@@ -81,7 +85,8 @@ export async function loadOperations(employeeId, limit = 50) {
 }
 
 /**
- * Выдача подотчёта (только кассир — пригодится позже).
+ * Выдача подотчёта.
+ * Пока не вызывается из UI (интерфейс отложен), но функция готова.
  */
 export async function addIssue(employeeId, amount, comment = '') {
     if (!requirePermission('cash_issue')) return { success: false };
@@ -101,7 +106,7 @@ export async function addIssue(employeeId, amount, comment = '') {
 }
 
 /**
- * Расход (для своего кабинета).
+ * Расход. Только за себя.
  */
 export async function addExpenseMulti(payload) {
     const {
@@ -117,7 +122,13 @@ export async function addExpenseMulti(payload) {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
-    if (!can('cash_expense_any') && !(can('cash_expense_self') && isSelf)) {
+    // Только за себя
+    if (!isSelf) {
+        toast('Можно вносить расход только за себя', 'error');
+        return { success: false };
+    }
+
+    if (!can('cash_expense_self')) {
         toast('Нет прав на внесение расхода', 'error');
         return { success: false };
     }
@@ -167,13 +178,18 @@ export async function addExpenseMulti(payload) {
 }
 
 /**
- * Возврат в кассу.
+ * Возврат. Только за себя.
  */
 export async function addReturn(employeeId, amount, comment = '') {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
-    if (!can('cash_return_any') && !(can('cash_return_self') && isSelf)) {
+    if (!isSelf) {
+        toast('Можно делать возврат только за себя', 'error');
+        return { success: false };
+    }
+
+    if (!can('cash_return_self')) {
         toast('Нет прав на возврат', 'error');
         return { success: false };
     }
@@ -234,12 +250,9 @@ export async function renderProfileBalance() {
 }
 
 // =====================================================================
-// UI — «ФИНАНСОВЫЙ ОТЧЁТ» (расширенный)
+// UI — «ФИНАНСОВЫЙ ОТЧЁТ»
 // =====================================================================
 
-/**
- * Открывает модалку «Финансовый отчёт» с балансом, кнопками и историей.
- */
 export async function openMyOperations() {
     const emp = getEmployee();
     if (!emp) {
@@ -254,9 +267,6 @@ export async function openMyOperations() {
     document.getElementById('my-operations-modal').classList.remove('hidden');
 }
 
-/**
- * Отрисовывает содержимое финансового отчёта.
- */
 async function renderMyOperationsContent(emp) {
     const container = document.getElementById('my-operations-content');
     if (!container) return;
@@ -269,7 +279,7 @@ async function renderMyOperationsContent(emp) {
         ? operations.map(op => renderOperationRow(op)).join('')
         : '<p class="text-center text-gray-400 italic py-6 text-sm">Операций пока нет</p>';
 
-    // Кнопки — только для активных сотрудников
+    // Кнопки — только для активных сотрудников с правом self
     const isActive = !emp.status || emp.status === 'active';
     const canExpense = can('cash_expense_self') && isActive;
     const canReturn = can('cash_return_self') && isActive;
@@ -346,7 +356,7 @@ function renderOperationRow(op) {
 }
 
 // =====================================================================
-// КНОПКИ В КАБИНЕТЕ (свои операции)
+// КНОПКИ В КАБИНЕТЕ
 // =====================================================================
 
 export function myOpenExpense() {
@@ -357,7 +367,7 @@ export function myOpenExpense() {
     }
 
     hideModal('my-operations-modal');
-    openExpenseModal(emp.id, true); // true = возврат в отчёт после сохранения
+    openExpenseModal(emp.id, true);
 }
 
 export function myOpenReturn() {
@@ -375,25 +385,16 @@ export function myOpenReturn() {
 // МОДАЛКИ
 // =====================================================================
 
-export function openIssueModal(employeeId) {
-    if (!requirePermission('cash_issue')) return;
-
-    const emp = window.__getEmployeeById?.(employeeId);
-    if (!emp) { toast('Сотрудник не найден', 'error'); return; }
-
-    document.getElementById('cash-issue-employee-id').value = employeeId;
-    document.getElementById('cash-issue-title').textContent = `💵 Выдать подотчёт — ${emp.name}`;
-    document.getElementById('cash-issue-amount').value = '';
-    document.getElementById('cash-issue-comment').value = '';
-
-    window.showModal('cash-issue-modal');
-}
-
 export async function openExpenseModal(employeeId, returnToReport = false) {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
-    if (!can('cash_expense_any') && !(can('cash_expense_self') && isSelf)) {
+    // Только за себя
+    if (!isSelf) {
+        toast('Можно вносить расход только за себя', 'error');
+        return;
+    }
+    if (!can('cash_expense_self')) {
         toast('Нет прав на внесение расхода', 'error');
         return;
     }
@@ -405,7 +406,6 @@ export async function openExpenseModal(employeeId, returnToReport = false) {
     document.getElementById('cash-expense-employee-id').dataset.returnToReport = returnToReport ? '1' : '';
     document.getElementById('cash-expense-title').textContent = `🛒 Внести расход — ${emp.name}`;
 
-    // Очищаем
     document.getElementById('cash-expense-project').value = '';
     document.getElementById('cash-expense-section').innerHTML = '<option value="">Сначала выбери объект</option>';
     document.getElementById('cash-expense-category').value = 'materials';
@@ -426,7 +426,11 @@ export function openReturnModal(employeeId, returnToReport = false) {
     const current = getEmployee();
     const isSelf = current && current.id === employeeId;
 
-    if (!can('cash_return_any') && !(can('cash_return_self') && isSelf)) {
+    if (!isSelf) {
+        toast('Можно делать возврат только за себя', 'error');
+        return;
+    }
+    if (!can('cash_return_self')) {
         toast('Нет прав на возврат', 'error');
         return;
     }
@@ -444,7 +448,7 @@ export function openReturnModal(employeeId, returnToReport = false) {
 }
 
 // =====================================================================
-// ФОРМА РАСХОДА: ДИНАМИЧЕСКИЕ ПОЗИЦИИ
+// ФОРМА РАСХОДА
 // =====================================================================
 
 export function addExpenseItemRow() {
@@ -545,7 +549,7 @@ export async function loadSectionsForExpense() {
 }
 
 // =====================================================================
-// СОХРАНЕНИЕ ФОРМ
+// СОХРАНЕНИЕ
 // =====================================================================
 
 export async function saveExpense(event) {
@@ -585,39 +589,17 @@ export async function saveExpense(event) {
         toast(`Расход на ${formatMoney(items.reduce((s, i) => s + i.sum, 0))} сохранён`, 'success');
         window.hideModal('cash-expense-modal');
 
-        // Обновляем баланс в профиле
         const current = getEmployee();
         if (current && current.id === employeeId) {
             await renderProfileBalance();
         }
 
-        // Возвращаемся в отчёт
         if (returnToReport) {
             const emp = window.__getEmployeeById?.(employeeId);
             if (emp) {
                 await renderMyOperationsContent(emp);
                 document.getElementById('my-operations-modal').classList.remove('hidden');
             }
-        }
-    }
-}
-
-export async function saveIssue(event) {
-    event.preventDefault();
-
-    const employeeId = parseInt(document.getElementById('cash-issue-employee-id').value, 10);
-    const amount = parseNumber(document.getElementById('cash-issue-amount').value);
-    const comment = document.getElementById('cash-issue-comment').value.trim();
-
-    const result = await addIssue(employeeId, amount, comment);
-
-    if (result.success) {
-        toast(`Выдано ${formatMoney(amount)}`, 'success');
-        window.hideModal('cash-issue-modal');
-
-        const current = getEmployee();
-        if (current && current.id === employeeId) {
-            await renderProfileBalance();
         }
     }
 }
