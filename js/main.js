@@ -28,6 +28,27 @@ import {
     saveReturn
 } from './modules/cash.js';
 
+import {
+    loadOrders,
+    switchOrdersTab,
+    openNewOrderForm,
+    loadSectionsForOrder,
+    addOrderItemRow,
+    removeOrderItemRow,
+    recalcOrderTotal,
+    saveNewOrder,
+    takeOrderToWork,
+    openCloseOrderModal,
+    recalcCloseOrderTotal,
+    closeOrder,
+    archiveOrder,
+    deleteOrder
+} from './modules/orders.js';
+
+import {
+    loadRegistry
+} from './modules/registry.js';
+
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
@@ -76,8 +97,15 @@ export function switchTab(tabId) {
 
     AppState.currentTab = tabId;
 
+    // Триггеры загрузки данных при открытии вкладки
     if (tabId === 'projects') loadProjects();
     if (tabId === 'employees') loadEmployees();
+    if (tabId === 'orders') loadOrders();
+    if (tabId === 'registry') loadRegistry();
+    if (tabId === 'new-order') {
+        // Открываем модалку новой заявки, а саму вкладку оставляем с кнопкой
+        // Пользователь увидит кнопку «Создать заявку»
+    }
 }
 
 window.switchTab = switchTab;
@@ -94,7 +122,7 @@ function applyPermissionsToUI() {
 }
 
 // =====================================================================
-// ПРОФИЛЬ
+// ПРОФИЛЬ В ШАПКЕ
 // =====================================================================
 
 export function toggleProfileMenu() {
@@ -174,14 +202,17 @@ async function startApp(user) {
 
     toast(`Добро пожаловать, ${user?.email || 'гость'}!`, 'success');
 
+    // Права доступа
     await loadPermissions();
     applyPermissionsToUI();
     renderProfile();
 
+    // Первичная загрузка данных
     try {
         await Promise.all([
             loadEmployees(),
-            loadProjects()
+            loadProjects(),
+            loadOrders()
         ]);
     } catch (err) {
         log.error('Ошибка загрузки данных:', err);
@@ -204,7 +235,7 @@ function stopApp() {
 }
 
 // =====================================================================
-// ФОРМЫ
+// ОБРАБОТЧИКИ ФОРМ
 // =====================================================================
 
 function bindForms() {
@@ -225,6 +256,13 @@ function bindForms() {
 
     const returnForm = document.getElementById('cash-return-form');
     if (returnForm) returnForm.addEventListener('submit', saveReturn);
+
+    // Заявки
+    const newOrderForm = document.getElementById('new-order-form');
+    if (newOrderForm) newOrderForm.addEventListener('submit', saveNewOrder);
+
+    const closeOrderForm = document.getElementById('close-order-form');
+    if (closeOrderForm) closeOrderForm.addEventListener('submit', closeOrder);
 }
 
 // =====================================================================
@@ -233,6 +271,14 @@ function bindForms() {
 
 window.showModal = (id) => document.getElementById(id)?.classList.remove('hidden');
 window.hideModal = (id) => document.getElementById(id)?.classList.add('hidden');
+
+// Глобальные функции для onclick в HTML
+window.openNewOrderForm = openNewOrderForm;
+window.switchOrdersTab = switchOrdersTab;
+window.takeOrderToWork = takeOrderToWork;
+window.openCloseOrderModal = openCloseOrderModal;
+window.archiveOrder = archiveOrder;
+window.deleteOrder = deleteOrder;
 
 // =====================================================================
 // BOOT
