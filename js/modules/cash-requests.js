@@ -323,20 +323,23 @@ export function getCashRequestStatusInfo(status) {
 // БЕЙДЖ
 // =====================================================================
 
+
+    const badge = document.getElementById('cash-requests-badge');
+    if (!badge) return;
 export function updateCashRequestsBadge() {
     const badge = document.getElementById('cash-requests-badge');
     if (!badge) return;
 
-    // Счётчик = pending (только для кассиров)
     const pendingCount = cashRequestsCache.filter(r => r.status === 'pending').length;
 
-    // Показываем бейдж только кассирам
     const btn = document.getElementById('btn-cash-requests');
     if (btn) {
         if (canProcessCashRequest()) {
+            btn.classList.remove('hidden');
             btn.style.display = '';
             badge.textContent = pendingCount;
         } else {
+            btn.classList.add('hidden');
             btn.style.display = 'none';
         }
     }

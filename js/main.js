@@ -133,13 +133,21 @@ function applyPermissionsToUI() {
         employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
     }
 
-    // Заявки финансов в шапке — только для кассиров (роль проверит cash-requests.js)
-    // Кнопка скрывается/показывается в updateCashRequestsBadge() при загрузке
+    // Заявки финансов — только для кассиров
     const cashReqBtn = document.getElementById('btn-cash-requests');
     if (cashReqBtn) {
         const role = getEmployee()?.position;
-        const isCashier = role === 'Администратор' || role === 'Директор' || role === 'Главный инженер';
-        cashReqBtn.style.display = isCashier ? '' : 'none';
+        const isCashier = role === 'Администратор' 
+                       || role === 'Директор' 
+                       || role === 'Главный инженер';
+
+        if (isCashier) {
+            cashReqBtn.classList.remove('hidden');
+            cashReqBtn.style.display = '';
+        } else {
+            cashReqBtn.classList.add('hidden');
+            cashReqBtn.style.display = 'none';
+        }
     }
 }
 
@@ -183,7 +191,6 @@ export async function openMyRequests() {
     const menu = document.getElementById('profile-menu');
     if (menu) menu.classList.add('hidden');
 
-    // По умолчанию — вкладка «Материалы»
     await switchMyRequestsTab('materials');
 
     const modal = document.getElementById('my-requests-modal');
@@ -200,7 +207,6 @@ window.closeMyRequests = () => {
  * Переключение вкладок в «Моих заявках».
  */
 export async function switchMyRequestsTab(tab) {
-    // Подсветка кнопок
     const matBtn = document.getElementById('myreq-tab-materials');
     const finBtn = document.getElementById('myreq-tab-finance');
 
@@ -225,7 +231,6 @@ export async function switchMyRequestsTab(tab) {
     const { escapeHtml, formatDate, formatMoney } = await import('./utils.js');
 
     if (tab === 'materials') {
-        // Заявки на материалы
         const { data: orders } = await db.select('orders', {
             filters: { created_by_employee_id: emp.id },
             orderBy: { column: 'created_at', asc: false }
@@ -236,7 +241,6 @@ export async function switchMyRequestsTab(tab) {
             return;
         }
 
-        // Загружаем разделы и проекты
         const { data: projects } = await db.select('projects');
         const { data: sections } = await db.select('sections');
         const projMap = {};
@@ -269,7 +273,6 @@ export async function switchMyRequestsTab(tab) {
         }).join('');
 
     } else {
-        // Заявки финансов
         const { data: requests } = await db.select('cash_requests', {
             filters: { employee_id: emp.id },
             orderBy: { column: 'created_at', asc: false }
