@@ -6,21 +6,21 @@
 // =====================================================================
 
 export const CONFIG = {
-    // ----- SUPABASE -----
-    SUPABASE_URL: 'https://qqdnovbbjytanknlcinx.supabase.co',
+    // ----- SUPABASE (через Cloudflare Worker proxy) -----
+    SUPABASE_URL: 'https://twilight-truth-ee41supabase-proxy-petrenko.petrenko1984-od.workers.dev',
     SUPABASE_ANON_KEY: 'sb_publishable_-WU_eSHHve_pXkcKT0hkLA_RJY78Fqq',
 
     // ----- STORAGE (бакеты для файлов) -----
     STORAGE: {
-        ESTIMATES_BUCKET: 'estimates',      // Excel-файлы смет
-        TASK_PHOTOS_BUCKET: 'task-photos'   // Фотографии задач
+        ESTIMATES_BUCKET: 'estimates',
+        TASK_PHOTOS_BUCKET: 'task-photos'
     },
 
     // ----- ПРИЛОЖЕНИЕ -----
     APP: {
         NAME: 'RSK Odessa',
         VERSION: '2.0.0',
-        DEFAULT_REQUEST_PREFIX: 'З-'  // Префикс номера заявки
+        DEFAULT_REQUEST_PREFIX: 'З-'
     },
 
     // ----- СПРАВОЧНИКИ -----
@@ -73,23 +73,17 @@ export const CONFIG = {
 // =====================================================================
 // СОЗДАНИЕ КЛИЕНТА SUPABASE
 // =====================================================================
-// Клиент инициализируется здесь и экспортируется как синглтон.
-// Все модули используют его через: import { supabase } from './config.js';
-// =====================================================================
 
-// window.supabase — это библиотека, загруженная в index.html через CDN.
-// Мы обращаемся к ней через window, чтобы не путать с нашим клиентом.
 export const supabase = window.supabase.createClient(
     CONFIG.SUPABASE_URL,
     CONFIG.SUPABASE_ANON_KEY,
     {
         auth: {
-            persistSession: true,       // сохранять сессию между перезагрузками
-            autoRefreshToken: true,      // автоматически продлевать токен
-            detectSessionInUrl: false    // нам не нужны magic-ссылки
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: false
         }
     }
 );
 
-// Логируем успешную инициализацию
-console.log(`✅ ${CONFIG.APP.NAME} v${CONFIG.APP.VERSION} — Supabase подключён`);
+console.log(`✅ ${CONFIG.APP.NAME} v${CONFIG.APP.VERSION} — Supabase подключён через Worker proxy`);
