@@ -177,7 +177,7 @@ export async function openProjectDetail(id) {
     const titleEl = document.getElementById('card-proj-title');
     if (titleEl) titleEl.textContent = `🏗 ${project.name}`;
 
-    // 1. Загружаем разделы объекта
+    // 1. Загружаем разделы объекта (кэш)
     const { data: sections } = await loadSections(project.id);
     currentSectionsCache = sections || [];
 
@@ -190,8 +190,8 @@ export async function openProjectDetail(id) {
     // 4. Рендерим вкладку «Файлы»
     renderEstimateUI(project);
 
-    // 5. Рендерим «План-факт» (передаём готовые расходы)
-    renderSectionsUI(project, expensesMap);
+    // 5. Рендерим «План-факт» (передаём и расходы, и разделы)
+    renderSectionsUI(project, expensesMap, currentSectionsCache);
 
     // 6. Кнопка удаления
     const deleteBtn = document.getElementById('card-proj-delete-btn');
@@ -218,7 +218,7 @@ export async function openProjectDetail(id) {
 }
 
 /**
- * Считает план по разделам (сумма plan_works, plan_materials, plan_total).
+ * Считает план по разделам.
  */
 function calcPlan(sections) {
     let works = 0;
@@ -236,8 +236,8 @@ function calcPlan(sections) {
 
 /**
  * Считает факт по всем разделам из map.
- * materials включает: materials + delivery
- * works включает: works
+ * materials = materials + delivery
+ * works = works
  */
 function calcFact(expensesMap) {
     let works = 0;
@@ -486,3 +486,4 @@ window.openAddProjectModal = openAddProjectModal;
 window.saveNewProject = saveNewProject;
 window.switchProjectSubTab = switchProjectSubTab;
 window.__getCurrentProject = getCurrentProject;
+window.__getSectionsCache = getSectionsCache;

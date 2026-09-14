@@ -4,8 +4,11 @@
 // Загрузка, парсинг и хранение смет.
 // + Отображение план-факта с фактическими расходами.
 //
-// ВАЖНО: renderSectionsUI теперь принимает expensesMap —
-// готовый объект { [section_id]: [operations] } — без повторных запросов.
+// ВАЖНО: renderSectionsUI принимает:
+//   - project     — объект проекта
+//   - expensesMap — { [section_id]: [operations] } (загружено в projects.js)
+//   - sectionsList — массив разделов (тоже из projects.js)
+// Без повторных запросов к БД.
 // =====================================================================
 
 import { db } from '../database.js';
@@ -51,7 +54,7 @@ function sanitizeFileName(originalName) {
 }
 
 // =====================================================================
-// ЗАГРУЗКА ФАЙЛА + ПАРСИНГ
+// ЗАГРУЗКА ФАЙЛА + ПАРСИНГ + СОХРАНЕНИЕ
 // =====================================================================
 
 export async function uploadEstimate(projectId, file) {
@@ -85,8 +88,10 @@ export async function uploadEstimate(projectId, file) {
         return { success: false };
     }
 
+    // Удаляем старые разделы
     await db.remove('sections', { project_id: projectId });
 
+    // Вставляем новые
     const sectionsPayload = sections.map(s => ({
         project_id: projectId,
         name: s.name,
@@ -303,29 +308,17 @@ export function renderEstimateUI(project) {
 // =====================================================================
 // UI — ПЛАН-ФАКТ
 // =====================================================================
-// ВАЖНО: принимает expensesMap — { [section_id]: [operations] }
-// Без повторных запросов к БД.
+// Принимает:
+//   - project      — объект проекта
+//   - expensesMap  — { [section_id]: [operations] }
+//   - sectionsList — массив разделов
 // =====================================================================
 
-export function renderSectionsUI(project, expensesMap = {}) {
+export function renderSectionsUI(project, expensesMap = {}, sectionsList = null) {
     const container = document.getElementById('proj-subtab-planfact');
     if (!container) return;
 
-    // Разделы берём из кэша проекта (его уже загрузили в projects.js)
-    // Если контейнер пустой или разделов нет — рендерим плейсхолдер
-    const sections = window.__getSectionsCache ? window.__getSectionsCache() : null;
-
-    // Fallback: если кэш недоступен — берём из window.__getCurrentProject
-    // В нашем случае sections передаются из projects.js через кэш,
-    // НО для простоты воспользуемся сохранённым в window.__getCurrentProject
-    // либо загрузим заново (если очень надо).
-
-    // Т.к. renderSectionsUI вызывается синхронно из projects.js,
-    // sections уже должны быть в currentSectionsCache.
-    // Передадим через параметр sections — для этого немного изменим сигнатуру.
-
-    // НО: чтобы не плодить запросы, читаем кэш из window.__getSectionsCache.
-    const sectionsData = sections || [];
+    const sectionsData = sectionsList || [];
 
     if (sectionsData.length === 0) {
         container.innerHTML = `
@@ -476,9 +469,6 @@ export function renderSectionsUI(project, expensesMap = {}) {
 
 /**
  * Считает факт по разделу из операций.
- * materials = materials + delivery
- * works = works
- * total = всё
  */
 function calcFacts(operations) {
     let works = 0;
@@ -566,25 +556,11 @@ export async function uploadEstimateUI(projectId) {
         // Перезагружаем карточку объекта
         if (window.__getCurrentProject) {
             const project = window.__getCurrentProject();
-            if (project) {
-                // Перезагружаем разделы и расходы
-                const { data: newSections } = await loadSections(projectId);
-
-                // Обновляем кэш в projects.js через глобальную функцию
-                if (window.__refreshProjectDetail) {
-                    await window.__refreshProjectDetail(projectId);
-                } else {
-                    // Fallback: перезагружаем из БД
-                    const { data: freshProject } = await db.select('projects', {
-                        select: '*, foreman:employees(id, name, position, phone, status)',
-                        filters: { id: projectId },
-                        single: true
-                    });
-
-                    if (freshProject) {
-                        renderEstimateUI(freshProject);
-                    }
-                }
+            if (project && window.openProjectDetail) {
+                // Небольшая задержка, чтобы разделы успели записаться
+                setTimeout(() => {
+                    window.openProjectDetail(project.id);
+                }, 300);
             }
         }
     } else {
@@ -630,9 +606,10 @@ export async function deleteEstimateUI(projectId) {
     const result = await deleteEstimate(project);
 
     if (result.success) {
-        const updatedProject = { ...project, estimate_file_path: null, estimate_file_name: null, estimate_uploaded_at: null };
-        renderEstimateUI(updatedProject);
-        // TODO: обновить план-факт (обычно перезагрузка карточки)
+        // Перезагружаем карточку
+        if (window.openProjectDetail) {
+            window.openProjectDetail(projectId);
+        }
     }
 }
 
