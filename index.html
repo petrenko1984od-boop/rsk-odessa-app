@@ -1,0 +1,1808 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSK Odessa — Управление строительством</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Подключаем библиотеку SheetJS для чтения и записи Excel в браузере -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-100 font-sans min-h-screen">
+
+    <!-- Шапка навигации -->
+    <header class="bg-[#15803d] text-white shadow-md border-b-4 border-[#16a34a]">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
+            <div class="flex items-center gap-3">
+                <div class="bg-white p-1 rounded-lg shadow-sm flex items-center justify-center">
+                    <img src="logo.png" alt="RSK Logo" class="h-9 w-auto object-contain" onerror="this.style.display='none'">
+                </div>
+                <div>
+                    <h1 class="text-base font-bold tracking-wide leading-tight">RSK Odessa</h1>
+                    <p class="text-[10px] text-emerald-100 tracking-wider uppercase">building & repair</p>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-2 items-center">
+                <button onclick="switchTab('projects')" id="btn-projects" class="px-3 py-2 bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты (<span id="projects-badge">0</span>)</button>
+                <button onclick="switchTab('employees')" id="btn-employees" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники (<span id="employees-badge">0</span>)</button>
+                <button onclick="switchTab('orders')" id="btn-orders" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение (<span id="orders-badge">0</span>)</button>
+                <button onclick="switchTab('registry')" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
+                <button onclick="switchTab('new-order')" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">➕ Новая заявка</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto p-4 mt-2">
+
+        <!-- ВКЛАДКА 1: ОБЪЕКТЫ -->
+        <section id="tab-projects" class="space-y-4">
+            <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
+                <h2 class="text-lg font-bold text-gray-800">📋 Активные объекты</h2>
+                <button onclick="openAddProjectModal()" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить объект</button>
+            </div>
+            <div id="projects-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </section>
+
+        <!-- ЭКРАН КАРТОЧКИ ОБЪЕКТА -->
+        <section id="tab-project-detail" class="hidden space-y-4">
+            <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
+                <button onclick="switchTab('projects')" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                    ← Назад к списку объектов
+                </button>
+                <button onclick="" id="card-proj-delete-btn" class="text-red-500 hover:text-red-700 text-xs font-semibold">🗑 Удалить объект</button>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-6 space-y-6 border-t-4 border-[#15803d]">
+                <div class="border-b pb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                    <h2 class="text-xl font-bold text-[#166534]" id="card-proj-title">🏗 Название объекта</h2>
+                    <div id="card-proj-totals" class="hidden">
+                        <!-- Скрыто или используется в плашке ниже -->
+                    </div>
+                </div>
+
+                <!-- 4 КНОПКИ ПЕРЕКЛЮЧЕНИЯ ВНУТРИ КАРТОЧКИ ОБЪЕКТА -->
+                <div class="flex flex-wrap gap-2 border-b pb-4">
+                    <button onclick="switchProjectSubTab('info')" id="subbtn-info" class="px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow">📌 Общая информация</button>
+                    <button onclick="switchProjectSubTab('planfact')" id="subbtn-planfact" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📊 План-факт</button>
+                    <button onclick="switchProjectSubTab('files')" id="subbtn-files" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📁 Файлы</button>
+                    <button onclick="switchProjectSubTab('schedule')" id="subbtn-schedule" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📅 График</button>
+                </div>
+
+                <!-- ПОДВКЛАДКА 1: ОБЩАЯ ИНФОРМАЦИЯ -->
+                <div id="proj-subtab-info" class="space-y-4">
+                    <div class="row mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Левая колонка: Материально ответственное лицо -->
+                        <div class="col-md-6">
+                            <div class="card h-100 shadow-sm border border-gray-200 rounded-xl bg-white p-4 h-full flex flex-col justify-center">
+                                <div class="card-body space-y-1">
+                                    <h5 class="card-title text-[#15803d] font-bold mb-3 flex items-center text-sm">
+                                        <span class="mr-2 text-base">👨‍💼</span> Материально ответственное лицо
+                                    </h5>
+                                    <p class="mb-1 text-xs sm:text-sm"><strong>Должность:</strong> <span id="card-proj-position" class="text-gray-900 font-semibold">Прораб</span></p>
+                                    <p class="mb-1 text-xs sm:text-sm"><strong>ФИО:</strong> <span id="card-proj-foreman" class="text-gray-900 font-semibold"></span></p>
+                                    <p class="mb-0 text-xs sm:text-sm"><strong>Телефон:</strong> <a id="card-proj-phone-link" href="#" class="text-[#15803d] hover:underline font-semibold"></a></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Правая колонка: Финансовая информативная табличка -->
+                        <div class="col-md-6">
+                            <div class="card h-100 shadow-sm border border-gray-200 rounded-xl bg-white p-4 h-full flex flex-col justify-center">
+                                <div class="card-body">
+                                    <div id="card-proj-financial-alert" class="overflow-hidden rounded-lg border border-emerald-200 text-xs">
+                                        <div class="bg-emerald-600 text-white font-bold px-3 py-2 flex justify-between items-center">
+                                            <span>📊 Финансовые показатели</span>
+                                            <span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]" id="tbl-smeta-total-badge">Смета: 0 грн</span>
+                                        </div>
+                                        <div class="divide-y divide-emerald-100 bg-emerald-50/50">
+                                            <div class="flex justify-between items-center px-3 py-2">
+                                                <span class="text-gray-600 font-medium">🛠 Работы (План / Факт):</span>
+                                                <span class="font-bold text-gray-800" id="tbl-works-val">0 / 0 грн</span>
+                                            </div>
+                                            <div class="flex justify-between items-center px-3 py-2">
+                                                <span class="text-gray-600 font-medium">📦 Материалы (План / Факт):</span>
+                                                <span class="font-bold text-gray-800" id="tbl-materials-val">0 / 0 грн</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- БЛОК: ЗАДАЧИ ПРОРАБУ (На всю ширину под блоками информации) -->
+                    <div class="task-manager-card bg-white border border-gray-200 rounded-xl p-5 shadow-sm space-y-4 mt-4">
+                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b pb-3">
+                            <h3 class="text-base font-bold text-gray-800 flex items-center gap-2">
+                                📌 Задачи для прораба
+                            </h3>
+                            <div class="text-[11px] text-gray-500 bg-emerald-50 text-[#15803d] px-2.5 py-1 rounded-lg border border-emerald-100">
+                                💡 Уведомления в Telegram/Viber и прикрепление фотоактов активны
+                            </div>
+                        </div>
+
+                        <!-- Форма добавления задачи -->
+                        <div class="flex flex-wrap gap-2 items-center">
+                            <input type="text" id="taskInput" placeholder="Описание задачи (например, Проверить геодезию осей)..." class="flex-[2] min-w-[220px] px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <input type="date" id="taskDate" class="flex-1 min-w-[130px] px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <select id="taskPriority" class="px-3 py-2 border border-gray-300 rounded-lg text-xs sm:text-sm bg-white outline-none focus:ring-2 focus:ring-[#15803d]">
+                                <option value="urgent" class="text-red-600 font-bold">⚡ Срочно / Горит</option>
+                                <option value="important">⭐ Важный</option>
+                                <option value="normal" selected>Обычная</option>
+                            </select>
+                            <button onclick="addTask()" class="bg-[#198754] hover:bg-[#15803d] text-white border-none px-4 py-2 rounded-lg cursor-pointer font-semibold text-xs sm:text-sm transition shadow whitespace-nowrap">+ Поставить задачу</button>
+                        </div>
+
+                        <!-- Список задач -->
+                        <div id="taskList" class="flex flex-col gap-2 pt-2">
+                            <!-- Задачи генерируются динамически -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ПОДВКЛАДКА 2: ПЛАН-ФАКТ -->
+                <div id="proj-subtab-planfact" class="hidden space-y-4">
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📁 Разделы сметы (Планируемые / Фактические затраты)</h3>
+                            <span class="text-[11px] text-gray-400">Нажмите подробнее, чтобы посмотреть детали оплат</span>
+                        </div>
+                        <div id="sections-container" class="space-y-3"></div>
+                    </div>
+                </div>
+
+                <!-- ПОДВКЛАДКА 3: ФАЙЛЫ -->
+                <div id="proj-subtab-files" class="hidden space-y-4">
+                    <div class="border-t pt-4 space-y-3">
+                        <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 Загрузка файла сметы (Excel)</h3>
+                        <div class="p-4 bg-gray-50 rounded-xl border space-y-3">
+                            <div id="estimate-empty-state" class="text-xs text-gray-500">
+                                Смета еще не загружена. Загрузите файл Excel (.xlsx), чтобы автоматически сформировать разделы, объемы и сметную стоимость.
+                            </div>
+                            <div id="estimate-file-info" class="hidden flex items-center justify-between bg-white p-3 rounded-lg border text-xs">
+                                <div class="flex items-center gap-2 overflow-hidden">
+                                    <span class="text-lg">📄</span>
+                                    <div>
+                                        <p class="font-bold text-gray-800 truncate" id="estimate-file-name">Название файла</p>
+                                        <p class="text-[10px] text-gray-400" id="estimate-file-date">Дата загрузки</p>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button onclick="viewEstimateFile()" class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1.5 rounded-lg font-semibold transition">👁 Оригинал файла</button>
+                                    <button onclick="deleteEstimateFile()" class="bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1.5 rounded-lg transition">🗑</button>
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col sm:flex-row gap-2 pt-1">
+                                <input type="file" id="estimate-file-input" accept=".xlsx, .xls" class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-[#15803d] hover:file:bg-emerald-100 cursor-pointer border rounded-lg bg-white">
+                                <button onclick="uploadAndParseEstimate()" class="bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow whitespace-nowrap">📤 Загрузить и разобрать смету</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ПОДВКЛАДКА 4: ГРАФИК -->
+                <div id="proj-subtab-schedule" class="hidden space-y-4">
+                    <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
+                        <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📅 График производства работ</h3>
+                        <p class="text-xs text-gray-500">Раздел находится в разработке. Здесь будет отображаться диаграмма Ганта и календарный план выполнения этапов.</p>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ВКЛАДКА 2: СОТРУДНИКИ -->
+        <section id="tab-employees" class="hidden space-y-4">
+            <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
+                <h2 class="text-lg font-bold text-gray-800">👥 Управление сотрудниками</h2>
+                <button onclick="openAddEmployeeModal()" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить сотрудника</button>
+            </div>
+            <div id="employees-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </section>
+
+        <!-- ВКЛАДКА 3: СНАБЖЕНИЕ -->
+        <section id="tab-orders" class="hidden bg-white rounded-xl shadow-md p-6 space-y-4 border-t-4 border-[#15803d]">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h2 class="text-lg font-bold text-gray-800">📦 Контроль заявок на материалы</h2>
+                <button onclick="clearOrders()" class="text-xs text-red-500 hover:underline">Очистить историю</button>
+            </div>
+            <div id="orders-container" class="space-y-3"></div>
+        </section>
+
+        <!-- ВКЛАДКА 4: РЕЕСТР -->
+        <section id="tab-registry" class="hidden space-y-4">
+            <div class="bg-white rounded-xl shadow-md p-4 border-l-4 border-[#15803d] flex flex-wrap gap-2 items-center justify-between">
+                <h2 class="text-lg font-bold text-gray-800">📊 Сводные реестры</h2>
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="switchRegistrySub('materials')" id="reg-btn-materials" class="px-3 py-1.5 bg-[#15803d] text-white rounded-lg text-xs font-semibold shadow transition">Реестр материалов</button>
+                    <button onclick="switchRegistrySub('works')" id="reg-btn-works" class="px-3 py-1.5 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold shadow transition">Реестр работ</button>
+                    <button onclick="switchRegistrySub('deliveries')" id="reg-btn-deliveries" class="px-3 py-1.5 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold shadow transition">Реестр доставок</button>
+                </div>
+            </div>
+
+            <!-- ПОДРАЗДЕЛ: РЕЕСТР МАТЕРИАЛОВ -->
+            <div id="reg-sub-materials" class="bg-white rounded-xl shadow-md p-6 space-y-4 border-t-4 border-[#15803d]">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3">
+                    <div>
+                        <h3 class="text-base font-bold text-gray-800">📦 Реестр закрытых материалов</h3>
+                        <p class="text-xs text-gray-500">Все материалы, прошедшие этап «Закрыта закупка» в снабжении. Нажмите на строку для просмотра подробной карточки.</p>
+                    </div>
+                    <button onclick="exportMaterialsToExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow transition flex items-center gap-1">
+                        📥 Скачать в Excel
+                    </button>
+                </div>
+
+                <!-- ТАБЛИЦА С ФИЛЬТРАМИ -->
+                <div class="overflow-x-auto border rounded-xl">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-gray-100 text-gray-700 uppercase border-b font-semibold">
+                            <tr>
+                                <th class="p-2.5">Дата</th>
+                                <th class="p-2.5">Наименование</th>
+                                <th class="p-2.5">Ед. изм.</th>
+                                <th class="p-2.5">Кол-во</th>
+                                <th class="p-2.5">Цена за ед.</th>
+                                <th class="p-2.5">Сумма</th>
+                                <th class="p-2.5">Статус оплаты</th>
+                                <th class="p-2.5">Поставщик</th>
+                                <th class="p-2.5">Объект</th>
+                                <th class="p-2.5">Раздел</th>
+                            </tr>
+                            <tr class="bg-gray-50 border-t">
+                                <th class="p-1.5">
+                                    <select id="flt-date" onchange="renderMaterialsRegistry()" class="w-full border rounded p-1 text-[11px] font-normal bg-white outline-none">
+                                        <option value="">Все</option>
+                                    </select>
+                                </th>
+                                <th class="p-1.5"></th>
+                                <th class="p-1.5"></th>
+                                <th class="p-1.5"></th>
+                                <th class="p-1.5"></th>
+                                <th class="p-1.5"></th>
+                                <th class="p-1.5">
+                                    <select id="flt-payment" onchange="renderMaterialsRegistry()" class="w-full border rounded p-1 text-[11px] font-normal bg-white outline-none">
+                                        <option value="">Все</option>
+                                        <option value="Оплачено">Оплачено</option>
+                                        <option value="В долг">В долг</option>
+                                    </select>
+                                </th>
+                                <th class="p-1.5">
+                                    <select id="flt-supplier" onchange="renderMaterialsRegistry()" class="w-full border rounded p-1 text-[11px] font-normal bg-white outline-none">
+                                        <option value="">Все</option>
+                                    </select>
+                                </th>
+                                <th class="p-1.5">
+                                    <select id="flt-proj" onchange="renderMaterialsRegistry()" class="w-full border rounded p-1 text-[11px] font-normal bg-white outline-none">
+                                        <option value="">Все</option>
+                                    </select>
+                                </th>
+                                <th class="p-1.5">
+                                    <select id="flt-sec" onchange="renderMaterialsRegistry()" class="w-full border rounded p-1 text-[11px] font-normal bg-white outline-none">
+                                        <option value="">Все</option>
+                                    </select>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="registry-materials-tbody" class="divide-y">
+                            <!-- Данные генерируются динамически -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ПОДРАЗДЕЛ: РЕЕСТР РАБОТ -->
+            <div id="reg-sub-works" class="hidden bg-white rounded-xl shadow-md p-6 space-y-4 border-t-4 border-[#15803d]">
+                <h3 class="text-base font-bold text-gray-800 border-b pb-3">🛠 Реестр работ</h3>
+                <p class="text-xs text-gray-500">Раздел находится в разработке.</p>
+            </div>
+
+            <!-- ПОДРАЗДЕЛ: РЕЕСТР ДОСТАВОК -->
+            <div id="reg-sub-deliveries" class="hidden bg-white rounded-xl shadow-md p-6 space-y-4 border-t-4 border-[#15803d]">
+                <h3 class="text-base font-bold text-gray-800 border-b pb-3">🚚 Реестр доставок</h3>
+                <p class="text-xs text-gray-500">Раздел находится в разработке.</p>
+            </div>
+        </section>
+
+        <!-- ВКЛАДКА 5: НОВАЯ ЗАЯВКА -->
+        <section id="tab-new-order" class="hidden bg-white rounded-xl shadow-md p-6 max-w-xl mx-auto space-y-4 border-t-4 border-[#15803d]">
+            <h2 class="text-lg font-bold text-gray-800 border-b pb-3">📝 Оформление заявки на закупку</h2>
+            <form onsubmit="submitMaterialOrder(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Объект:</label>
+                    <select id="order-proj" onchange="onOrderProjectChange()" required class="w-full border rounded-lg p-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел / Этап:</label>
+                    <select id="order-section" required class="w-full border rounded-lg p-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                </div>
+
+                <!-- СПИСОК ПОЗИЦИЙ МАТЕРИАЛОВ -->
+                <div class="space-y-2 border-t border-b py-3">
+                    <div class="flex justify-between items-center">
+                        <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">📦 Позиции материалов:</label>
+                        <button type="button" onclick="addOrderItemRow()" class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
+                    </div>
+                    <div id="order-items-container" class="space-y-2"></div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Желаемая дата поставки:</label>
+                    <input type="date" id="order-date" required class="w-full border rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <button type="submit" class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">
+                    ✅ Отправить заявку в снабжение
+                </button>
+            </form>
+        </section>
+
+    </main>
+
+    <!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЬНОЙ КАРТОЧКИ МАТЕРИАЛА -->
+    <div id="material-card-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 border-t-4 border-[#15803d]">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-base font-bold text-gray-800 flex items-center gap-1.5">
+                    <span>📦</span> Карточка закупленного материала
+                </h3>
+                <button onclick="closeMaterialCardModal()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            
+            <div id="material-card-content" class="space-y-3 text-xs sm:text-sm">
+                <!-- Заполняется динамически -->
+            </div>
+
+            <div class="pt-2 border-t flex justify-end">
+                <button onclick="closeMaterialCardModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО ЗАКРЫТИЯ ЗАЯВКИ СНАБЖЕНЦЕМ -->
+    <div id="close-order-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 border-t-4 border-[#15803d] max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-2">
+                <h3 class="text-base font-bold text-gray-800">🛒 Закупка материала</h3>
+                <button onclick="closeModalCloseOrder()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form onsubmit="confirmOrderPurchase(event)" class="space-y-3">
+                <input type="hidden" id="modal-order-id">
+                
+                <div class="space-y-2">
+                    <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider">💰 Стоимость, статус расчетов по позициям:</label>
+                    <div id="modal-order-items-price-container" class="space-y-3 bg-gray-50 p-3 rounded-lg border"></div>
+                </div>
+
+                <div class="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex justify-between items-center">
+                    <span class="text-xs font-bold text-[#15803d] uppercase">Итого общая сумма:</span>
+                    <span id="modal-order-total-sum-label" class="text-base font-bold text-[#166534]">0 грн</span>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Поставщик / Магазин / База:</label>
+                    <input type="text" id="modal-order-supplier" required placeholder="Эпицентр / База на Мельницкой" class="w-full border rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">💾 Сохранить и закрыть</button>
+                    <button type="button" onclick="closeModalCloseOrder()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО ПРОСМОТРА ОРИГИНАЛА ФАЙЛА -->
+    <div id="estimate-viewer-modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full h-[85vh] flex flex-col overflow-hidden">
+            <div class="bg-[#15803d] text-white px-4 py-3 flex justify-between items-center">
+                <span class="font-bold text-sm truncate" id="modal-estimate-title">📄 Просмотр сметы</span>
+                <div class="flex items-center gap-2">
+                    <a id="modal-estimate-download" href="#" download class="bg-white text-[#15803d] px-3 py-1 rounded-lg text-xs font-semibold hover:bg-emerald-50 transition">Скачать</a>
+                    <button onclick="closeEstimateModal()" class="text-white hover:text-gray-200 font-bold text-lg px-2">✕</button>
+                </div>
+            </div>
+            <div class="flex-1 bg-gray-100 p-2 flex items-center justify-center overflow-hidden" id="modal-estimate-content"></div>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ ОБЪЕКТА -->
+    <div id="project-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <h3 class="text-lg font-bold text-gray-800">🏗 Добавить новый объект</h3>
+            <form onsubmit="saveNewProject(event)" class="space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Название объекта:</label>
+                    <input type="text" id="new-proj-name" required placeholder="Коттедж" class="w-full border rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Ответственный прораб:</label>
+                    <select id="new-proj-foreman" required class="w-full border rounded-lg p-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2 rounded-lg text-sm transition">Сохранить</button>
+                    <button type="button" onclick="closeAddProjectModal()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ СОТРУДНИКА -->
+    <div id="employee-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <form onsubmit="saveNewEmployee(event)" class="space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">ФИО сотрудника:</label>
+                    <input type="text" id="emp-name" required placeholder="Иван Прорабов" class="w-full border rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Должность:</label>
+                    <select id="emp-position" class="w-full border rounded-lg p-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <option value="Директор">Директор</option>
+                        <option value="Администратор">Администратор</option>
+                        <option value="Главный инженер">Главный инженер</option>
+                        <option value="Прораб">Прораб</option>
+                        <option value="Снабженец">Снабженец</option>
+                        <option value="Инженер ПТО">Инженер ПТО</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Телефон:</label>
+                    <input type="tel" id="emp-phone" required placeholder="+38 (050) 000-00-00" class="w-full border rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2 rounded-lg text-sm transition">Сохранить</button>
+                    <button type="button" onclick="closeAddEmployeeModal()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО КАРТОЧКИ СОТРУДНИКА -->
+    <div id="employee-card-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">👤 Карточка сотрудника</h3>
+                <button onclick="closeEmployeeCardModal()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            
+            <div class="space-y-3 text-sm">
+                <div class="bg-emerald-50 p-3 rounded-lg border border-emerald-100 space-y-1">
+                    <p><strong>ФИО:</strong> <span id="card-emp-name" class="text-gray-900 font-semibold"></span></p>
+                    <p><strong>Должность:</strong> <span id="card-emp-position" class="text-gray-900"></span></p>
+                    <p><strong>Телефон:</strong> <a id="card-emp-phone-link" href="#" class="text-[#15803d] hover:underline font-semibold"></a></p>
+                </div>
+
+                <div class="border rounded-lg p-3 space-y-2 bg-gray-50">
+                    <p class="text-xs font-bold text-gray-500 uppercase tracking-wider">📌 Дополнительная информация / Заметки:</p>
+                    <textarea id="card-emp-notes" placeholder="Здесь можно указать паспортные данные, объекты, примечания..." class="w-full border rounded-lg p-2.5 text-xs outline-none focus:ring-2 focus:ring-[#15803d] h-24 bg-white"></textarea>
+                    <button onclick="saveEmployeeNotes()" class="bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow">Сохранить заметки</button>
+                </div>
+            </div>
+
+            <div class="flex justify-between pt-2 border-t">
+                <button onclick="" id="card-delete-btn" class="text-red-500 hover:text-red-700 text-xs font-semibold">🗑 Удалить сотрудника</button>
+                <button onclick="closeEmployeeCardModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        if (!localStorage.getItem('rsk_employees') || !localStorage.getItem('rsk_projects_v7')) {
+            const defaultEmployees = [
+                { id: 1, name: "Иван Прорабов", position: "Прораб", phone: "+38 (050) 123-45-67", notes: "" },
+                { id: 2, name: "Петренко Сергей Николаевич", position: "Прораб", phone: "+380507016548", notes: "" },
+                { id: 3, name: "Олег Снабженец", position: "Снабженец", phone: "+38 (067) 987-65-43", notes: "" }
+            ];
+            localStorage.setItem('rsk_employees', JSON.stringify(defaultEmployees));
+
+            const defaultProjects = [
+                { id: 1, name: "Частный дом (Ивановка)", foreman: "Иван Прорабов", notes: "", estimate: null, sections: [], tasks: [] },
+                { id: 2, name: "Реконструкция офиса", foreman: "Петренко Сергей Николаевич", notes: "", estimate: null, sections: [], tasks: [] }
+            ];
+            localStorage.setItem('rsk_projects', JSON.stringify(defaultProjects));
+            localStorage.setItem('rsk_projects_v7', 'true');
+        }
+
+        if (!localStorage.getItem('rsk_orders')) {
+            localStorage.setItem('rsk_orders', JSON.stringify([]));
+        }
+
+        document.getElementById('order-date').valueAsDate = new Date();
+
+        function generateRequestNumber() {
+            const now = new Date();
+            const year = now.getFullYear().toString().slice(-2);
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+            return `З-${year}${month}${day}-${randomSuffix}`;
+        }
+
+        function switchTab(tabId) {
+            ['projects', 'project-detail', 'employees', 'orders', 'registry', 'new-order'].forEach(t => {
+                const el = document.getElementById(`tab-${t}`);
+                if (el) el.classList.add('hidden');
+                
+                if (t !== 'project-detail') {
+                    const btn = document.getElementById(`btn-${t === 'new-order' ? 'new-order' : t}`);
+                    if (btn) {
+                        btn.classList.remove('bg-[#16a34a]');
+                        btn.classList.add('bg-[#16a34a]/70');
+                    }
+                }
+            });
+
+            const targetTab = document.getElementById(`tab-${tabId}`);
+            if (targetTab) targetTab.classList.remove('hidden');
+
+            if (tabId === 'projects' || tabId === 'project-detail') {
+                const activeBtn = document.getElementById(`btn-projects`);
+                if (activeBtn) {
+                    activeBtn.classList.remove('bg-[#16a34a]/70');
+                    activeBtn.classList.add('bg-[#16a34a]');
+                }
+            } else {
+                const activeBtn = document.getElementById(`btn-${tabId === 'new-order' ? 'new-order' : tabId}`);
+                if (activeBtn) {
+                    activeBtn.classList.remove('bg-[#16a34a]/70');
+                    activeBtn.classList.add('bg-[#16a34a]');
+                }
+            }
+
+            if (tabId === 'projects') renderProjects();
+            if (tabId === 'employees') renderEmployees();
+            if (tabId === 'orders') renderOrders();
+            if (tabId === 'registry') renderMaterialsRegistry();
+            if (tabId === 'new-order') {
+                updateProjectDropdowns();
+                initOrderItems();
+            }
+        }
+
+        // Функция переключения подвкладок внутри карточки объекта
+        function switchProjectSubTab(subId) {
+            ['info', 'planfact', 'files', 'schedule'].forEach(s => {
+                const el = document.getElementById(`proj-subtab-${s}`);
+                const btn = document.getElementById(`subbtn-${s}`);
+                if (el) el.classList.add('hidden');
+                if (btn) {
+                    btn.className = "px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow";
+                }
+            });
+
+            const targetEl = document.getElementById(`proj-subtab-${subId}`);
+            const targetBtn = document.getElementById(`subbtn-${subId}`);
+            if (targetEl) targetEl.classList.remove('hidden');
+            if (targetBtn) {
+                targetBtn.className = "px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow";
+            }
+        }
+
+        function switchRegistrySub(subId) {
+            ['materials', 'works', 'deliveries'].forEach(s => {
+                const el = document.getElementById(`reg-sub-${s}`);
+                const btn = document.getElementById(`reg-btn-${s}`);
+                if (el) el.classList.add('hidden');
+                if (btn) {
+                    btn.className = "px-3 py-1.5 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow";
+                }
+            });
+
+            const targetEl = document.getElementById(`reg-sub-${subId}`);
+            const targetBtn = document.getElementById(`reg-btn-${subId}`);
+            if (targetEl) targetEl.classList.remove('hidden');
+            if (targetBtn) {
+                targetBtn.className = "px-3 py-1.5 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow";
+            }
+
+            if (subId === 'materials') renderMaterialsRegistry();
+        }
+
+        function getAllClosedMaterials() {
+            const orders = JSON.parse(localStorage.getItem('rsk_orders')) || [];
+            let list = [];
+            orders.forEach(o => {
+                if (o.status === '🟢 Закрыта' && o.items && Array.isArray(o.items)) {
+                    let supplierName = o.purchaseData ? (o.purchaseData.supplier || 'Не указан') : 'Не указан';
+                    o.items.forEach(it => {
+                        let name = typeof it === 'object' ? it.name : it;
+                        let qty = typeof it === 'object' ? (it.qty || 1) : 1;
+                        let unit = typeof it === 'object' ? (it.unit || 'шт') : 'шт';
+                        let rawPrice = typeof it === 'object' ? (it.rawPrice || 0) : 0;
+                        let unitPrice = qty > 0 ? (rawPrice / qty) : 0;
+                        let payment = typeof it === 'object' ? (it.paymentStatus || 'Оплачено') : 'Оплачено';
+                        
+                        list.push({
+                            orderId: o.requestNumber || o.id,
+                            createdAt: o.createdAt || 'Н/Д',
+                            date: o.date || '',
+                            closedDate: o.purchaseData ? (o.purchaseData.closedDate || o.createdAt || 'Н/Д') : 'Н/Д',
+                            name: name,
+                            unit: unit,
+                            qty: qty,
+                            unitPrice: unitPrice,
+                            sum: rawPrice,
+                            paymentStatus: payment,
+                            supplier: supplierName,
+                            project: o.project || '',
+                            section: o.section || '',
+                            status: o.status
+                        });
+                    });
+                }
+            });
+            return list;
+        }
+
+        function renderMaterialsRegistry() {
+            const tbody = document.getElementById('registry-materials-tbody');
+            const data = getAllClosedMaterials();
+
+            const dates = [...new Set(data.map(item => item.date))].filter(Boolean).sort();
+            const suppliers = [...new Set(data.map(item => item.supplier))].filter(Boolean).sort();
+            const projects = [...new Set(data.map(item => item.project))].filter(Boolean).sort();
+            const sections = [...new Set(data.map(item => item.section))].filter(Boolean).sort();
+
+            function updateSelectOptions(selectId, values) {
+                const sel = document.getElementById(selectId);
+                if (!sel) return;
+                const currentVal = sel.value;
+                sel.innerHTML = `<option value="">Все</option>` + values.map(v => `<option value="${v}">${v}</option>`).join('');
+                sel.value = currentVal;
+            }
+
+            updateSelectOptions('flt-date', dates);
+            updateSelectOptions('flt-supplier', suppliers);
+            updateSelectOptions('flt-proj', projects);
+            updateSelectOptions('flt-sec', sections);
+
+            const fDate = document.getElementById('flt-date').value;
+            const fPayment = document.getElementById('flt-payment').value;
+            const fSupplier = document.getElementById('flt-supplier').value;
+            const fProj = document.getElementById('flt-proj').value;
+            const fSec = document.getElementById('flt-sec').value;
+
+            const filtered = data.filter(item => {
+                const matchesPayment = !fPayment || item.paymentStatus === fPayment;
+                const matchesDate = !fDate || String(item.date) === fDate;
+                const matchesSupplier = !fSupplier || String(item.supplier) === fSupplier;
+                const matchesProj = !fProj || String(item.project) === fProj;
+                const matchesSec = !fSec || String(item.section) === fSec;
+
+                return matchesPayment && matchesDate && matchesSupplier && matchesProj && matchesSec;
+            });
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="10" class="text-center text-gray-400 py-6">Нет данных в реестре материалов</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map((item) => {
+                const paymentBadge = item.paymentStatus === 'В долг' 
+                    ? `<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold text-[10px]">В долг</span>` 
+                    : `<span class="bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold text-[10px]">Оплачено</span>`;
+
+                const jsonStr = encodeURIComponent(JSON.stringify(item));
+
+                return `
+                    <tr onclick="openMaterialCard('${jsonStr}')" class="hover:bg-emerald-50/60 cursor-pointer transition">
+                        <td class="p-2.5 whitespace-nowrap">${item.date}</td>
+                        <td class="p-2.5 font-semibold text-gray-900">${item.name}</td>
+                        <td class="p-2.5 whitespace-nowrap">${item.unit}</td>
+                        <td class="p-2.5 whitespace-nowrap">${item.qty}</td>
+                        <td class="p-2.5 whitespace-nowrap">${item.unitPrice.toLocaleString('ru-RU')} грн</td>
+                        <td class="p-2.5 whitespace-nowrap font-bold text-[#15803d]">${item.sum.toLocaleString('ru-RU')} грн</td>
+                        <td class="p-2.5 whitespace-nowrap">${paymentBadge}</td>
+                        <td class="p-2.5 whitespace-nowrap text-gray-800">${item.supplier}</td>
+                        <td class="p-2.5 whitespace-nowrap font-medium text-gray-800">${item.project}</td>
+                        <td class="p-2.5 whitespace-nowrap text-gray-600">${item.section}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function openMaterialCard(encodedJson) {
+            const item = JSON.parse(decodeURIComponent(encodedJson));
+            const container = document.getElementById('material-card-content');
+
+            const paymentBadge = item.paymentStatus === 'В долг' 
+                ? `<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">В долг</span>` 
+                : `<span class="bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">Оплачено</span>`;
+
+            container.innerHTML = `
+                <div class="bg-emerald-50 p-3 rounded-lg border border-emerald-100 space-y-2">
+                    <div class="flex justify-between items-center border-b border-emerald-200 pb-2">
+                        <span class="font-bold text-[#166534] text-sm">📦 ${item.name}</span>
+                        <span class="text-xs font-bold text-emerald-800 bg-emerald-200/60 px-2 py-0.5 rounded font-mono">№ заявки: ${item.orderId}</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <p><strong>Количество:</strong> ${item.qty} ${item.unit}</p>
+                        <p><strong>Цена за ед.:</strong> ${item.unitPrice.toLocaleString('ru-RU')} грн</p>
+                        <p class="col-span-2 text-sm pt-1"><strong>Общая сумма:</strong> <span class="text-[#15803d] font-bold text-base">${item.sum.toLocaleString('ru-RU')} грн</span></p>
+                    </div>
+                </div>
+
+                <div class="border rounded-lg p-3 space-y-2 bg-gray-50 text-xs">
+                    <p class="font-bold text-gray-500 uppercase tracking-wider mb-1">🏗 Объект и привязка:</p>
+                    <p><strong>Объект:</strong> <span class="text-gray-900 font-semibold">${item.project}</span></p>
+                    <p><strong>Раздел сметы:</strong> <span class="text-gray-900 font-semibold">${item.section}</span></p>
+                </div>
+
+                <div class="border rounded-lg p-3 space-y-2 bg-gray-50 text-xs">
+                    <p class="font-bold text-gray-500 uppercase tracking-wider mb-1">🛒 Информация о закупке и доставке:</p>
+                    <p><strong>Статус закупки:</strong> <span class="text-green-700 font-bold">${item.status}</span></p>
+                    <p><strong>Поставщик / Магазин:</strong> <span class="text-gray-900 font-semibold">${item.supplier}</span></p>
+                    <p><strong>Статус оплаты:</strong> ${paymentBadge}</p>
+                    <p><strong>Дата создания заявки:</strong> ${item.createdAt}</p>
+                    <p><strong>Желаемая дата поставки:</strong> ${item.date}</p>
+                    <p><strong>Дата фактического закрытия:</strong> <span class="text-[#15803d] font-semibold">${item.closedDate}</span></p>
+                </div>
+            `;
+
+            document.getElementById('material-card-modal').classList.remove('hidden');
+        }
+
+        function closeMaterialCardModal() {
+            document.getElementById('material-card-modal').classList.add('hidden');
+        }
+
+        function exportMaterialsToExcel() {
+            const data = getAllClosedMaterials();
+            if (data.length === 0) {
+                alert('Нет данных для выгрузки в Excel');
+                return;
+            }
+
+            const exportRows = data.map((item) => ({
+                "Дата": item.date,
+                "Наименование": item.name,
+                "Ед. изм.": item.unit,
+                "Количество": item.qty,
+                "Цена за ед.": item.unitPrice,
+                "Сумма": item.sum,
+                "Статус оплаты": item.paymentStatus,
+                "Поставщик": item.supplier,
+                "Объект": item.project,
+                "Раздел": item.section,
+                "Дата закрытия": item.closedDate
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(exportRows);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Реестр материалов");
+            XLSX.writeFile(workbook, "Reestr_Materialov_RSK.xlsx");
+        }
+
+        function renderProjects() {
+            const projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            const employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            const container = document.getElementById('projects-container');
+            updateProjectBadgeCount();
+            
+            if (projects.length === 0) {
+                container.innerHTML = `<p class="text-gray-500 text-sm col-span-2 text-center py-6">Нет добавленных объектов</p>`;
+                return;
+            }
+
+            container.innerHTML = projects.map(p => {
+                const foremanObj = employees.find(e => e.name === p.foreman);
+                const foremanPhone = foremanObj ? foremanObj.phone : '';
+                
+                let totalCost = 0;
+                if (p.sections && p.sections.length > 0) {
+                    totalCost = p.sections.reduce((sum, s) => sum + s.planTotal, 0);
+                }
+
+                return `
+                    <button onclick="openProjectDetail(${p.id})" class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex flex-col justify-between space-y-3 border-l-4 border-[#15803d] hover:bg-emerald-50/50 transition cursor-pointer group">
+                        <div class="space-y-1 w-full">
+                            <div class="flex justify-between items-start">
+                                <h3 class="font-bold text-[#166534] text-base group-hover:underline">🏗 ${p.name}</h3>
+                                <span class="text-xs text-[#15803d] bg-emerald-100 px-2 py-0.5 rounded font-semibold">Открыть →</span>
+                            </div>
+                            <p class="text-xs text-gray-600"><strong>👨‍💼 Прораб:</strong> <span class="text-gray-900 font-semibold">${p.foreman || 'Не назначен'}</span></p>
+                            ${foremanPhone ? `<p class="text-xs text-gray-600"><strong>📞 Телефон:</strong> <span class="text-[#15803d] font-semibold">${foremanPhone}</span></p>` : ''}
+                            <p class="text-[11px] text-gray-400 pt-1">📊 Смета: ${p.estimate ? `✅ Загружена (${totalCost.toLocaleString('ru-RU')} грн)` : '❌ Не загружена'}</p>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+        }
+
+        let currentActiveProjId = null;
+
+        function openProjectDetail(id) {
+            const projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            const employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            const p = projects.find(item => item.id === id);
+            if (!p) return;
+
+            currentActiveProjId = id;
+            document.getElementById('card-proj-title').innerText = `🏗 ${p.name}`;
+            document.getElementById('card-proj-foreman').innerText = p.foreman || 'Не назначен';
+            
+            const foremanObj = employees.find(e => e.name === p.foreman);
+            const phoneLink = document.getElementById('card-proj-phone-link');
+            if (foremanObj && foremanObj.phone) {
+                phoneLink.innerText = foremanObj.phone;
+                phoneLink.href = `tel:${foremanObj.phone}`;
+                phoneLink.parentElement.style.display = 'block';
+            } else {
+                phoneLink.parentElement.style.display = 'none';
+            }
+
+            document.getElementById('card-proj-delete-btn').setAttribute('onclick', `deleteProject(${p.id})`);
+            
+            renderEstimateUI(p);
+            renderSectionsUI(p);
+            renderTasks(p);
+            switchProjectSubTab('info'); // Сбрасываем подвкладку на общую информацию при открытии
+            switchTab('project-detail');
+        }
+
+        // ЛОГИКА БЛОКА «ЗАДАЧИ ПРОРАБУ»
+        function addTask() {
+            if (!currentActiveProjId) return;
+            const textInput = document.getElementById('taskInput');
+            const dateInput = document.getElementById('taskDate');
+            const priorityInput = document.getElementById('taskPriority');
+
+            const text = textInput.value.trim();
+            const date = dateInput.value;
+            const priority = priorityInput.value;
+
+            if (!text) {
+                alert('Пожалуйста, введите описание задачи.');
+                return;
+            }
+
+            let projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            projects = projects.map(p => {
+                if (p.id === currentActiveProjId) {
+                    if (!p.tasks) p.tasks = [];
+                    p.tasks.push({
+                        id: Date.now(),
+                        text: text,
+                        date: date || 'Без дедлайна',
+                        priority: priority,
+                        completed: false,
+                        photo: null,
+                        history: [{ action: 'Поставлена задача', time: new Date().toLocaleString() }]
+                    });
+                }
+                return p;
+            });
+
+            localStorage.setItem('rsk_projects', JSON.stringify(projects));
+            
+            // Симуляция отправки в Telegram/Viber бот прорабу
+            console.log('🤖 Уведомление отправлено прорабу в Telegram/Viber по объекту:', currentActiveProjId);
+
+            textInput.value = '';
+            dateInput.value = '';
+            const updatedProj = projects.find(p => p.id === currentActiveProjId);
+            renderTasks(updatedProj);
+        }
+
+        function renderTasks(p) {
+            const container = document.getElementById('taskList');
+            if (!p.tasks || p.tasks.length === 0) {
+                container.innerHTML = `<p class="text-xs text-gray-400 italic text-center py-3">Пока нет активных задач для прораба</p>`;
+                return;
+            }
+
+            const todayStr = new Date().toISOString().split('T')[0];
+
+            container.innerHTML = p.tasks.map(task => {
+                let priorityBadge = '';
+                if (task.priority === 'urgent') {
+                    priorityBadge = `<span class="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">Срочно</span>`;
+                } else if (task.priority === 'important') {
+                    priorityBadge = `<span class="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">Важный</span>`;
+                }
+
+                // Проверка дедлайна
+                let isOverdue = false;
+                if (task.date && task.date !== 'Без дедлайна' && !task.completed) {
+                    if (task.date < todayStr) {
+                        isOverdue = true;
+                    }
+                }
+
+                let deadlineBadgeClass = isOverdue ? 'bg-red-100 text-red-700 font-bold border border-red-300' : 'bg-amber-50 text-[#856404] border border-amber-200';
+                let deadlineText = task.date !== 'Без дедлайна' ? `До ${task.date}` : 'Без дедлайна';
+
+                let photoSection = task.photo ? `
+                    <div class="mt-1 flex items-center gap-2">
+                        <span class="text-[11px] text-emerald-700 font-semibold">📸 Фотоотчет загружен</span>
+                        <a href="${task.photo}" target="_blank" class="text-[10px] text-blue-600 underline">Просмотреть</a>
+                    </div>
+                ` : `
+                    <div class="mt-1 flex items-center gap-2">
+                        <label class="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-[#15803d] px-2 py-0.5 rounded cursor-pointer font-semibold transition border border-emerald-200">
+                            📷 Прикрепить фотоотчет
+                            <input type="file" accept="image/*" onchange="attachTaskPhoto(${task.id}, this)" class="hidden">
+                        </label>
+                    </div>
+                `;
+
+                return `
+                    <div class="task-item flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 bg-gray-50 border-l-4 ${task.completed ? 'border-gray-400 opacity-75' : (isOverdue ? 'border-red-500 bg-red-50/30' : 'border-[#198754]')} rounded-lg gap-2 text-xs sm:text-sm">
+                        <div class="flex items-start gap-2.5 w-full sm:w-auto flex-1">
+                            <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleTask(${task.id}, this)" class="mt-1 h-4 w-4 text-[#198754] rounded cursor-pointer">
+                            <div class="space-y-1">
+                                <span class="${task.completed ? 'line-through text-gray-500' : 'text-gray-900'} font-medium block">${task.text}</span>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    ${priorityBadge}
+                                    ${photoSection}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-0 border-gray-200">
+                            <span class="text-[11px] ${deadlineBadgeClass} px-2 py-0.5 rounded">${deadlineText}</span>
+                            <button onclick="deleteTask(${task.id})" class="text-red-500 hover:text-red-700 font-bold text-base px-1" title="Удалить задачу">&times;</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function toggleTask(taskId, checkbox) {
+            if (!currentActiveProjId) return;
+            const isCompleted = checkbox.checked;
+            const nowStr = new Date().toLocaleString();
+
+            let projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            projects = projects.map(p => {
+                if (p.id === currentActiveProjId && p.tasks) {
+                    p.tasks = p.tasks.map(t => {
+                        if (t.id === taskId) {
+                            t.completed = isCompleted;
+                            t.history.push({ action: isCompleted ? 'Выполнено' : 'Вернулось в работу', time: nowStr });
+                        }
+                        return t;
+                    });
+                }
+                return p;
+            });
+
+            localStorage.setItem('rsk_projects', JSON.stringify(projects));
+            const updatedProj = projects.find(p => p.id === currentActiveProjId);
+            renderTasks(updatedProj);
+        }
+
+        function attachTaskPhoto(taskId, inputElement) {
+            if (!currentActiveProjId || inputElement.files.length === 0) return;
+            const file = inputElement.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const base64Img = e.target.result;
+                let projects = JSON.parse(localStorage.getItem('rsk_projects'));
+                projects = projects.map(p => {
+                    if (p.id === currentActiveProjId && p.tasks) {
+                        p.tasks = p.tasks.map(t => {
+                            if (t.id === taskId) {
+                                t.photo = base64Img;
+                                t.history.push({ action: 'Прикреплен фотоотчет', time: new Date().toLocaleString() });
+                            }
+                            return t;
+                        });
+                    }
+                    return p;
+                });
+
+                localStorage.setItem('rsk_projects', JSON.stringify(projects));
+                const updatedProj = projects.find(p => p.id === currentActiveProjId);
+                renderTasks(updatedProj);
+                alert('Фотоотчет успешно прикреплен к задаче!');
+            };
+
+            reader.readAsDataURL(file);
+        }
+
+        function deleteTask(taskId) {
+            if (!currentActiveProjId || !confirm('Удалить эту задачу?')) return;
+            let projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            projects = projects.map(p => {
+                if (p.id === currentActiveProjId && p.tasks) {
+                    p.tasks = p.tasks.filter(t => t.id !== taskId);
+                }
+                return p;
+            });
+
+            localStorage.setItem('rsk_projects', JSON.stringify(projects));
+            const updatedProj = projects.find(p => p.id === currentActiveProjId);
+            renderTasks(updatedProj);
+        }
+
+        function renderEstimateUI(p) {
+            const emptyState = document.getElementById('estimate-empty-state');
+            const fileInfo = document.getElementById('estimate-file-info');
+            const fileName = document.getElementById('estimate-file-name');
+            const fileDate = document.getElementById('estimate-file-date');
+
+            if (p.estimate) {
+                emptyState.classList.add('hidden');
+                fileInfo.classList.remove('hidden');
+                fileName.innerText = p.estimate.name;
+                fileDate.innerText = `Загружено: ${p.estimate.date}`;
+            } else {
+                emptyState.classList.remove('hidden');
+                fileInfo.classList.add('hidden');
+                document.getElementById('estimate-file-input').value = '';
+            }
+        }
+
+        function uploadAndParseEstimate() {
+            if (!currentActiveProjId) return;
+            const fileInput = document.getElementById('estimate-file-input');
+            if (fileInput.files.length === 0) {
+                alert('Пожалуйста, выберите Excel файл сметы');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+                    let sections = [];
+                    let currentSection = null;
+
+                    for (let i = 0; i < rows.length; i++) {
+                        const row = rows[i];
+                        if (!row || row.length === 0) continue;
+
+                        let rowText = String(row[1] || row[0] || '').trim();
+
+                        if (rowText.toLowerCase().includes('раздел:')) {
+                            if (currentSection) {
+                                sections.push(currentSection);
+                            }
+                            currentSection = {
+                                name: rowText,
+                                planWorks: 0,
+                                planMaterials: 0,
+                                planTotal: 0
+                            };
+                            continue;
+                        }
+
+                        if (rowText.toLowerCase().includes('итого по разделу') && currentSection) {
+                            let pWorks = parseFloat(row[6]) || 0;
+                            let pMat = parseFloat(row[7]) || 0;
+                            let pTot = parseFloat(row[8]) || (pWorks + pMat);
+
+                            currentSection.planWorks = pWorks;
+                            currentSection.planMaterials = pMat;
+                            currentSection.planTotal = pTot;
+                            
+                            sections.push(currentSection);
+                            currentSection = null;
+                        }
+                    }
+
+                    if (currentSection) {
+                        sections.push(currentSection);
+                    }
+
+                    if (sections.length === 0) {
+                        sections.push({
+                            name: "Основной сметный расчет",
+                            planWorks: 0,
+                            planMaterials: 0,
+                            planTotal: 0
+                        });
+                    }
+
+                    const estimateObj = {
+                        name: file.name,
+                        data: e.target.result,
+                        date: new Date().toLocaleString()
+                    };
+
+                    let projects = JSON.parse(localStorage.getItem('rsk_projects'));
+                    projects = projects.map(p => {
+                        if (p.id === currentActiveProjId) {
+                            p.estimate = estimateObj;
+                            p.sections = sections.map(sec => {
+                                return {
+                                    name: sec.name,
+                                    planWorks: sec.planWorks,
+                                    planMaterials: sec.planMaterials,
+                                    planTotal: sec.planTotal
+                                };
+                            });
+                        }
+                        return p;
+                    });
+
+                    localStorage.setItem('rsk_projects', JSON.stringify(projects));
+                    const updatedProj = projects.find(p => p.id === currentActiveProjId);
+                    renderEstimateUI(updatedProj);
+                    renderSectionsUI(updatedProj);
+                    alert('Смета успешно загружена и разделы автоматически созданы!');
+
+                } catch (err) {
+                    console.error(err);
+                    alert('Ошибка при чтении Excel файла. Убедитесь, что это корректный файл .xlsx');
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function getSectionFacts(projectName, sectionName) {
+            const orders = JSON.parse(localStorage.getItem('rsk_orders')) || [];
+            let factMaterials = 0;
+            let factWorks = 0;
+            let materialsList = [];
+
+            orders.forEach(o => {
+                if (o.project === projectName && o.section === sectionName && o.status === '🟢 Закрыта') {
+                    if (o.items && Array.isArray(o.items)) {
+                        o.items.forEach(it => {
+                            let price = typeof it === 'object' ? (parseFloat(it.rawPrice) || parseFloat(it.price) || 0) : 0;
+                            let name = typeof it === 'object' ? it.name : it;
+                            let paymentStatus = typeof it === 'object' ? (it.paymentStatus || 'Оплачено') : 'Оплачено';
+                            
+                            factMaterials += price;
+                            materialsList.push({ name, price, paymentStatus, supplier: o.purchaseData ? o.purchaseData.supplier : 'Не указан', requestNumber: o.requestNumber || o.id });
+                        });
+                    }
+                }
+            });
+
+            return { factMaterials, factWorks, materialsList };
+        }
+
+        function renderSectionsUI(p) {
+            const container = document.getElementById('sections-container');
+            const tblSmetaBadge = document.getElementById('tbl-smeta-total-badge');
+            const tblWorksVal = document.getElementById('tbl-works-val');
+            const tblMaterialsVal = document.getElementById('tbl-materials-val');
+
+            if (!p.sections || p.sections.length === 0) {
+                container.innerHTML = `<p class="text-xs text-gray-500 py-3 text-center">Разделы появятся автоматически после загрузки и разбора файла сметы.</p>`;
+                if (tblSmetaBadge) tblSmetaBadge.innerText = `Смета: 0 грн`;
+                if (tblWorksVal) tblWorksVal.innerText = `0 / 0 грн`;
+                if (tblMaterialsVal) tblMaterialsVal.innerText = `0 / 0 грн`;
+                return;
+            }
+
+            let sumPlanWorks = 0;
+            let sumPlanMat = 0;
+            let sumPlanTotal = 0;
+            let sumFactWorks = 0;
+            let sumFactMat = 0;
+
+            container.innerHTML = p.sections.map((sec, idx) => {
+                const facts = getSectionFacts(p.name, sec.name);
+                let factTotal = facts.factWorks + facts.factMaterials;
+
+                sumPlanWorks += sec.planWorks;
+                sumPlanMat += sec.planMaterials;
+                sumPlanTotal += sec.planTotal;
+                sumFactWorks += facts.factWorks;
+                sumFactMat += facts.factMaterials;
+
+                const isMatOver = facts.factMaterials > sec.planMaterials;
+                const isWorkOver = facts.factWorks > sec.planWorks;
+
+                const matBadgeClass = isMatOver ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-[#15803d] border-emerald-100';
+                
+                const matIndicator = isMatOver ? `<span class="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold ml-1">⚠️ Перерасход на ${(facts.factMaterials - sec.planMaterials).toLocaleString('ru-RU')} грн</span>` : `<span class="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold ml-1">✔ В норме</span>`;
+                const workIndicator = isWorkOver ? `<span class="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold ml-1">⚠️ Перерасход на ${(facts.factWorks - sec.planWorks).toLocaleString('ru-RU')} грн</span>` : `<span class="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold ml-1">✔ В норме</span>`;
+
+                let materialsHtml = facts.materialsList.length > 0 ? facts.materialsList.map(m => {
+                    const payBadge = m.paymentStatus === 'В долг' 
+                        ? `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">В долг</span>` 
+                        : `<span class="text-[9px] bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-bold">Оплачено</span>`;
+
+                    return `
+                        <div class="flex justify-between items-center text-xs py-1.5 border-b border-gray-100 last:border-0">
+                            <div>
+                                <span class="font-bold text-[#15803d] font-mono">[${m.requestNumber}]</span> <span class="font-semibold text-gray-800">📦 ${m.name}</span>
+                                <span class="text-[10px] text-gray-400 block">Поставщик: ${m.supplier} | ${payBadge}</span>
+                            </div>
+                            <span class="font-bold text-[#15803d]">${m.price.toLocaleString('ru-RU')} грн</span>
+                        </div>
+                    `;
+                }).join('') : `<p class="text-xs text-gray-400 italic py-1">Нет закрытых закупок материалов по этому разделу</p>`;
+
+                return `
+                    <div class="border rounded-xl bg-gray-50 overflow-hidden transition shadow-sm">
+                        <div onclick="toggleSectionDetails(${idx})" class="p-4 cursor-pointer hover:bg-emerald-50/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                            <div class="flex items-center gap-2">
+                                <span id="section-arrow-${idx}" class="text-xs font-bold text-[#15803d] transition-transform">▼</span>
+                                <h4 class="font-bold text-[#166534] text-sm">📌 ${sec.name}</h4>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="text-xs text-gray-500 flex gap-3">
+                                    <span>План: <b>${sec.planTotal.toLocaleString('ru-RU')} грн</b></span>
+                                    <span>Факт: <b class="${factTotal > sec.planTotal ? 'text-red-600' : 'text-[#15803d]'}">${factTotal.toLocaleString('ru-RU')} грн</b></span>
+                                </div>
+                                <button type="button" class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] text-[11px] font-semibold px-2.5 py-1 rounded-lg transition shadow-sm">
+                                    Подробнее
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="px-4 pb-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                            <div class="bg-white p-3 rounded-lg border space-y-1 shadow-sm">
+                                <p class="font-bold text-gray-500 uppercase tracking-wider text-[10px]">📊 ПЛАНИРУЕМЫЕ ЗАТРАТЫ</p>
+                                <p>Работы: <strong class="text-gray-800">${sec.planWorks.toLocaleString('ru-RU')} грн</strong></p>
+                                <p>Материалы: <strong class="text-gray-800">${sec.planMaterials.toLocaleString('ru-RU')} грн</strong></p>
+                                <p class="pt-1 border-t text-sm">Итого планируемые: <strong class="text-[#15803d]">${sec.planTotal.toLocaleString('ru-RU')} грн</strong></p>
+                            </div>
+                            
+                            <div class="p-3 rounded-lg border space-y-2 ${matBadgeClass}">
+                                <div class="flex justify-between items-center">
+                                    <p class="font-bold uppercase tracking-wider text-[10px]">💰 ФАКТИЧЕСКИЕ ЗАТРАТЫ</p>
+                                    ${matIndicator}
+                                </div>
+                                <p>Факт работы: <strong class="text-gray-800">${facts.factWorks.toLocaleString('ru-RU')} грн</strong> ${workIndicator}</p>
+                                <p>Факт материалы: <strong class="text-gray-800">${facts.factMaterials.toLocaleString('ru-RU')} грн</strong></p>
+                                <p class="pt-1 border-t border-emerald-200 text-sm">Итого фактические: <strong class="${factTotal > sec.planTotal ? 'text-red-600' : 'text-[#166534]'}">${factTotal.toLocaleString('ru-RU')} грн</strong></p>
+                            </div>
+                        </div>
+
+                        <div id="section-details-${idx}" class="hidden bg-white border-t p-4 space-y-2">
+                            <p class="text-xs font-bold text-gray-700 uppercase tracking-wider border-b pb-1">🛒 Детализация оплат и закупленных материалов:</p>
+                            <div class="space-y-1">
+                                ${materialsHtml}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            if (tblSmetaBadge) tblSmetaBadge.innerText = `Смета: ${sumPlanTotal.toLocaleString('ru-RU')} грн`;
+            if (tblWorksVal) tblWorksVal.innerText = `${sumPlanWorks.toLocaleString('ru-RU')} / ${sumFactWorks.toLocaleString('ru-RU')} грн`;
+            if (tblMaterialsVal) tblMaterialsVal.innerText = `${sumPlanMat.toLocaleString('ru-RU')} / ${sumFactMat.toLocaleString('ru-RU')} грн`;
+        }
+
+        function toggleSectionDetails(idx) {
+            const detailsEl = document.getElementById(`section-details-${idx}`);
+            const arrowEl = document.getElementById(`section-arrow-${idx}`);
+            if (detailsEl.classList.contains('hidden')) {
+                detailsEl.classList.remove('hidden');
+                arrowEl.style.transform = 'rotate(180deg)';
+            } else {
+                detailsEl.classList.add('hidden');
+                arrowEl.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        function viewEstimateFile() {
+            const projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            const p = projects.find(item => item.id === currentActiveProjId);
+            if (!p || !p.estimate) return;
+
+            document.getElementById('modal-estimate-title').innerText = `📄 ${p.estimate.name}`;
+            
+            const blob = new Blob([new Uint8Array(p.estimate.data)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const blobUrl = URL.createObjectURL(blob);
+
+            const downloadBtn = document.getElementById('modal-estimate-download');
+            downloadBtn.href = blobUrl;
+            downloadBtn.download = p.estimate.name;
+
+            const container = document.getElementById('modal-estimate-content');
+            container.innerHTML = `
+                <div class="text-center p-6 space-y-3 bg-white rounded-xl shadow-sm max-w-md">
+                    <p class="text-sm font-bold text-gray-800">Файл сметы успешно загружен и разобран.</p>
+                    <p class="text-xs text-gray-500">Вы можете скачать оригинальный файл Excel на свое устройство.</p>
+                    <a href="${blobUrl}" download="${p.estimate.name}" class="inline-block bg-[#15803d] text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-[#166534] transition">Скачать ${p.estimate.name}</a>
+                </div>
+            `;
+
+            document.getElementById('estimate-viewer-modal').classList.remove('hidden');
+        }
+
+        function closeEstimateModal() {
+            document.getElementById('estimate-viewer-modal').classList.add('hidden');
+            document.getElementById('modal-estimate-content').innerHTML = '';
+        }
+
+        function deleteEstimateFile() {
+            if (confirm('Удалить прикрепленную смету и все разделы?')) {
+                let projects = JSON.parse(localStorage.getItem('rsk_projects'));
+                projects = projects.map(p => {
+                    if (p.id === currentActiveProjId) {
+                        p.estimate = null;
+                        p.sections = [];
+                    }
+                    return p;
+                });
+                localStorage.setItem('rsk_projects', JSON.stringify(projects));
+                const updatedProj = projects.find(p => p.id === currentActiveProjId);
+                renderEstimateUI(updatedProj);
+                renderSectionsUI(updatedProj);
+            }
+        }
+
+        function renderEmployees() {
+            const employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            const container = document.getElementById('employees-container');
+            updateEmployeeBadgeCount();
+            
+            if (employees.length === 0) {
+                container.innerHTML = `<p class="text-gray-500 text-sm col-span-2 text-center py-6">Список сотрудников пуст</p>`;
+                return;
+            }
+
+            container.innerHTML = employees.map(emp => `
+                <button onclick="openEmployeeCard(${emp.id})" class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex flex-col justify-between space-y-3 border-l-4 border-[#15803d] hover:bg-emerald-50/50 transition cursor-pointer group">
+                    <div class="space-y-1 w-full">
+                        <div class="flex justify-between items-start">
+                            <h3 class="font-bold text-[#166534] text-base group-hover:underline">👤 ${emp.name}</h3>
+                            <span class="text-xs text-[#15803d] bg-emerald-100 px-2 py-0.5 rounded font-semibold">Открыть карточку →</span>
+                        </div>
+                        <p class="text-xs text-gray-600"><strong>Должность:</strong> ${emp.position}</p>
+                        <p class="text-xs text-gray-600"><strong>Телефон:</strong> <span class="text-[#15803d] font-semibold">${emp.phone}</span></p>
+                    </div>
+                </button>
+            `).join('');
+        }
+
+        let currentActiveEmpId = null;
+
+        function openEmployeeCard(id) {
+            const employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            const emp = employees.find(e => e.id === id);
+            if (!emp) return;
+
+            currentActiveEmpId = id;
+            document.getElementById('card-emp-name').innerText = emp.name;
+            document.getElementById('card-emp-position').innerText = emp.position;
+            const phoneLink = document.getElementById('card-emp-phone-link');
+            phoneLink.innerText = emp.phone;
+            phoneLink.href = `tel:${emp.phone}`;
+            document.getElementById('card-emp-notes').value = emp.notes || '';
+
+            document.getElementById('card-delete-btn').setAttribute('onclick', `deleteEmployee(${emp.id}); closeEmployeeCardModal();`);
+            document.getElementById('employee-card-modal').classList.remove('hidden');
+        }
+
+        function closeEmployeeCardModal() {
+            document.getElementById('employee-card-modal').classList.add('hidden');
+            currentActiveEmpId = null;
+        }
+
+        function saveEmployeeNotes() {
+            if (!currentActiveEmpId) return;
+            const notes = document.getElementById('card-emp-notes').value;
+            let employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            employees = employees.map(e => {
+                if (e.id === currentActiveEmpId) e.notes = notes;
+                return e;
+            });
+            localStorage.setItem('rsk_employees', JSON.stringify(employees));
+            alert('Заметки успешно сохранены!');
+        }
+
+        function openAddProjectModal() {
+            updateForemanDropdown();
+            document.getElementById('project-modal').classList.remove('hidden');
+        }
+        function closeAddProjectModal() { document.getElementById('project-modal').classList.add('hidden'); }
+
+        function updateForemanDropdown() {
+            const employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            const select = document.getElementById('new-proj-foreman');
+            if (select) {
+                select.innerHTML = employees.map(e => `<option value="${e.name}">${e.name} (${e.position})</option>`).join('');
+            }
+        }
+
+        function saveNewProject(e) {
+            e.preventDefault();
+            const name = document.getElementById('new-proj-name').value.trim();
+            const foreman = document.getElementById('new-proj-foreman').value;
+
+            let projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            projects.push({ id: Date.now(), name, foreman, notes: "", estimate: null, sections: [], tasks: [] });
+            localStorage.setItem('rsk_projects', JSON.stringify(projects));
+
+            document.getElementById('new-proj-name').value = '';
+            closeAddProjectModal();
+            renderProjects();
+        }
+
+        function deleteProject(id) {
+            if (confirm('Удалить объект?')) {
+                let projects = JSON.parse(localStorage.getItem('rsk_projects')).filter(p => p.id !== id);
+                localStorage.setItem('rsk_projects', JSON.stringify(projects));
+                switchTab('projects');
+            }
+        }
+
+        function openAddEmployeeModal() { document.getElementById('employee-modal').classList.remove('hidden'); }
+        function closeAddEmployeeModal() { document.getElementById('employee-modal').classList.add('hidden'); }
+
+        function saveNewEmployee(e) {
+            e.preventDefault();
+            const name = document.getElementById('emp-name').value.trim();
+            const position = document.getElementById('emp-position').value;
+            const phone = document.getElementById('emp-phone').value.trim();
+
+            let employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            employees.push({ id: Date.now(), name, position, phone, notes: "" });
+            localStorage.setItem('rsk_employees', JSON.stringify(employees));
+
+            document.getElementById('emp-name').value = '';
+            document.getElementById('emp-phone').value = '';
+            closeAddEmployeeModal();
+            renderEmployees();
+        }
+
+        function deleteEmployee(id) {
+            if (confirm('Удалить сотрудника?')) {
+                let employees = JSON.parse(localStorage.getItem('rsk_employees')).filter(e => e.id !== id);
+                localStorage.setItem('rsk_employees', JSON.stringify(employees));
+                renderEmployees();
+            }
+        }
+
+        function updateProjectDropdowns() {
+            const projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            const orderSelect = document.getElementById('order-proj');
+            if (orderSelect) {
+                orderSelect.innerHTML = projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+                onOrderProjectChange();
+            }
+        }
+
+        function onOrderProjectChange() {
+            const projectName = document.getElementById('order-proj').value;
+            const projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            const sectionSelect = document.getElementById('order-section');
+            
+            const currentProj = projects.find(p => p.name === projectName);
+
+            if (currentProj && currentProj.sections && currentProj.sections.length > 0) {
+                sectionSelect.innerHTML = currentProj.sections.map(sec => `<option value="${sec.name}">${sec.name}</option>`).join('');
+            } else {
+                sectionSelect.innerHTML = `<option value="">-- Смета не загружена или нет разделов --</option>`;
+            }
+        }
+
+        function initOrderItems() {
+            const container = document.getElementById('order-items-container');
+            container.innerHTML = '';
+            addOrderItemRow();
+        }
+
+        function addOrderItemRow() {
+            const container = document.getElementById('order-items-container');
+            const rowId = Date.now() + Math.random();
+            const div = document.createElement('div');
+            div.className = 'flex items-center gap-2 bg-gray-50 p-2 rounded-lg border';
+            div.id = `row-${rowId}`;
+            div.innerHTML = `
+                <div class="flex-1">
+                    <input type="text" placeholder="Наименование (напр. Ведро)" required class="order-item-name w-full border rounded p-2 text-xs outline-none focus:ring-1 focus:ring-[#15803d] bg-white">
+                </div>
+                <div class="w-20">
+                    <input type="number" step="any" placeholder="Кол-во" required class="order-item-qty w-full border rounded p-2 text-xs outline-none focus:ring-1 focus:ring-[#15803d] bg-white">
+                </div>
+                <div class="w-24">
+                    <select class="order-item-unit w-full border rounded p-2 text-xs bg-white outline-none focus:ring-1 focus:ring-[#15803d]">
+                        <option value="шт">шт</option>
+                        <option value="м">м</option>
+                        <option value="кг">кг</option>
+                        <option value="т">т</option>
+                        <option value="м²">м²</option>
+                        <option value="м³">м³</option>
+                        <option value="уп">уп</option>
+                        <option value="л">л</option>
+                    </select>
+                </div>
+                <button type="button" onclick="removeOrderItemRow('${rowId}')" class="text-red-400 hover:text-red-600 px-2 py-1 text-xs font-bold">✕</button>
+            `;
+            container.appendChild(div);
+        }
+
+        function removeOrderItemRow(rowId) {
+            const container = document.getElementById('order-items-container');
+            if (container.children.length > 1) {
+                document.getElementById(`row-${rowId}`).remove();
+            } else {
+                alert('Заявка должна содержать хотя бы одну позицию материала.');
+            }
+        }
+
+        function submitMaterialOrder(e) {
+            e.preventDefault();
+            const sectionVal = document.getElementById('order-section').value;
+            if (!sectionVal) {
+                alert('Пожалуйста, выберите раздел (для этого у выбранного объекта должна быть загружена смета)');
+                return;
+            }
+
+            const itemRows = document.querySelectorAll('#order-items-container > div');
+            let itemsList = [];
+            itemRows.forEach(row => {
+                const name = row.querySelector('.order-item-name').value.trim();
+                const qty = row.querySelector('.order-item-qty').value.trim();
+                const unit = row.querySelector('.order-item-unit').value;
+                if (name && qty) {
+                    itemsList.push({ name, qty: parseFloat(qty), unit });
+                }
+            });
+
+            if (itemsList.length === 0) {
+                alert('Добавьте хотя бы одну позицию материала');
+                return;
+            }
+
+            const uniqueRequestNumber = generateRequestNumber();
+
+            const newOrder = {
+                id: Date.now(),
+                requestNumber: uniqueRequestNumber,
+                project: document.getElementById('order-proj').value,
+                section: sectionVal,
+                items: itemsList,
+                date: document.getElementById('order-date').value,
+                status: "🔴 Новая",
+                purchaseData: null,
+                createdAt: new Date().toLocaleString()
+            };
+
+            let orders = JSON.parse(localStorage.getItem('rsk_orders'));
+            orders.unshift(newOrder);
+            localStorage.setItem('rsk_orders', JSON.stringify(orders));
+
+            updateOrdersBadgeCount();
+            switchTab('orders');
+        }
+
+        function renderOrders() {
+            const orders = JSON.parse(localStorage.getItem('rsk_orders'));
+            const container = document.getElementById('orders-container');
+            updateOrdersBadgeCount();
+
+            const activeOrders = orders.filter(o => o.status !== 'archived');
+
+            if (activeOrders.length === 0) {
+                container.innerHTML = `<p class="text-center text-gray-400 py-6 text-sm">Активных заявок нет</p>`;
+                return;
+            }
+
+            container.innerHTML = activeOrders.map(o => {
+                let statusBadgeClass = 'bg-red-100 text-red-700';
+                if (o.status === '🟡 В работе') statusBadgeClass = 'bg-yellow-100 text-yellow-700';
+                if (o.status === '🟢 Закрыта') statusBadgeClass = 'bg-green-100 text-green-700';
+
+                const reqNum = o.requestNumber || `З-${o.id}`;
+
+                let itemsHtml = '';
+                let hasDebt = false;
+
+                if (o.items && Array.isArray(o.items)) {
+                    itemsHtml = o.items.map(it => {
+                        let text = typeof it === 'object' && it.qty ? `${it.name} — ${it.qty} ${it.unit}` : it;
+                        let pricePart = typeof it === 'object' && it.price ? ` (${it.price})` : '';
+                        let paymentBadge = '';
+                        if (typeof it === 'object' && it.paymentStatus) {
+                            if (it.paymentStatus === 'В долг') {
+                                hasDebt = true;
+                                paymentBadge = `<span class="text-[10px] ml-2 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">В долг</span>`;
+                            } else {
+                                paymentBadge = `<span class="text-[10px] ml-2 px-1.5 py-0.5 rounded bg-green-100 text-green-800 font-bold">Оплачено</span>`;
+                            }
+                        }
+                        return `<div class="text-gray-800 flex items-center justify-between py-0.5 border-b border-gray-100 last:border-0"><span>📦 <b>${text}${pricePart}</b></span> ${paymentBadge}</div>`;
+                    }).join('');
+                }
+
+                let purchaseInfo = '';
+                if (o.purchaseData) {
+                    purchaseInfo = `
+                        <div class="mt-2 p-2 bg-emerald-50 rounded border border-emerald-200 text-xs space-y-0.5 text-gray-700">
+                            <p>💰 Закуплено на сумму: <strong class="text-[#15803d]">${Number(o.purchaseData.sum).toLocaleString('ru-RU')} грн</strong></p>
+                            <p>🏬 Поставщик: <b>${o.purchaseData.supplier}</b></p>
+                        </div>
+                    `;
+                }
+
+                const isFullyClosed = (o.status === '🟢 Закрыта');
+                const canBeArchived = isFullyClosed && !hasDebt;
+
+                return `
+                    <div class="border rounded-xl p-4 bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 text-sm">
+                        <div class="space-y-1.5 w-full md:w-3/4">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="font-bold text-[#15803d] font-mono bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">${reqNum}</span>
+                                <span class="font-bold text-[#166534]">🏗 ${o.project}</span>
+                                <span class="text-xs bg-gray-200 px-2 py-0.5 rounded text-gray-700">${o.section}</span>
+                                <span class="px-2 py-0.5 text-xs font-bold rounded ${statusBadgeClass}">${o.status}</span>
+                            </div>
+                            <div class="space-y-0.5 pl-1 text-xs sm:text-sm bg-white p-2.5 rounded-lg border">
+                                ${itemsHtml}
+                            </div>
+                            <p class="text-xs text-gray-500 pt-1">⏳ Желаемый срок: <b>${o.date}</b></p>
+                            ${purchaseInfo}
+                        </div>
+                        <div class="flex flex-col gap-2 w-full md:w-auto items-end">
+                            ${o.status === '🔴 Новая' ? `
+                                <button onclick="setOrderStatus(${o.id}, '🟡 В работе')" class="w-full md:w-auto bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow">▶ Взять в работу</button>
+                            ` : ''}
+                            ${o.status === '🟡 В работе' ? `
+                                <button onclick="openCloseOrderModal(${o.id})" class="w-full md:w-auto bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow">✅ Закрыть закупку</button>
+                            ` : ''}
+                            ${o.status === '🟢 Закрыта' ? `
+                                <span class="text-xs text-green-700 font-bold bg-green-50 px-2 py-1 rounded border border-green-200">Завершено</span>
+                            ` : ''}
+
+                            ${canBeArchived ? `
+                                <button onclick="archiveOrder(${o.id})" class="text-emerald-700 hover:text-emerald-900 bg-emerald-100 hover:bg-emerald-200 px-3 py-1.5 rounded-lg text-xs font-semibold transition">📥 В архив</button>
+                            ` : `
+                                <button disabled class="text-gray-400 bg-gray-200 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-not-allowed" title="Архивация доступна только для полностью закрытых и полностью оплаченных заявок (без долгов)">📥 В архив</button>
+                            `}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function setOrderStatus(id, status) {
+            let orders = JSON.parse(localStorage.getItem('rsk_orders')).map(o => {
+                if (o.id === id) o.status = status;
+                return o;
+            });
+            localStorage.setItem('rsk_orders', JSON.stringify(orders));
+            renderOrders();
+        }
+
+        function archiveOrder(id) {
+            if (confirm('Перенести заявку в архив?')) {
+                let orders = JSON.parse(localStorage.getItem('rsk_orders')).map(o => {
+                    if (o.id === id) {
+                        o.status = 'archived';
+                    }
+                    return o;
+                });
+                localStorage.setItem('rsk_orders', JSON.stringify(orders));
+                renderOrders();
+            }
+        }
+
+        function openCloseOrderModal(id) {
+            const orders = JSON.parse(localStorage.getItem('rsk_orders'));
+            const order = orders.find(o => o.id === id);
+            if (!order) return;
+
+            document.getElementById('modal-order-id').value = id;
+            document.getElementById('modal-order-supplier').value = '';
+
+            const container = document.getElementById('modal-order-items-price-container');
+            let itemsList = [];
+            if (order.items && Array.isArray(order.items)) {
+                itemsList = order.items;
+            }
+
+            container.innerHTML = itemsList.map((item) => {
+                let name = typeof item === 'object' ? item.name : (item.split(' — ')[0] || item);
+                let qty = typeof item === 'object' ? item.qty : (parseFloat(item.split(' — ')[1]) || 1);
+                let unit = typeof item === 'object' ? item.unit : (item.split(' ')[2] || 'шт');
+
+                return `
+                    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-white p-3 rounded-lg border modal-item-row" data-item-name="${name}" data-item-qty="${qty}" data-item-unit="${unit}">
+                        <span class="text-xs text-gray-800 font-semibold flex-1">📦 ${name} — <b>${qty} ${unit}</b></span>
+                        <div class="flex items-center gap-2 w-full sm:w-auto">
+                            <input type="number" step="0.01" placeholder="Цена за ед., грн" oninput="calculateModalTotal()" class="modal-item-price w-28 border rounded p-1.5 text-xs outline-none focus:ring-1 focus:ring-[#15803d]" required>
+                            <select class="modal-item-payment w-28 border rounded p-1.5 text-xs bg-white outline-none focus:ring-1 focus:ring-[#15803d]">
+                                <option value="Оплачено">Оплачено</option>
+                                <option value="В долг">В долг</option>
+                            </select>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            calculateModalTotal();
+            document.getElementById('close-order-modal').classList.remove('hidden');
+        }
+
+        function calculateModalTotal() {
+            const rows = document.querySelectorAll('.modal-item-row');
+            let total = 0;
+            rows.forEach(row => {
+                const qty = parseFloat(row.getAttribute('data-item-qty')) || 1;
+                const unitPrice = parseFloat(row.querySelector('.modal-item-price').value) || 0;
+                total += qty * unitPrice;
+            });
+            document.getElementById('modal-order-total-sum-label').innerText = `${total.toLocaleString('ru-RU')} грн`;
+        }
+
+        function closeModalCloseOrder() {
+            document.getElementById('close-order-modal').classList.add('hidden');
+        }
+
+        function confirmOrderPurchase(e) {
+            e.preventDefault();
+            const id = parseInt(document.getElementById('modal-order-id').value);
+            const supplier = document.getElementById('modal-order-supplier').value.trim();
+
+            const itemRows = document.querySelectorAll('.modal-item-row');
+            let totalSum = 0;
+            let updatedItemsList = [];
+            const closedTimestamp = new Date().toLocaleString();
+
+            itemRows.forEach((row) => {
+                const name = row.getAttribute('data-item-name');
+                const qty = parseFloat(row.getAttribute('data-item-qty')) || 1;
+                const unit = row.getAttribute('data-item-unit');
+                const unitPrice = parseFloat(row.querySelector('.modal-item-price').value) || 0;
+                const paymentStatus = row.querySelector('.modal-item-payment').value;
+                
+                const itemTotalSum = qty * unitPrice;
+                totalSum += itemTotalSum;
+
+                updatedItemsList.push({
+                    name: name,
+                    qty: qty,
+                    unit: unit,
+                    price: `${itemTotalSum.toLocaleString('ru-RU')} грн (${unitPrice} грн/${unit})`,
+                    rawPrice: itemTotalSum,
+                    paymentStatus: paymentStatus
+                });
+            });
+
+            let orders = JSON.parse(localStorage.getItem('rsk_orders'));
+            let targetOrder = orders.find(o => o.id === id);
+
+            if (!targetOrder) return;
+
+            targetOrder.status = "🟢 Закрыта";
+            targetOrder.items = updatedItemsList;
+            targetOrder.purchaseData = { sum: totalSum, supplier, closedDate: closedTimestamp };
+            localStorage.setItem('rsk_orders', JSON.stringify(orders));
+
+            closeModalCloseOrder();
+            renderOrders();
+            alert(`Закупка успешно проведена! Сумма ${totalSum.toLocaleString('ru-RU')} грн учтена в факте раздела «${targetOrder.section}» объекта «${targetOrder.project}».`);
+        }
+
+        function clearOrders() {
+            if (confirm('Очистить историю?')) {
+                localStorage.setItem('rsk_orders', JSON.stringify([]));
+                renderOrders();
+            }
+        }
+
+        function updateOrdersBadgeCount() {
+            const orders = JSON.parse(localStorage.getItem('rsk_orders')) || [];
+            const activeOrders = orders.filter(o => o.status !== 'archived');
+            const badge = document.getElementById('orders-badge');
+            if (badge) badge.innerText = activeOrders.length;
+        }
+
+        function updateEmployeeBadgeCount() {
+            const employees = JSON.parse(localStorage.getItem('rsk_employees'));
+            const badge = document.getElementById('employees-badge');
+            if (badge) badge.innerText = employees.length;
+        }
+
+        function updateProjectBadgeCount() {
+            const projects = JSON.parse(localStorage.getItem('rsk_projects'));
+            const badge = document.getElementById('projects-badge');
+            if (badge) badge.innerText = projects.length;
+        }
+
+        updateOrdersBadgeCount();
+        updateEmployeeBadgeCount();
+        updateProjectBadgeCount();
+        renderProjects();
+    </script>
+</body>
+</html>
