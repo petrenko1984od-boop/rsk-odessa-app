@@ -86,7 +86,7 @@ function renderForemanTasks(tasks, projects) {
     return groups.map(group => {
         const groupTasks = tasks.filter(task => task.status === group.status);
         return `
-            <section class="rounded-xl bg-white p-5 shadow-sm">
+            <section class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
                 <div class="flex items-center justify-between gap-2 border-b pb-3">
                     <h3 class="text-sm font-bold text-gray-800">${group.title}</h3>
                     <span class="rounded-full bg-${group.tone}-100 px-2 py-1 text-xs font-bold text-${group.tone}-800">${groupTasks.length}</span>
@@ -223,7 +223,7 @@ export async function loadDashboard() {
             </div>
 
             <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <div class="rounded-xl bg-white p-5 shadow-sm lg:col-span-1">
+                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-1">
                     <div class="flex items-center justify-between gap-2 border-b pb-3">
                         <h3 class="text-sm font-bold text-gray-800">💰 Баланс сотрудников</h3>
                         <span class="text-xs text-gray-400">получено − потрачено</span>
@@ -231,7 +231,7 @@ export async function loadDashboard() {
                     <div class="mt-2">${renderEmployeeBalances(balances, employees)}</div>
                 </div>
 
-                <div class="rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
+                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
                     <div class="flex items-center justify-between gap-2 border-b pb-3">
                         <h3 class="text-sm font-bold text-gray-800">💳 Последние операции</h3>
                         <span class="text-xs text-gray-400">6 последних</span>
