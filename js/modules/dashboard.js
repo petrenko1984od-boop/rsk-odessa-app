@@ -198,30 +198,68 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         .sort((a, b) => b.amount - a.amount)
         .slice(0, 8);
 
-    const projectPlanMap = new Map();
+    const sectionPlanMap = new Map();
     (sections || []).forEach(section => {
-        const projectId = section.project_id;
-        if (!projectId) return;
-        projectPlanMap.set(projectId, (projectPlanMap.get(projectId) || 0) + (Number(section.plan_total) || 0));
+        sectionPlanMap.set(section.id, {
+            projectId: section.project_id,
+            plan: Number(section.plan_materials) || 0
+        });
     });
 
-    const projectFactMap = new Map();
+    const sectionFactMap = new Map();
     (cashOperations || []).forEach(operation => {
-        const projectId = operation.project_id;
-        if (!projectId) return;
+        if (!operation.section_id) return;
         const category = String(operation.category || '').toLowerCase();
         if (operation.operation_type !== 'expense' || (!['materials', 'delivery'].includes(category) && !['materials', 'delivery'].includes(String(operation.category || '')))) return;
-        projectFactMap.set(projectId, (projectFactMap.get(projectId) || 0) + (Number(operation.amount) || 0));
+        sectionFactMap.set(operation.section_id, (sectionFactMap.get(operation.section_id) || 0) + (Number(operation.amount) || 0));
     });
 
-    const projectRows = (projects || []).map(project => {
-        const plan = Number(projectPlanMap.get(project.id)) || 0;
-        const fact = Number(projectFactMap.get(project.id)) || 0;
-        const overrun = fact - plan;
-        const percent = plan > 0 ? (overrun / plan) * 100 : 0;
-        return { ...project, plan, fact, overrun, percent };
-    }).filter(project => project.plan > 0 || project.fact > 0)
-      .sort((a, b) => Math.abs(b.overrun) - Math.abs(a.overrun));
+    const closedOrderIds = new Set((orders || [])
+        .filter(order => ['closed', 'archived'].includes(order.status) && order.payment_source === 'company')
+        .map(order => order.id));
+    const orderSectionMap = new Map((orders || [])
+        .filter(order => closedOrderIds.has(order.id) && order.section_id)
+        .map(order => [order.id, order.section_id]));
+    (orderItems || []).forEach(item => {
+        const sectionId = orderSectionMap.get(item.order_id);
+        if (!sectionId) return;
+        sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + (Number(item.total_price) || 0));
+    });
+
+    const projectMap = new Map((projects || []).map(project => [project.id, project]));
+    const projectRows = [...sectionPlanMap.entries()]
+        .map(([sectionId, section]) => {
+            const plan = section.plan;
+            const fact = Number(sectionFactMap.get(sectionId)) || 0;
+            const overrun = fact - plan;
+            const percent = plan > 0 ? (overrun / plan) * 100 : (overrun > 0 ? 100 : 0);
+            return {
+                sectionId,
+                sectionOverrun: overrun,
+                hasSectionOverrun: overrun > 0,
+                project: projectMap.get(section.projectId),
+                plan,
+                fact,
+                overrun,
+                percent
+            };
+        })
+        .filter(row => row.project)
+        .reduce((rows, row) => {
+            const existing = rows.find(item => item.project.id === row.project.id);
+            if (existing) {
+                existing.plan += row.plan;
+                existing.fact += row.fact;
+                existing.overrun += row.overrun;
+                existing.hasSectionOverrun = existing.hasSectionOverrun || row.hasSectionOverrun;
+                existing.percent = existing.plan > 0 ? (existing.overrun / existing.plan) * 100 : 0;
+            } else {
+                rows.push({ ...row, ...row.project });
+            }
+            return rows;
+        }, [])
+        .filter(row => row.hasSectionOverrun)
+        .sort((a, b) => b.overrun - a.overrun);
 
     const negativeList = negative.length
         ? negative.map(item => `
@@ -414,14 +452,14 @@ export async function loadDashboard() {
     if (isExecutive) {
         const [projectsResult, sectionsResult, cashOperationsResult, balancesResult, tasksResult, ordersResult, employeesResult, orderItemsResult] = await Promise.all([
             db.select('projects', { select: 'id, name, foreman_id, status' }),
-            db.select('sections', { select: 'id, project_id, plan_total' }),
+            db.select('sections', { select: 'id, project_id, plan_materials' }),
             db.select('cash_operations', {
-                select: 'id, project_id, operation_type, category, amount, created_at',
+                select: 'id, project_id, section_id, operation_type, category, amount, created_at',
                 orderBy: { column: 'created_at', asc: false }
             }),
             db.select('employee_cash_balance', { select: 'employee_id, balance' }),
             db.select('tasks', { select: 'id, title, project_id, status, deadline, completed_at, created_at' }),
-            db.select('orders', { select: 'id, status, project_id, request_number, supplier, created_at' }),
+            db.select('orders', { select: 'id, status, project_id, section_id, payment_source, request_number, supplier, created_at' }),
             db.select('employees', { select: 'id, name, position, status' }),
             db.select('order_items', { select: 'id, order_id, total_price, payment_status' })
         ]);
