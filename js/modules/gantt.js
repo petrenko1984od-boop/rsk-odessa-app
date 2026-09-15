@@ -536,22 +536,23 @@ export async function downloadGanttPDF() {
         const pageWidth = pdf.internal.pageSize.getWidth();
         const pageHeight = pdf.internal.pageSize.getHeight();
 
-        const imgWidth = pageWidth - 20;
+        const pdfMargin = 15;
+        const imgWidth = pageWidth - (pdfMargin * 2);
         const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
         const imgData = canvas.toDataURL('image/png');
 
         let heightLeft = imgHeight;
-        let position = 10;
+        let position = pdfMargin;
 
-        pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-        heightLeft -= (pageHeight - 20);
+        pdf.addImage(imgData, 'PNG', pdfMargin, position, imgWidth, imgHeight);
+        heightLeft -= (pageHeight - (pdfMargin * 2));
 
         while (heightLeft > 0) {
-            position = heightLeft - imgHeight + 10;
+            position = heightLeft - imgHeight + pdfMargin;
             pdf.addPage();
-            pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-            heightLeft -= (pageHeight - 20);
+            pdf.addImage(imgData, 'PNG', pdfMargin, position, imgWidth, imgHeight);
+            heightLeft -= (pageHeight - (pdfMargin * 2));
         }
 
         // ----- 5. Скачиваем -----
