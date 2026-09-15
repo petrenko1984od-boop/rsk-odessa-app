@@ -26,6 +26,7 @@ import {
     loadSections
 } from './estimate.js';
 import { loadExpensesForProject } from './cash.js';
+import { renderGantt } from './gantt.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -367,6 +368,16 @@ export function switchProjectSubTab(subId) {
     if (targetEl) targetEl.classList.remove('hidden');
     if (targetBtn) {
         targetBtn.className = "px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow";
+    }
+
+    // Триггер для графика              ← НОВЫЙ БЛОК
+    if (subId === 'schedule') {
+        const project = getCurrentProject();
+        if (project) {
+            setTimeout(() => {
+                renderGantt(project);
+            }, 100);
+        }
     }
 }
 

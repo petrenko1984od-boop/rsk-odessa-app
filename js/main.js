@@ -74,6 +74,10 @@ import {
     addTaskComment,
     updateTasksBadge
 } from './modules/tasks.js';
+import {
+    saveAllDates,
+    confirmCloseSection
+} from './modules/gantt.js';
 
 import {
     loadRegistry
@@ -551,6 +555,13 @@ function bindForms() {
 
     const completeTaskForm = document.getElementById('complete-task-form');
     if (completeTaskForm) completeTaskForm.addEventListener('submit', completeTask);
+
+    // График (Gantt)
+    const editDatesForm = document.getElementById('edit-dates-form');
+    if (editDatesForm) editDatesForm.addEventListener('submit', saveAllDates);
+
+    const closeSectionForm = document.getElementById('close-section-form');
+    if (closeSectionForm) closeSectionForm.addEventListener('submit', confirmCloseSection);
 }
 
 // =====================================================================
