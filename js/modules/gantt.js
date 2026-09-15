@@ -282,11 +282,54 @@ function initGanttChart(tasks) {
 
         // 👇 Применяем inline-цвета по порядку
         applyBarColors(tasks);
+        trimGanttEmptyDates();
 
     } catch (err) {
         log.error('Ошибка инициализации Gantt:', err);
         chartContainer.innerHTML = '<p class="text-center text-red-500 py-4 text-sm">Ошибка отрисовки диаграммы</p>';
     }
+}
+
+/**
+ * Убирает пустые даты до первой и после последней работы.
+ * Важно выполнять после отрисовки SVG: только тогда известны координаты полос.
+ */
+function trimGanttEmptyDates() {
+    setTimeout(() => {
+        const chartContainer = document.getElementById('gantt-chart');
+        const svgElement = chartContainer?.querySelector('svg');
+        if (!svgElement) return;
+
+        const viewBoxAttribute = svgElement.getAttribute('viewBox') || '';
+        const viewBoxValues = viewBoxAttribute.split(/[ ,]+/).map(Number);
+        const viewBoxWidth = viewBoxValues[2] || Number.parseFloat(svgElement.getAttribute('width')) || 0;
+        const viewBoxHeight = viewBoxValues[3] || Number.parseFloat(svgElement.getAttribute('height')) || 0;
+        const svgRect = svgElement.getBoundingClientRect();
+        const coordinateWidth = viewBoxWidth || svgRect.width;
+        if (!coordinateWidth || !svgRect.width) return;
+
+        const scale = coordinateWidth / svgRect.width;
+        const coordinateHeight = viewBoxHeight || svgRect.height * scale;
+        const bars = [...svgElement.querySelectorAll('.bar-wrapper')]
+            .map(bar => bar.getBoundingClientRect())
+            .filter(rect => rect.width > 0 && rect.height > 0);
+        if (!bars.length) return;
+
+        const firstBar = Math.min(...bars.map(rect => (rect.left - svgRect.left) * scale));
+        const lastBar = Math.max(...bars.map(rect => (rect.right - svgRect.left) * scale));
+        const padding = 24;
+        const cropX = Math.max(0, firstBar - padding);
+        const cropRight = Math.min(coordinateWidth, lastBar + padding);
+        const cropWidth = cropRight - cropX;
+        if (cropWidth <= 0 || cropWidth >= coordinateWidth - 2) return;
+
+        svgElement.setAttribute('viewBox', `${cropX} 0 ${cropWidth} ${coordinateHeight}`);
+        svgElement.setAttribute('width', String(cropWidth));
+        svgElement.style.width = `${cropWidth}px`;
+        svgElement.style.maxWidth = 'none';
+        svgElement.style.display = 'block';
+        chartContainer.scrollLeft = 0;
+    }, 80);
 }
 
 /**
