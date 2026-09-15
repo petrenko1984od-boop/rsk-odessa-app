@@ -310,7 +310,7 @@ function trimGanttEmptyDates() {
 
         const scale = coordinateWidth / svgRect.width;
         const coordinateHeight = viewBoxHeight || svgRect.height * scale;
-        const bars = [...svgElement.querySelectorAll('.bar-wrapper')]
+        const bars = [...svgElement.querySelectorAll('.bar')]
             .map(bar => bar.getBoundingClientRect())
             .filter(rect => rect.width > 0 && rect.height > 0);
         if (!bars.length) return;
@@ -520,7 +520,7 @@ export async function downloadGanttPDF() {
         const svgWidth = Number.parseFloat(svgElement.getAttribute('width')) || 0;
         const svgHeight = Number.parseFloat(svgElement.getAttribute('height')) || 0;
         const svgCoordinateWidth = viewBoxWidth || svgWidth || svgElement.getBoundingClientRect().width;
-        const bars = [...svgElement.querySelectorAll('.bar-wrapper')]
+        const bars = [...svgElement.querySelectorAll('.bar')]
             .map(bar => {
                 try {
                     return bar.getBBox();
