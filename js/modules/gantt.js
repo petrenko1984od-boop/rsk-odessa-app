@@ -418,8 +418,8 @@ export async function downloadGanttPDF() {
         wrapper.style.position = 'fixed';
         wrapper.style.left = '-9999px';
         wrapper.style.top = '0';
-        wrapper.style.width = '1600px';
-        wrapper.style.minWidth = '1600px';
+        wrapper.style.width = 'max-content';
+        wrapper.style.minWidth = '0';
         wrapper.style.overflow = 'visible';
         wrapper.style.padding = '40px';
         wrapper.style.background = '#ffffff';
@@ -470,23 +470,41 @@ export async function downloadGanttPDF() {
         const pdfContent = wrapper.querySelector('#pdf-gantt-content');
 
         const viewBox = svgElement.viewBox?.baseVal;
+        const viewBoxX = Number(viewBox?.x) || 0;
+        const viewBoxY = Number(viewBox?.y) || 0;
         const viewBoxWidth = Number(viewBox?.width) || 0;
         const viewBoxHeight = Number(viewBox?.height) || 0;
         const svgWidth = Number.parseFloat(svgElement.getAttribute('width')) || 0;
         const svgHeight = Number.parseFloat(svgElement.getAttribute('height')) || 0;
-        const fullWidth = Math.max(
-            1600,
-            chartContainer.scrollWidth,
-            viewBoxWidth,
-            svgWidth
-        );
-        const fullHeight = viewBoxHeight || svgHeight || svgElement.getBoundingClientRect().height;
+        const sourceWidth = viewBoxWidth || svgWidth || svgElement.getBoundingClientRect().width;
+        const sourceHeight = viewBoxHeight || svgHeight || svgElement.getBoundingClientRect().height;
+        const bars = [...svgElement.querySelectorAll('.bar')]
+            .map(bar => {
+                try {
+                    return bar.getBBox();
+                } catch {
+                    return null;
+                }
+            })
+            .filter(box => box && box.width > 0 && box.height > 0);
+        const firstBarX = bars.length
+            ? Math.min(...bars.map(box => box.x))
+            : viewBoxX;
+        const lastBarX = bars.length
+            ? Math.max(...bars.map(box => box.x + box.width))
+            : viewBoxX + sourceWidth;
+        const cropPadding = 24;
+        const cropX = Math.max(viewBoxX, firstBarX - cropPadding);
+        const cropRight = Math.min(viewBoxX + sourceWidth, lastBarX + cropPadding);
+        const cropWidth = Math.max(480, cropRight - cropX);
+        const fullHeight = sourceHeight;
 
-        wrapper.style.width = `${fullWidth + 80}px`;
-        wrapper.style.minWidth = `${fullWidth + 80}px`;
-        svgClone.setAttribute('width', String(fullWidth));
+        wrapper.style.width = `${cropWidth + 80}px`;
+        wrapper.style.minWidth = `${cropWidth + 80}px`;
+        svgClone.setAttribute('width', String(cropWidth));
         if (fullHeight > 0) svgClone.setAttribute('height', String(fullHeight));
-        svgClone.style.width = `${fullWidth}px`;
+        svgClone.setAttribute('viewBox', `${cropX} ${viewBoxY} ${cropWidth} ${fullHeight}`);
+        svgClone.style.width = `${cropWidth}px`;
         svgClone.style.maxWidth = 'none';
         svgClone.style.height = fullHeight > 0 ? `${fullHeight}px` : 'auto';
         svgClone.style.display = 'block';
@@ -503,7 +521,7 @@ export async function downloadGanttPDF() {
             useCORS: true,
             backgroundColor: '#ffffff',
             logging: false,
-            windowWidth: 1600
+            windowWidth: Math.ceil(cropWidth + 80)
         });
 
         // ----- 4. Создаём PDF -----
