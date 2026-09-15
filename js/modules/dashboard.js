@@ -215,10 +215,13 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
     });
 
     const closedOrderIds = new Set((orders || [])
-        .filter(order => ['closed', 'archived'].includes(order.status) && order.payment_source === 'company')
+        .filter(order => ['closed', 'archived'].includes(order.status))
         .map(order => order.id));
+    const orderIdsWithCashOperation = new Set((cashOperations || [])
+        .map(operation => operation.order_id)
+        .filter(Boolean));
     const orderSectionMap = new Map((orders || [])
-        .filter(order => closedOrderIds.has(order.id) && order.section_id)
+        .filter(order => closedOrderIds.has(order.id) && order.section_id && !orderIdsWithCashOperation.has(order.id))
         .map(order => [order.id, order.section_id]));
     (orderItems || []).forEach(item => {
         const sectionId = orderSectionMap.get(item.order_id);
@@ -454,12 +457,12 @@ export async function loadDashboard() {
             db.select('projects', { select: 'id, name, foreman_id, status' }),
             db.select('sections', { select: 'id, project_id, plan_materials' }),
             db.select('cash_operations', {
-                select: 'id, project_id, section_id, operation_type, category, amount, created_at',
+                select: 'id, order_id, project_id, section_id, operation_type, category, amount, created_at',
                 orderBy: { column: 'created_at', asc: false }
             }),
             db.select('employee_cash_balance', { select: 'employee_id, balance' }),
             db.select('tasks', { select: 'id, title, project_id, status, deadline, completed_at, created_at' }),
-            db.select('orders', { select: 'id, status, project_id, section_id, payment_source, request_number, supplier, created_at' }),
+            db.select('orders', { select: 'id, status, project_id, section_id, request_number, supplier, created_at' }),
             db.select('employees', { select: 'id, name, position, status' }),
             db.select('order_items', { select: 'id, order_id, total_price, payment_status' })
         ]);
