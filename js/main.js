@@ -74,10 +74,15 @@ import {
     addTaskComment,
     updateTasksBadge
 } from './modules/tasks.js';
+
 import {
     saveAllDates,
     confirmCloseSection
 } from './modules/gantt.js';
+
+import {
+    uploadProjectFile
+} from './modules/files.js';
 
 import {
     loadRegistry
@@ -131,7 +136,6 @@ export function switchTab(tabId) {
 
     AppState.currentTab = tabId;
 
-    // Триггеры загрузки данных
     if (tabId === 'projects') loadProjects();
     if (tabId === 'employees') loadEmployees();
     if (tabId === 'tasks') loadTasks();
@@ -153,10 +157,6 @@ function applyPermissionsToUI() {
         employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
     }
 
-    // Задачи — видны всем, кто видит задачи (Прораб/Снабженец/Инж ПТО/Админ/Директор/Гл. инженер)
-    // Просто проверяем, есть ли у пользователя задачи вообще — оставим кнопку видимой всем, но вкладка фильтрует контент.
-    // Задачи — кнопку всегда показываем (у всех будут задачи или право их ставить).
-
     // Снабжение — только Админ + Снабженец
     const ordersBtn = document.getElementById('btn-orders');
     if (ordersBtn) {
@@ -173,8 +173,8 @@ function applyPermissionsToUI() {
     const cashReqBtn = document.getElementById('btn-cash-requests');
     if (cashReqBtn) {
         const role = getEmployee()?.position;
-        const isCashier = role === 'Администратор' 
-                       || role === 'Директор' 
+        const isCashier = role === 'Администратор'
+                       || role === 'Директор'
                        || role === 'Главный инженер';
         if (isCashier) {
             cashReqBtn.classList.remove('hidden');
@@ -562,6 +562,10 @@ function bindForms() {
 
     const closeSectionForm = document.getElementById('close-section-form');
     if (closeSectionForm) closeSectionForm.addEventListener('submit', confirmCloseSection);
+
+    // Загрузка доп. файла
+    const uploadFileForm = document.getElementById('upload-file-form');
+    if (uploadFileForm) uploadFileForm.addEventListener('submit', uploadProjectFile);
 }
 
 // =====================================================================
