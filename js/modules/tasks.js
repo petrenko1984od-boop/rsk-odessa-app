@@ -366,17 +366,6 @@ export async function openTaskDetail(id) {
     const assigneeName = task.assignee?.name || '—';
     const authorName = task.author?.name || '—';
 
-    // Комментарии
-    const comments = Array.isArray(task.comments) ? task.comments : [];
-    const commentsHtml = comments.length > 0
-        ? comments.map(c => `
-            <div class="bg-gray-50 border rounded-lg p-2 text-xs space-y-0.5">
-                <p class="text-gray-700">${escapeHtml(c.text || '')}</p>
-                <p class="text-[10px] text-gray-400">👤 ${escapeHtml(c.author || '—')} · 📅 ${formatDate(c.date)}</p>
-            </div>
-        `).join('')
-        : '<p class="text-xs text-gray-400 italic text-center py-2">Комментариев нет</p>';
-
     const completionComment = Array.isArray(task.history)
         ? [...task.history].reverse().find(item => item.action === 'Задача выполнена' && item.comment)
         : null;
@@ -433,19 +422,6 @@ export async function openTaskDetail(id) {
         ${photoHtml}
 
         ${completionBlock}
-
-        <div class="border-t pt-3 space-y-2">
-            <p class="text-xs font-bold text-gray-500 uppercase tracking-wider">💬 Комментарии (${comments.length}):</p>
-            <div class="space-y-2">
-                ${commentsHtml}
-            </div>
-            <div class="pt-2">
-                <input type="text" id="task-comment-input" placeholder="Написать комментарий..."
-                       class="w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                <button onclick="window.addTaskComment(${task.id})" 
-                        class="mt-2 bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-4 py-2 rounded-lg transition">💬 Отправить</button>
-            </div>
-        </div>
     `;
 
     renderTaskActions(task);
