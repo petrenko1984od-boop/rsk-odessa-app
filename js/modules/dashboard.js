@@ -203,6 +203,8 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         sectionPlanMap.set(String(section.id), {
             sectionId: section.id,
             projectId: section.project_id,
+            name: section.name || 'Без названия',
+            planWorks: Number(section.plan_works) || 0,
             plan: Number(section.plan_materials) || 0
         });
     });
@@ -210,16 +212,18 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
     const sectionFactMap = new Map();
     const projectFactMap = new Map();
     (cashOperations || []).forEach(operation => {
+        if (operation.operation_type !== 'expense' || !operation.section_id) return;
         const category = String(operation.category || '').toLowerCase();
-        if (operation.operation_type !== 'expense' || (!['materials', 'delivery'].includes(category) && !['materials', 'delivery'].includes(String(operation.category || '')))) return;
+        if (!['materials', 'delivery', 'works'].includes(category)) return;
         const amount = Number(operation.amount) || 0;
+        const sectionId = String(operation.section_id);
+        const sectionFacts = sectionFactMap.get(sectionId) || { materials: 0, works: 0 };
+        if (category === 'works') sectionFacts.works += amount;
+        else sectionFacts.materials += amount;
+        sectionFactMap.set(sectionId, sectionFacts);
         if (operation.project_id) {
             const projectId = String(operation.project_id);
             projectFactMap.set(projectId, (projectFactMap.get(projectId) || 0) + amount);
-        }
-        if (operation.section_id) {
-            const sectionId = String(operation.section_id);
-            sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + amount);
         }
     });
 
@@ -239,59 +243,37 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         const sectionId = orderSectionMap.get(String(item.order_id));
         const projectId = orderProjectMap.get(String(item.order_id));
         const amount = Number(item.total_price) || 0;
+        const sectionFacts = sectionFactMap.get(sectionId) || { materials: 0, works: 0 };
+        sectionFacts.materials += amount;
+        sectionFactMap.set(sectionId, sectionFacts);
         if (projectId) {
             const normalizedProjectId = String(projectId);
             projectFactMap.set(normalizedProjectId, (projectFactMap.get(normalizedProjectId) || 0) + amount);
-        }
-        if (sectionId) {
-            sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + amount);
         }
     });
 
     const projectMap = new Map((projects || []).map(project => [String(project.id), project]));
     const projectRows = [...sectionPlanMap.entries()]
         .map(([sectionId, section]) => {
-            const plan = section.plan;
-            const fact = Number(sectionFactMap.get(sectionId)) || 0;
-            const overrun = fact - plan;
-            const percent = plan > 0 ? (overrun / plan) * 100 : (overrun > 0 ? 100 : 0);
+            const facts = sectionFactMap.get(sectionId) || { materials: 0, works: 0 };
+            const overrun = facts.materials - section.plan;
+            const percent = section.plan > 0 ? (overrun / section.plan) * 100 : (overrun > 0 ? 100 : 0);
             return {
                 sectionId,
-                sectionOverrun: overrun,
                 hasSectionOverrun: overrun > 0,
                 project: projectMap.get(String(section.projectId)),
-                plan,
-                fact,
+                sectionName: section.name,
+                materialsPlan: section.plan,
+                materialsFact: facts.materials,
+                worksPlan: section.planWorks,
+                worksFact: facts.works,
                 overrun,
                 percent
             };
         })
         .filter(row => row.project)
-        .reduce((rows, row) => {
-            const existing = rows.find(item => item.project.id === row.project.id);
-            if (existing) {
-                existing.plan += row.plan;
-                existing.fact += row.fact;
-                existing.overrun += row.overrun;
-                existing.hasSectionOverrun = existing.hasSectionOverrun || row.hasSectionOverrun;
-                existing.percent = existing.plan > 0 ? (existing.overrun / existing.plan) * 100 : 0;
-            } else {
-                rows.push({ ...row, ...row.project });
-            }
-            return rows;
-        }, [])
-        .map(row => {
-            const projectFact = Number(projectFactMap.get(String(row.project.id))) || 0;
-            const projectPlan = row.plan;
-            if (projectFact > row.fact) {
-                row.fact = projectFact;
-                row.overrun = projectFact - projectPlan;
-                row.percent = projectPlan > 0 ? (row.overrun / projectPlan) * 100 : 100;
-            }
-            row.hasSectionOverrun = row.hasSectionOverrun || row.overrun > 0;
-            return row;
-        })
         .filter(row => row.hasSectionOverrun)
+        .map(row => ({ ...row, ...row.project }))
         .sort((a, b) => b.overrun - a.overrun);
 
     const negativeList = negative.length
@@ -312,18 +294,20 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         `).join('')
         : '<p class="text-sm text-gray-500">Нет крупных остатков.</p>';
 
-    const overrunRows = projectRows.slice(0, 8).map(project => {
-        const tone = project.overrun > 0 ? 'text-red-600' : 'text-emerald-700';
+    const overrunRows = projectRows.slice(0, 12).map(row => {
         return `
             <tr>
-                <td class="px-2 py-3 text-left text-sm font-semibold text-gray-800">${escapeHtml(project.name || '—')}</td>
-                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(project.plan)}</td>
-                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(project.fact)}</td>
-                <td class="px-2 py-3 text-right text-sm font-bold ${tone}">${formatMoney(project.overrun)}</td>
-                <td class="px-2 py-3 text-right text-sm font-bold ${project.overrun > 0 ? 'text-red-600' : 'text-emerald-700'}">${Math.abs(project.percent || 0).toFixed(1)}%</td>
+                <td class="px-2 py-3 text-left text-sm font-semibold text-gray-800">${escapeHtml(row.name || '—')}</td>
+                <td class="px-2 py-3 text-left text-sm text-gray-700">${escapeHtml(row.sectionName || '—')}</td>
+                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(row.materialsPlan)}</td>
+                <td class="px-2 py-3 text-right text-sm font-semibold text-gray-700">${formatMoney(row.materialsFact)}</td>
+                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(row.worksPlan)}</td>
+                <td class="px-2 py-3 text-right text-sm text-gray-700">${formatMoney(row.worksFact)}</td>
+                <td class="px-2 py-3 text-right text-sm font-bold text-red-600">${formatMoney(row.overrun)}</td>
+                <td class="px-2 py-3 text-right text-sm font-bold text-red-600">${Math.abs(row.percent || 0).toFixed(1)}%</td>
             </tr>
         `;
-    }).join('') || '<tr><td colspan="5" class="px-2 py-4 text-center text-sm text-gray-500">Нет данных по объектам.</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="px-2 py-4 text-center text-sm text-gray-500">Нет данных по объектам.</td></tr>';
 
     const supplierDebtRows = supplierRows.length
         ? supplierRows.map((row, index) => `
@@ -425,8 +409,11 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                         <thead class="border-b text-left text-[11px] uppercase text-gray-500">
                             <tr>
                                 <th class="px-2 py-2">Объект</th>
-                                <th class="px-2 py-2 text-right">План</th>
-                                <th class="px-2 py-2 text-right">Факт</th>
+                                <th class="px-2 py-2">Раздел</th>
+                                <th class="px-2 py-2 text-right">Материалы, план</th>
+                                <th class="px-2 py-2 text-right">Материалы, факт</th>
+                                <th class="px-2 py-2 text-right">Работы, план</th>
+                                <th class="px-2 py-2 text-right">Работы, факт</th>
                                 <th class="px-2 py-2 text-right">Перерасход</th>
                                 <th class="px-2 py-2 text-right">%</th>
                             </tr>
@@ -485,7 +472,7 @@ export async function loadDashboard() {
     if (isExecutive) {
         const [projectsResult, sectionsResult, cashOperationsResult, balancesResult, tasksResult, ordersResult, employeesResult, orderItemsResult] = await Promise.all([
             db.select('projects', { select: 'id, name, foreman_id' }),
-            db.select('sections', { select: 'id, project_id, plan_materials' }),
+            db.select('sections', { select: 'id, project_id, name, plan_works, plan_materials' }),
             db.select('cash_operations', {
                 select: 'id, order_id, project_id, section_id, operation_type, category, amount, created_at',
                 orderBy: { column: 'created_at', asc: false }
