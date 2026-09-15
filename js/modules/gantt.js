@@ -29,6 +29,7 @@ import { getEmployee } from '../permissions.js';
 let currentGantt = null;
 let currentProjectId = null;
 let currentSections = [];
+let currentViewMode = 'Week';
 
 // =====================================================================
 // ПРАВА
@@ -153,9 +154,9 @@ export async function renderGantt(project) {
                </button>
                <select id="gantt-view-mode" onchange="window.changeGanttView()"
                        class="border rounded-lg px-3 py-1.5 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                   <option value="Day">📆 День</option>
-                   <option value="Week" selected>📅 Неделя</option>
-                   <option value="Month">📅 Месяц</option>
+                   <option value="Day" ${currentViewMode === 'Day' ? 'selected' : ''}>📆 День</option>
+                   <option value="Week" ${currentViewMode === 'Week' ? 'selected' : ''}>📅 Неделя</option>
+                   <option value="Month" ${currentViewMode === 'Month' ? 'selected' : ''}>📅 Месяц</option>
                </select>
            </div>`
         : `<div class="flex flex-wrap justify-end gap-2 mb-3">
@@ -165,9 +166,9 @@ export async function renderGantt(project) {
                </button>
                <select id="gantt-view-mode" onchange="window.changeGanttView()"
                        class="border rounded-lg px-3 py-1.5 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                   <option value="Day">📆 День</option>
-                   <option value="Week" selected>📅 Неделя</option>
-                   <option value="Month">📅 Месяц</option>
+                   <option value="Day" ${currentViewMode === 'Day' ? 'selected' : ''}>📆 День</option>
+                   <option value="Week" ${currentViewMode === 'Week' ? 'selected' : ''}>📅 Неделя</option>
+                   <option value="Month" ${currentViewMode === 'Month' ? 'selected' : ''}>📅 Месяц</option>
                </select>
            </div>`;
 
@@ -251,7 +252,8 @@ function initGanttChart(tasks) {
         chartContainer.innerHTML = '';
     }
 
-    const viewMode = document.getElementById('gantt-view-mode')?.value || 'Week';
+    const viewMode = document.getElementById('gantt-view-mode')?.value || currentViewMode;
+    currentViewMode = viewMode;
     const readonly = !canEditGantt();
 
     try {
@@ -372,12 +374,8 @@ async function onGanttDateChange(task, start, end) {
 export function changeGanttView() {
     const mode = document.getElementById('gantt-view-mode')?.value;
     if (currentGantt && mode) {
+        currentViewMode = mode;
         currentGantt.change_view_mode(mode);
-
-        setTimeout(() => {
-            const project = window.__getCurrentProject?.();
-            if (project) renderGantt(project);
-        }, 200);
     }
 }
 
