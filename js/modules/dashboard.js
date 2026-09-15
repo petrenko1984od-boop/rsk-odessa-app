@@ -162,6 +162,8 @@ function renderTaskSummary(tasks) {
 
 function renderExecutiveDashboard({ employees, balances, tasks, orders, orderItems, cashOperations, projects, sections }) {
     const employeeMap = new Map((employees || []).map(emp => [emp.id, emp]));
+    const canCreateTask = ['Администратор', 'Директор', 'Главный инженер', 'Инженер ПТО']
+        .includes(getEmployee()?.position);
 
     const totalBalance = (balances || []).reduce((sum, item) => sum + (Number(item.balance) || 0), 0);
     const negative = (balances || [])
@@ -297,8 +299,16 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
 
                 <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
                     <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <h3 class="text-sm font-bold text-gray-800">📋 Задачи</h3>
-                        <span class="text-xs text-gray-400">по плану</span>
+                        <div class="min-w-0">
+                            <h3 class="text-sm font-bold text-gray-800">📋 Задачи</h3>
+                            <span class="text-xs text-gray-400">по плану</span>
+                        </div>
+                        ${canCreateTask ? `
+                            <button type="button" onclick="window.openNewTaskForm()"
+                                    class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">
+                                ➕ Поставить задачу
+                            </button>
+                        ` : ''}
                     </div>
                     <div class="mt-3">${renderTaskSummary(tasks)}</div>
                 </div>
