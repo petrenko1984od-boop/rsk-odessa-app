@@ -168,7 +168,16 @@ function renderProjectCard(project) {
 // =====================================================================
 
 export async function openProjectDetail(id) {
-    const project = projectsCache.find(p => p.id === id);
+    let project = projectsCache.find(p => String(p.id) === String(id));
+    if (!project) {
+        const { data, error } = await db.select('projects', { filters: { id } });
+        if (error || !data?.[0]) {
+            toast('Объект не найден', 'error');
+            return;
+        }
+        project = data[0];
+        projectsCache.push(project);
+    }
     if (!project) {
         toast('Объект не найден', 'error');
         return;

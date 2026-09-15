@@ -449,12 +449,6 @@ export function openMaterialOverrunDetail(index) {
                 </div>
             </div>
         </div>
-        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
-            <div class="flex flex-wrap justify-between gap-2 font-bold text-emerald-900">
-                <span>Итого по разделу</span>
-                <span>План: ${formatMoney(row.totalPlan)} · Факт: ${formatMoney(row.totalFact)} · Перерасход: ${totalOverrun >= 0 ? '+' : ''}${formatMoney(totalOverrun)} (${Math.round(row.percent)}%)</span>
-            </div>
-        </div>
     `;
     projectButton.onclick = () => {
         hideModal('material-overrun-modal');
