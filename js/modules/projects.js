@@ -27,6 +27,7 @@ import {
 } from './estimate.js';
 import { loadExpensesForProject } from './cash.js';
 import { renderGantt } from './gantt.js';
+import { renderProjectFiles } from './files.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
