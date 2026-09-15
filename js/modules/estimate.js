@@ -3,12 +3,12 @@
 // =====================================================================
 // Загрузка, парсинг и хранение смет.
 // + Отображение план-факта с фактическими расходами.
+// + UI блока сметы в карточке объекта (в контейнере #estimate-block).
 //
 // ВАЖНО: renderSectionsUI принимает:
-//   - project     — объект проекта
-//   - expensesMap — { [section_id]: [operations] } (загружено в projects.js)
-//   - sectionsList — массив разделов (тоже из projects.js)
-// Без повторных запросов к БД.
+//   - project      — объект проекта
+//   - expensesMap  — { [section_id]: [operations] }
+//   - sectionsList — массив разделов
 // =====================================================================
 
 import { db } from '../database.js';
@@ -19,6 +19,7 @@ import {
 import { requirePermission } from '../permissions.js';
 import { CONFIG } from '../config.js';
 import { getCategoryLabel } from './cash.js';
+import { canManageFiles } from './files.js';
 
 // =====================================================================
 // УТИЛИТА: ОЧИСТКА ИМЕНИ ФАЙЛА
@@ -88,10 +89,8 @@ export async function uploadEstimate(projectId, file) {
         return { success: false };
     }
 
-    // Удаляем старые разделы
     await db.remove('sections', { project_id: projectId });
 
-    // Вставляем новые
     const sectionsPayload = sections.map(s => ({
         project_id: projectId,
         name: s.name,
@@ -253,46 +252,66 @@ export async function deleteEstimate(project) {
 }
 
 // =====================================================================
-// UI — БЛОК ФАЙЛОВ
+// UI — БЛОК СМЕТЫ (в контейнере #estimate-block)
 // =====================================================================
 
+/**
+ * Рендерит блок сметы в контейнере #estimate-block.
+ * Кнопка «Оригинал» (xlsx) — только для редакторов.
+ * Кнопка «📥 PDF» — для всех.
+ * Кнопка «🗑 Удалить» — только для редакторов.
+ */
 export function renderEstimateUI(project) {
-    const container = document.getElementById('proj-subtab-files');
+    const container = document.getElementById('estimate-block');
     if (!container) return;
 
     const hasEstimate = !!project.estimate_file_path;
+    const canManage = canManageFiles();
 
     if (hasEstimate) {
         container.innerHTML = `
-            <div class="border-t pt-4 space-y-3">
-                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 Смета объекта</h3>
-                <div class="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-3">
-                    <div class="flex items-center justify-between bg-white p-3 rounded-lg border text-xs">
-                        <div class="flex items-center gap-2 overflow-hidden">
-                            <span class="text-2xl">📄</span>
-                            <div class="min-w-0">
-                                <p class="font-bold text-gray-800 truncate" title="${escapeHtml(project.estimate_file_name)}">${escapeHtml(project.estimate_file_name)}</p>
-                                <p class="text-[10px] text-gray-400">Загружено: ${formatDate(project.estimate_uploaded_at)}</p>
-                            </div>
-                        </div>
-                        <div class="flex gap-2 shrink-0">
-                            <button onclick="window.viewEstimateFile(${project.id})" class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1.5 rounded-lg font-semibold transition">👁 Оригинал</button>
-                            <button onclick="window.deleteEstimateUI(${project.id})" class="bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1.5 rounded-lg transition">🗑</button>
+            <div class="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-3">
+                <div class="flex items-center justify-between bg-white p-3 rounded-lg border text-xs flex-wrap gap-2">
+                    <div class="flex items-center gap-2 overflow-hidden min-w-0 flex-1">
+                        <span class="text-2xl">📄</span>
+                        <div class="min-w-0">
+                            <p class="font-bold text-gray-800 truncate" title="${escapeHtml(project.estimate_file_name)}">${escapeHtml(project.estimate_file_name)}</p>
+                            <p class="text-[10px] text-gray-400">Загружено: ${formatDate(project.estimate_uploaded_at)}</p>
                         </div>
                     </div>
-                    <p class="text-xs text-emerald-800">
-                        ✅ Смета разобрана. Разделы доступны во вкладке <b>📊 План-факт</b>.
-                    </p>
+                    <div class="flex gap-2 shrink-0">
+                        ${canManage ? `
+                            <button onclick="window.viewEstimateFile(${project.id})" 
+                                    class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1.5 rounded-lg font-semibold transition"
+                                    title="Скачать оригинал xlsx">
+                                👁 Оригинал
+                            </button>
+                        ` : ''}
+                        <button onclick="window.downloadEstimatePDF()" 
+                                class="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg font-semibold transition"
+                                title="Скачать PDF">
+                            📥 PDF
+                        </button>
+                        ${canManage ? `
+                            <button onclick="window.deleteEstimateUI(${project.id})" 
+                                    class="bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1.5 rounded-lg transition"
+                                    title="Удалить смету">
+                                🗑
+                            </button>
+                        ` : ''}
+                    </div>
                 </div>
+                <p class="text-xs text-emerald-800">
+                    ✅ Смета разобрана. Разделы доступны во вкладке <b>📊 План-факт</b>.
+                </p>
             </div>
         `;
     } else {
-        container.innerHTML = `
-            <div class="border-t pt-4 space-y-3">
-                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 Загрузка файла сметы (Excel)</h3>
+        if (canManage) {
+            container.innerHTML = `
                 <div class="p-4 bg-gray-50 rounded-xl border space-y-3">
                     <p class="text-xs text-gray-500">
-                        Смета ещё не загружена. Загрузи файл Excel (.xlsx), чтобы автоматически сформировать разделы.
+                        Смета ещё не загружена. Загрузите файл Excel (.xlsx), чтобы автоматически сформировать разделы.
                     </p>
                     <div class="flex flex-col sm:flex-row gap-2">
                         <input type="file" id="estimate-file-input-${project.id}" accept=".xlsx, .xls"
@@ -300,18 +319,19 @@ export function renderEstimateUI(project) {
                         <button onclick="window.uploadEstimateUI(${project.id})" class="bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow whitespace-nowrap">📤 Загрузить и разобрать</button>
                     </div>
                 </div>
-            </div>
-        `;
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="p-4 bg-gray-50 rounded-xl border text-center">
+                    <p class="text-xs text-gray-500">Смета ещё не загружена. Загружает Главный инженер / Администратор / Инженер ПТО.</p>
+                </div>
+            `;
+        }
     }
 }
 
 // =====================================================================
-// UI — ПЛАН-ФАКТ
-// =====================================================================
-// Принимает:
-//   - project      — объект проекта
-//   - expensesMap  — { [section_id]: [operations] }
-//   - sectionsList — массив разделов
+// UI — ПЛАН-ФАКТ (план / факт / остаток + операции)
 // =====================================================================
 
 export function renderSectionsUI(project, expensesMap = {}, sectionsList = null) {
@@ -332,7 +352,6 @@ export function renderSectionsUI(project, expensesMap = {}, sectionsList = null)
         return;
     }
 
-    // Итоги
     let totalPlanWorks = 0, totalPlanMaterials = 0, totalPlan = 0;
     let totalFactWorks = 0, totalFactMaterials = 0, totalFact = 0;
 
@@ -393,8 +412,8 @@ export function renderSectionsUI(project, expensesMap = {}, sectionsList = null)
 
         const overBadge = isOverTotal
             ? `<span class="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold">⚠️ Перерасход</span>`
-            : (facts.total > 0 
-                ? `<span class="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">✔ В норме</span>` 
+            : (facts.total > 0
+                ? `<span class="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">✔ В норме</span>`
                 : '');
 
         return `
@@ -467,9 +486,6 @@ export function renderSectionsUI(project, expensesMap = {}, sectionsList = null)
     `;
 }
 
-/**
- * Считает факт по разделу из операций.
- */
 function calcFacts(operations) {
     let works = 0;
     let materials = 0;
@@ -503,7 +519,7 @@ function renderSectionOperations(operations) {
             <div class="flex justify-between items-start gap-2 bg-white border rounded-lg p-2.5 text-xs">
                 <div class="flex-1 min-w-0">
                     <p class="font-semibold text-gray-800">
-                        ${categoryLabel} 
+                        ${categoryLabel}
                         ${itemsCount > 0 ? `<span class="text-[10px] text-gray-500">(${itemsCount} поз.)</span>` : ''}
                     </p>
                     <p class="text-[11px] text-gray-500 truncate">${escapeHtml(op.description || '')}</p>
@@ -553,15 +569,11 @@ export async function uploadEstimateUI(projectId) {
     if (result.success) {
         toast(`Смета загружена! Разделов: ${result.sectionsCount}`, 'success');
 
-        // Перезагружаем карточку объекта
-        if (window.__getCurrentProject) {
-            const project = window.__getCurrentProject();
-            if (project && window.openProjectDetail) {
-                // Небольшая задержка, чтобы разделы успели записаться
-                setTimeout(() => {
-                    window.openProjectDetail(project.id);
-                }, 300);
-            }
+        const project = window.__getCurrentProject?.();
+        if (project && window.openProjectDetail) {
+            setTimeout(() => {
+                window.openProjectDetail(project.id);
+            }, 300);
         }
     } else {
         toast('Не удалось загрузить смету', 'error');
@@ -606,7 +618,6 @@ export async function deleteEstimateUI(projectId) {
     const result = await deleteEstimate(project);
 
     if (result.success) {
-        // Перезагружаем карточку
         if (window.openProjectDetail) {
             window.openProjectDetail(projectId);
         }
