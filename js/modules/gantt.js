@@ -476,11 +476,26 @@ export async function downloadGanttPDF() {
         const viewBoxHeight = Number(viewBox?.height) || 0;
         const svgWidth = Number.parseFloat(svgElement.getAttribute('width')) || 0;
         const svgHeight = Number.parseFloat(svgElement.getAttribute('height')) || 0;
+        const svgRect = svgElement.getBoundingClientRect();
+        const svgCoordinateWidth = viewBoxWidth || svgWidth || svgRect.width;
+        const svgScale = svgRect.width > 0 ? svgCoordinateWidth / svgRect.width : 1;
+        const bars = [...svgElement.querySelectorAll('.bar-wrapper')]
+            .map(bar => bar.getBoundingClientRect())
+            .filter(rect => rect.width > 0 && rect.height > 0);
+        const firstBarX = bars.length
+            ? Math.min(...bars.map(rect => (rect.left - svgRect.left) * svgScale))
+            : 0;
+        const lastBarX = bars.length
+            ? Math.max(...bars.map(rect => (rect.right - svgRect.left) * svgScale))
+            : svgCoordinateWidth;
+        const cropPadding = 24;
+        const cropX = Math.max(0, firstBarX - cropPadding);
+        const cropRight = Math.min(svgCoordinateWidth, lastBarX + cropPadding);
+        const cropWidth = Math.max(320, cropRight - cropX);
         const fullWidth = Math.max(
             1600,
             chartContainer.scrollWidth,
-            viewBoxWidth,
-            svgWidth
+            cropWidth
         );
         const fullHeight = viewBoxHeight || svgHeight || svgElement.getBoundingClientRect().height;
 
@@ -492,6 +507,9 @@ export async function downloadGanttPDF() {
         svgClone.style.maxWidth = 'none';
         svgClone.style.height = fullHeight > 0 ? `${fullHeight}px` : 'auto';
         svgClone.style.display = 'block';
+        if (viewBoxHeight > 0) {
+            svgClone.setAttribute('viewBox', `${cropX} 0 ${cropWidth} ${viewBoxHeight}`);
+        }
         pdfContent.appendChild(svgClone);
 
         document.body.appendChild(wrapper);
