@@ -190,6 +190,7 @@ export async function openProjectDetail(id) {
 
     // 4. Рендерим вкладку «Файлы»
     renderEstimateUI(project);
+    renderProjectFiles(project);
 
     // 5. Рендерим «План-факт» (передаём и расходы, и разделы)
     renderSectionsUI(project, expensesMap, currentSectionsCache);

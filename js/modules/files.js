@@ -457,7 +457,13 @@ export async function deleteProjectFile(fileId) {
     toast('Файл удалён', 'success');
 
     const project = window.__getCurrentProject?.();
-    if (project) await renderProjectFiles(project);
+    if (project) {
+        await renderProjectFiles(project);
+        const uploadBtn = document.getElementById('upload-file-btn');
+        if (uploadBtn) {
+            uploadBtn.style.display = canManageFiles() ? '' : 'none';
+        }
+    }
 }
 
 // =====================================================================
