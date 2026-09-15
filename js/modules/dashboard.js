@@ -81,24 +81,35 @@ export async function loadDashboard() {
 
     container.innerHTML = '<div class="rounded-xl bg-white p-8 text-center text-sm text-gray-500 shadow-sm">Загрузка показателей...</div>';
 
+    const employee = getEmployee();
+    const isForeman = employee?.position === 'Прораб';
+
     const [projectsResult, sectionsResult, expensesResult, balancesResult, tasksResult, ordersResult, operationsResult, employeesResult] = await Promise.all([
-        db.select('projects', { select: 'id, name, status' }),
-        db.select('sections', { select: 'id, plan_total' }),
+        db.select('projects', { select: 'id, name, foreman_id' }),
+        db.select('sections', { select: 'id, project_id, plan_total' }),
         db.select('cash_operations', { filters: { operation_type: 'expense' } }),
         db.select('employee_cash_balance', { select: 'employee_id, balance' }),
-        db.select('tasks', { select: 'id, title, status, deadline, created_at' }),
-        db.select('orders', { select: 'id, request_number, status, created_at' }),
-        db.select('cash_operations', { orderBy: { column: 'created_at', asc: false }, limit: 6 }),
+        db.select('tasks', { select: 'id, title, project_id, status, deadline, created_at' }),
+        db.select('orders', { select: 'id, project_id, request_number, status, created_at' }),
+        db.select('cash_operations', { select: 'id, employee_id, project_id, operation_type, amount, operation_date, created_at', orderBy: { column: 'created_at', asc: false }, limit: 20 }),
         db.select('employees', { select: 'id, name' })
     ]);
 
-    const projects = projectsResult.data || [];
-    const sections = sectionsResult.data || [];
-    const expenses = expensesResult.data || [];
-    const balances = balancesResult.data || [];
-    const tasks = tasksResult.data || [];
-    const orders = ordersResult.data || [];
-    const operations = operationsResult.data || [];
+    const allProjects = projectsResult.data || [];
+    const visibleProjectIds = isForeman
+        ? new Set(allProjects.filter(project => project.foreman_id === employee.id).map(project => project.id))
+        : null;
+    const isVisibleProjectData = item => !visibleProjectIds || visibleProjectIds.has(item.project_id);
+
+    const projects = visibleProjectIds
+        ? allProjects.filter(project => visibleProjectIds.has(project.id))
+        : allProjects;
+    const sections = (sectionsResult.data || []).filter(isVisibleProjectData);
+    const expenses = (expensesResult.data || []).filter(isVisibleProjectData);
+    const balances = (balancesResult.data || []).filter(item => !isForeman || item.employee_id === employee.id);
+    const tasks = (tasksResult.data || []).filter(isVisibleProjectData);
+    const orders = (ordersResult.data || []).filter(isVisibleProjectData);
+    const operations = (operationsResult.data || []).filter(isVisibleProjectData).slice(0, 6);
     const employees = employeesResult.data || [];
 
     const plan = sections.reduce((sum, section) => sum + (Number(section.plan_total) || 0), 0);
@@ -107,7 +118,7 @@ export async function loadDashboard() {
     const overdueTasks = tasks.filter(isOverdueTask);
     const activeOrders = orders.filter(order => order.status === 'new' || order.status === 'in_progress');
     const activeProjects = projects.filter(isActiveProject);
-    const employee = getEmployee();
+    const scopeLabel = isForeman ? 'по вашим объектам' : 'по компании';
 
     container.innerHTML = `
         <div class="space-y-4">
@@ -115,7 +126,7 @@ export async function loadDashboard() {
                 <div>
                     <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Рабочий обзор</p>
                     <h2 class="mt-1 text-2xl font-bold text-gray-800">Добрый день, ${escapeHtml(employee?.name || 'коллега')}</h2>
-                    <p class="mt-1 text-sm text-gray-500">Ключевые показатели компании на ${formatDate(new Date())}</p>
+                    <p class="mt-1 text-sm text-gray-500">Ключевые показатели ${scopeLabel} на ${formatDate(new Date())}</p>
                 </div>
                 <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
             </div>
@@ -123,7 +134,7 @@ export async function loadDashboard() {
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 ${renderMetric('🏗', 'Объекты', activeProjects.length, `Всего: ${projects.length}`, 'emerald')}
                 ${renderMetric('📊', 'План vs факт', formatMoney(fact), `План: ${formatMoney(plan)}`, fact > plan ? 'red' : 'blue')}
-                ${renderMetric('💰', 'Задолженность', formatMoney(debt), 'По подотчётам сотрудников', debt > 0 ? 'amber' : 'emerald')}
+                ${renderMetric('💰', 'Задолженность', formatMoney(debt), isForeman ? 'Ваш подотчёт' : 'По подотчётам сотрудников', debt > 0 ? 'amber' : 'emerald')}
                 ${renderMetric('⏰', 'Просроченные задачи', overdueTasks.length, `Всего задач: ${tasks.length}`, overdueTasks.length ? 'red' : 'emerald')}
             </div>
 
