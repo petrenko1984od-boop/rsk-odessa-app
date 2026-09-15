@@ -3,10 +3,11 @@
 // =====================================================================
 
 import { db } from '../database.js';
-import { escapeHtml, formatDate, formatMoney, log } from '../utils.js';
+import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal } from '../utils.js';
 import { getEmployee } from '../permissions.js';
 
 const DASHBOARD_ROLES = ['Прораб', 'Сметчик', 'Инженер ПТО', 'Администратор', 'Директор', 'Главный инженер'];
+let materialOverrunRowsCache = [];
 
 export function shouldShowEmployeeDashboard() {
     const position = getEmployee()?.position;
@@ -153,9 +154,13 @@ function renderTaskSummary(tasks) {
 
     return `
         <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-            ${renderMetric('📌', 'Активные', active, 'Активные задачи', 'blue', "switchTab('tasks'); openTaskFilterModal('active');")}
-            ${renderMetric('⏰', 'Просроченные', overdue, 'Просроченные задачи', overdue ? 'red' : 'emerald', "switchTab('tasks'); openTaskFilterModal('overdue');")}
-            ${renderMetric('✅', 'Выполнено за 30 дней', done30, 'Выполненные задачи', 'emerald', "switchTab('tasks'); openTaskFilterModal('done_30');")}
+            ${renderMetric('🟡', 'В работе', active, `${tasks.filter(task => task.status === 'pending').length} новых · ${tasks.filter(task => task.status === 'in_progress').length} в процессе`, 'amber', "openTaskFilterModal('active')")}
+            ${renderMetric('🔴', 'Просрочено', overdue, 'дедлайн нарушен', overdue ? 'red' : 'emerald', "openTaskFilterModal('overdue')")}
+            ${renderMetric('🟢', 'Выполнено', done30, 'за последние 30 дней', 'emerald', "openTaskFilterModal('done_30')")}
+        </div>
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3 text-xs text-gray-500">
+            <span>Всего задач в системе: <strong class="text-gray-800">${tasks.length}</strong></span>
+            <button type="button" onclick="openTaskFilterModal('all')" class="font-semibold text-emerald-700 transition hover:text-emerald-900">📋 Все задачи</button>
         </div>
     `;
 }
@@ -205,12 +210,11 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
             projectId: section.project_id,
             name: section.name || 'Без названия',
             planWorks: Number(section.plan_works) || 0,
-            plan: Number(section.plan_materials) || 0
+            planMaterials: Number(section.plan_materials) || 0
         });
     });
 
     const sectionFactMap = new Map();
-    const projectFactMap = new Map();
     (cashOperations || []).forEach(operation => {
         if (operation.operation_type !== 'expense' || !operation.section_id) return;
         const category = String(operation.category || '').toLowerCase();
@@ -221,14 +225,10 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         if (category === 'works') sectionFacts.works += amount;
         else sectionFacts.materials += amount;
         sectionFactMap.set(sectionId, sectionFacts);
-        if (operation.project_id) {
-            const projectId = String(operation.project_id);
-            projectFactMap.set(projectId, (projectFactMap.get(projectId) || 0) + amount);
-        }
     });
 
     const closedOrderIds = new Set((orders || [])
-        .filter(order => ['closed', 'archived'].includes(order.status))
+        .filter(order => ['closed', 'archived'].includes(order.status) && order.payment_source === 'company')
         .map(order => order.id));
     const orderIdsWithCashOperation = new Set((cashOperations || [])
         .map(operation => operation.order_id ? String(operation.order_id) : null)
@@ -236,37 +236,33 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
     const orderSectionMap = new Map((orders || [])
         .filter(order => closedOrderIds.has(order.id) && order.section_id && !orderIdsWithCashOperation.has(order.id))
         .map(order => [String(order.id), String(order.section_id)]));
-    const orderProjectMap = new Map((orders || [])
-        .filter(order => closedOrderIds.has(order.id) && !orderIdsWithCashOperation.has(order.id))
-        .map(order => [String(order.id), order.project_id]));
     (orderItems || []).forEach(item => {
         const sectionId = orderSectionMap.get(String(item.order_id));
-        const projectId = orderProjectMap.get(String(item.order_id));
         const amount = Number(item.total_price) || 0;
         const sectionFacts = sectionFactMap.get(sectionId) || { materials: 0, works: 0 };
         sectionFacts.materials += amount;
         sectionFactMap.set(sectionId, sectionFacts);
-        if (projectId) {
-            const normalizedProjectId = String(projectId);
-            projectFactMap.set(normalizedProjectId, (projectFactMap.get(normalizedProjectId) || 0) + amount);
-        }
     });
 
     const projectMap = new Map((projects || []).map(project => [String(project.id), project]));
     const projectRows = [...sectionPlanMap.entries()]
         .map(([sectionId, section]) => {
             const facts = sectionFactMap.get(sectionId) || { materials: 0, works: 0 };
-            const overrun = facts.materials - section.plan;
-            const percent = section.plan > 0 ? (overrun / section.plan) * 100 : (overrun > 0 ? 100 : 0);
+            const totalPlan = section.planMaterials + section.planWorks;
+            const totalFact = facts.materials + facts.works;
+            const overrun = totalFact - totalPlan;
+            const percent = totalPlan > 0 ? (overrun / totalPlan) * 100 : (overrun > 0 ? 100 : 0);
             return {
                 sectionId,
                 hasSectionOverrun: overrun > 0,
                 project: projectMap.get(String(section.projectId)),
                 sectionName: section.name,
-                materialsPlan: section.plan,
+                materialsPlan: section.planMaterials,
                 materialsFact: facts.materials,
                 worksPlan: section.planWorks,
                 worksFact: facts.works,
+                totalPlan,
+                totalFact,
                 overrun,
                 percent
             };
@@ -274,7 +270,8 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         .filter(row => row.project)
         .filter(row => row.hasSectionOverrun)
         .map(row => ({ ...row, ...row.project }))
-        .sort((a, b) => b.overrun - a.overrun);
+        .sort((a, b) => b.percent - a.percent);
+    materialOverrunRowsCache = projectRows;
 
     const negativeList = negative.length
         ? negative.map(item => `
@@ -294,20 +291,16 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         `).join('')
         : '<p class="text-sm text-gray-500">Нет крупных остатков.</p>';
 
-    const overrunRows = projectRows.slice(0, 12).map(row => {
+    const overrunRows = projectRows.slice(0, 12).map((row, index) => {
         return `
-            <tr>
+            <tr onclick="openMaterialOverrunDetail(${index})" class="cursor-pointer transition hover:bg-emerald-50/60">
                 <td class="px-2 py-3 text-left text-sm font-semibold text-gray-800">${escapeHtml(row.name || '—')}</td>
                 <td class="px-2 py-3 text-left text-sm text-gray-700">${escapeHtml(row.sectionName || '—')}</td>
-                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(row.materialsPlan)}</td>
-                <td class="px-2 py-3 text-right text-sm font-semibold text-gray-700">${formatMoney(row.materialsFact)}</td>
-                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(row.worksPlan)}</td>
-                <td class="px-2 py-3 text-right text-sm text-gray-700">${formatMoney(row.worksFact)}</td>
-                <td class="px-2 py-3 text-right text-sm font-bold text-red-600">${formatMoney(row.overrun)}</td>
-                <td class="px-2 py-3 text-right text-sm font-bold text-red-600">${Math.abs(row.percent || 0).toFixed(1)}%</td>
+                <td class="px-2 py-3 text-right text-sm font-bold text-red-600">+${Math.round(row.percent || 0)}%</td>
             </tr>
         `;
-    }).join('') || '<tr><td colspan="8" class="px-2 py-4 text-center text-sm text-gray-500">Нет данных по объектам.</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="px-2 py-5 text-center text-sm text-emerald-700">✅ Перерасхода материалов ни на одном объекте нет</td></tr>';
+    const totalOverrun = projectRows.reduce((sum, row) => sum + row.overrun, 0);
 
     const supplierDebtRows = supplierRows.length
         ? supplierRows.map((row, index) => `
@@ -410,22 +403,64 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                             <tr>
                                 <th class="px-2 py-2">Объект</th>
                                 <th class="px-2 py-2">Раздел</th>
-                                <th class="px-2 py-2 text-right">Материалы, план</th>
-                                <th class="px-2 py-2 text-right">Материалы, факт</th>
-                                <th class="px-2 py-2 text-right">Работы, план</th>
-                                <th class="px-2 py-2 text-right">Работы, факт</th>
-                                <th class="px-2 py-2 text-right">Перерасход</th>
-                                <th class="px-2 py-2 text-right">%</th>
+                                <th class="px-2 py-2 text-right">Перерасход, %</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y">${overrunRows}</tbody>
+                        <tbody class="${projectRows.length ? 'divide-y' : 'bg-emerald-50'}">${overrunRows}</tbody>
                     </table>
                 </div>
+                ${projectRows.length ? `<p class="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-500">Всего: <strong class="text-gray-800">${new Set(projectRows.map(row => row.id)).size} объектов</strong> · Общий перерасход: <strong class="text-red-600">+${formatMoney(totalOverrun)}</strong></p>` : ''}
                     </div>
                 </details>
             </div>
         </div>
     `;
+}
+
+export function openMaterialOverrunDetail(index) {
+    const row = materialOverrunRowsCache[index];
+    if (!row) return;
+
+    const materialOverrun = row.materialsFact - row.materialsPlan;
+    const worksOverrun = row.worksFact - row.worksPlan;
+    const totalOverrun = row.totalFact - row.totalPlan;
+    const title = document.getElementById('material-overrun-title');
+    const content = document.getElementById('material-overrun-content');
+    const projectButton = document.getElementById('material-overrun-project-button');
+    if (!title || !content || !projectButton) return;
+
+    title.textContent = `🏗 ${row.name || 'Объект'} — ${row.sectionName || 'Раздел'}`;
+    content.innerHTML = `
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <h4 class="font-bold text-amber-900">📦 Материалы</h4>
+                <div class="mt-3 space-y-2 text-sm">
+                    <p class="flex justify-between gap-3"><span>План:</span><strong>${formatMoney(row.materialsPlan)}</strong></p>
+                    <p class="flex justify-between gap-3"><span>Факт:</span><strong>${formatMoney(row.materialsFact)}</strong></p>
+                    <p class="flex justify-between gap-3 border-t border-amber-200 pt-2"><span>Перерасход:</span><strong class="text-red-600">${materialOverrun >= 0 ? '+' : ''}${formatMoney(materialOverrun)}</strong></p>
+                </div>
+            </div>
+            <div class="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                <h4 class="font-bold text-blue-900">🛠 Работы</h4>
+                <div class="mt-3 space-y-2 text-sm">
+                    <p class="flex justify-between gap-3"><span>План:</span><strong>${formatMoney(row.worksPlan)}</strong></p>
+                    <p class="flex justify-between gap-3"><span>Факт:</span><strong>${formatMoney(row.worksFact)}</strong></p>
+                    <p class="flex justify-between gap-3 border-t border-blue-200 pt-2"><span>Перерасход:</span><strong class="${worksOverrun > 0 ? 'text-red-600' : 'text-emerald-700'}">${worksOverrun >= 0 ? '+' : ''}${formatMoney(worksOverrun)}</strong></p>
+                </div>
+            </div>
+        </div>
+        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
+            <div class="flex flex-wrap justify-between gap-2 font-bold text-emerald-900">
+                <span>Итого по разделу</span>
+                <span>План: ${formatMoney(row.totalPlan)} · Факт: ${formatMoney(row.totalFact)} · Перерасход: ${totalOverrun >= 0 ? '+' : ''}${formatMoney(totalOverrun)} (${Math.round(row.percent)}%)</span>
+            </div>
+        </div>
+    `;
+    projectButton.onclick = () => {
+        hideModal('material-overrun-modal');
+        window.openProjectDetail?.(row.id);
+    };
+    showModal('material-overrun-modal');
 }
 
 export async function loadDashboard() {
@@ -479,7 +514,7 @@ export async function loadDashboard() {
             }),
             db.select('employee_cash_balance', { select: 'employee_id, balance' }),
             db.select('tasks', { select: 'id, title, project_id, status, deadline, completed_at, created_at' }),
-            db.select('orders', { select: 'id, status, project_id, section_id, request_number, supplier, created_at' }),
+            db.select('orders', { select: 'id, status, project_id, section_id, payment_source, request_number, supplier, created_at' }),
             db.select('employees', { select: 'id, name, position, status' }),
             db.select('order_items', { select: 'id, order_id, total_price, payment_status' })
         ]);
@@ -598,3 +633,4 @@ export async function loadDashboard() {
 }
 
 window.loadDashboard = loadDashboard;
+window.openMaterialOverrunDetail = openMaterialOverrunDetail;

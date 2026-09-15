@@ -202,11 +202,20 @@ export async function openTaskFilterModal(filter) {
         overdue: 'Просроченные задачи',
         done_30: 'Выполненные за 30 дней'
     };
-
-    const modalTitle = document.getElementById('task-filter-title');
-    if (modalTitle) modalTitle.textContent = labels[filter] || 'Задачи';
+    const accents = {
+        active: 'text-amber-700',
+        overdue: 'text-red-700',
+        done_30: 'text-emerald-700',
+        all: 'text-gray-800'
+    };
 
     const filtered = getFilteredTasks();
+    const modalTitle = document.getElementById('task-filter-title');
+    const titlePrefix = labels[filter] || 'Задачи';
+    if (modalTitle) {
+        modalTitle.textContent = `${titlePrefix} (${filtered.length})`;
+        modalTitle.className = `text-lg font-bold ${accents[filter] || accents.all}`;
+    }
     const container = document.getElementById('task-filter-content');
     if (!container) return;
 
@@ -226,6 +235,7 @@ export async function openTaskFilterModal(filter) {
             <table class="min-w-[920px] w-full border-collapse text-sm text-gray-800">
                 <thead class="bg-gray-50 text-left text-[11px] font-bold uppercase tracking-wide text-gray-600">
                     <tr>
+                        <th class="border-b border-gray-200 px-3 py-2">Приоритет</th>
                         <th class="border-b border-gray-200 px-3 py-2">Заголовок</th>
                         <th class="border-b border-gray-200 px-3 py-2">Объект</th>
                         <th class="border-b border-gray-200 px-3 py-2">Исполнитель</th>
@@ -239,21 +249,22 @@ export async function openTaskFilterModal(filter) {
                         const statusInfo = getTaskStatusInfo(task.status);
                         const projectName = task.project?.name || 'Без объекта';
                         const assigneeName = task.assignee?.name || '—';
-                        const authorName = task.author?.name || '—';
                         const deadline = task.deadline ? formatDate(task.deadline) : '—';
+                        const isOverdue = isOverdueTask(task);
+                        const priorityInfo = getTaskPriorityInfo(task.priority);
                         const title = task.title || task.text || '—';
 
                         return `
                             <tr onclick="window.openTaskDetail(${task.id}); window.hideModal('task-filter-modal');"
                                 class="cursor-pointer border-b border-gray-200 last:border-0 transition hover:bg-emerald-50/60">
-                                <td class="w-[28%] px-3 py-3 align-top font-semibold text-gray-800">${escapeHtml(title)}</td>
+                                <td class="w-[12%] px-3 py-3 align-top"><span class="inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${priorityInfo.bg} ${priorityInfo.color}">${priorityInfo.label}</span></td>
+                                <td class="w-[24%] px-3 py-3 align-top font-semibold text-gray-800">${escapeHtml(title)}</td>
                                 <td class="w-[18%] px-3 py-3 align-top text-gray-600">${escapeHtml(projectName)}</td>
                                 <td class="w-[18%] px-3 py-3 align-top text-gray-600">${escapeHtml(assigneeName)}</td>
-                                <td class="w-[14%] px-3 py-3 align-top text-gray-600">${deadline}</td>
+                                <td class="w-[14%] px-3 py-3 align-top ${isOverdue ? 'font-bold text-red-600' : 'text-gray-600'}">${deadline}</td>
                                 <td class="w-[12%] px-3 py-3 align-top">
                                     <span class="inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${statusInfo.bg} ${statusInfo.color}">${statusInfo.label}</span>
                                 </td>
-                                <td class="w-[18%] px-3 py-3 align-top text-gray-600">${escapeHtml(authorName)}</td>
                             </tr>
                         `;
                     }).join('')}
