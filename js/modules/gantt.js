@@ -5,11 +5,11 @@
 //
 // Логика отображения:
 //   - 📋 Плановая полоса — ВСЕГДА зелёная (не меняется).
-//   - ✅ Фактическая полоса (вторая строка) — синяя (в срок) или красная (с опозданием).
+//   - ✅ Фактическая полоса — синяя (в срок) или красная (с опозданием).
 //
 // Возможности:
-//   - Админ / Гл. инженер / Инженер ПТО: задают и двигают даты (drag-and-drop).
-//   - Прораб: только смотрит свои объекты + может закрывать выполненные разделы.
+//   - Админ / Гл. инженер / Инженер ПТО: задают и двигают даты.
+//   - Прораб: смотрит свои объекты + может закрывать выполненные разделы.
 //
 // Библиотека: Frappe Gantt 0.6.1 (CDN, open-source, MIT-лицензия).
 // =====================================================================
@@ -33,9 +33,6 @@ let currentSections = [];
 // ПРАВА
 // =====================================================================
 
-/**
- * Может ли текущий пользователь редактировать график (даты)?
- */
 export function canEditGantt() {
     const role = getEmployee()?.position;
     if (!role) return false;
@@ -44,9 +41,6 @@ export function canEditGantt() {
         || role === 'Инженер ПТО';
 }
 
-/**
- * Может ли текущий пользователь закрывать раздел?
- */
 export function canCloseSection(project) {
     const emp = getEmployee();
     if (!emp) return false;
@@ -275,7 +269,7 @@ function initGanttChart(tasks) {
 
         log.info('✅ Диаграмма Ганта отрисована');
 
-        // 👇 Применяем inline-цвета (гарантированно, независимо от CSS-классов)
+        // 👇 Применяем inline-цвета по порядку
         applyBarColors(tasks);
 
     } catch (err) {
@@ -285,46 +279,38 @@ function initGanttChart(tasks) {
 }
 
 /**
- * Применяет inline-цвета к полосам (обход проблем с CSS-классами в Gantt 0.6.1).
+ * Применяет inline-цвета к полосам.
+ * Frappe Gantt 0.6.1 не поддерживает data-id, поэтому используем порядок полос.
  */
 function applyBarColors(tasks) {
     setTimeout(() => {
         const chartContainer = document.getElementById('gantt-chart');
         if (!chartContainer) return;
 
-        // Gantt 0.6.1 использует data-id на .bar-wrapper
-        tasks.forEach(task => {
-            if (!task._color) return;
+        const allWrappers = chartContainer.querySelectorAll('.bar-wrapper');
 
-            // Пробуем несколько селекторов — на случай разных версий
-            const selectors = [
-                `.bar-wrapper[data-id="${task.id}"] .bar`,
-                `[data-id="${task.id}"] .bar`,
-                `.bar-wrapper .bar[data-id="${task.id}"]`
-            ];
+        log.info(`🎨 Полос в DOM: ${allWrappers.length}, задач: ${tasks.length}`);
 
-            for (const sel of selectors) {
-                const bar = chartContainer.querySelector(sel);
-                if (bar) {
-                    bar.setAttribute('fill', task._color);
-                    break;
-                }
+        if (allWrappers.length === 0) {
+            log.warn('⚠️ Полосы не найдены в DOM');
+            return;
+        }
+
+        // Применяем цвета по порядку: task[0] → bar[0], task[1] → bar[1], ...
+        allWrappers.forEach((wrapper, i) => {
+            const task = tasks[i];
+            if (!task || !task._color) return;
+
+            const bar = wrapper.querySelector('.bar');
+            if (bar) {
+                // Основной цвет полосы
+                bar.setAttribute('fill', task._color);
+                bar.style.fill = task._color;
             }
         });
 
-        // Fallback: если data-id не сработал — пробуем по порядку полос
-        const allWrappers = chartContainer.querySelectorAll('.bar-wrapper');
-        if (allWrappers.length === tasks.length) {
-            allWrappers.forEach((wrapper, i) => {
-                const task = tasks[i];
-                if (!task || !task._color) return;
-                const bar = wrapper.querySelector('.bar');
-                if (bar) bar.setAttribute('fill', task._color);
-            });
-        }
-
-        log.info(`🎨 Применено цветов к полосам: ${tasks.filter(t => t._color).length}`);
-    }, 200);
+        log.info(`🎨 Применено цветов: ${tasks.filter(t => t._color).length}`);
+    }, 300);
 }
 
 /**
@@ -382,12 +368,8 @@ export function changeGanttView() {
     if (currentGantt && mode) {
         currentGantt.change_view_mode(mode);
 
-        // Перекрашиваем после смены режима
+        // После смены режима перерисовываем — чтобы цвета применились заново
         setTimeout(() => {
-            const chartContainer = document.getElementById('gantt-chart');
-            if (!chartContainer) return;
-            // Задачи были переданы в buildGanttTasks — но здесь их нет.
-            // Поэтому просто перерисуем график:
             const project = window.__getCurrentProject?.();
             if (project) renderGantt(project);
         }, 200);
