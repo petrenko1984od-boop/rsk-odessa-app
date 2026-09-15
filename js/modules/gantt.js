@@ -536,24 +536,21 @@ export async function downloadGanttPDF() {
         const pageWidth = pdf.internal.pageSize.getWidth();
         const pageHeight = pdf.internal.pageSize.getHeight();
 
-        const pdfMargin = 15;
-        const imgWidth = pageWidth - (pdfMargin * 2);
-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        const pdfMargin = 12;
+        const availableWidth = pageWidth - (pdfMargin * 2);
+        const availableHeight = pageHeight - (pdfMargin * 2);
+        const scale = Math.min(
+            availableWidth / canvas.width,
+            availableHeight / canvas.height
+        );
+        const imgWidth = canvas.width * scale;
+        const imgHeight = canvas.height * scale;
+        const imageX = (pageWidth - imgWidth) / 2;
+        const imageY = (pageHeight - imgHeight) / 2;
 
         const imgData = canvas.toDataURL('image/png');
 
-        let heightLeft = imgHeight;
-        let position = pdfMargin;
-
-        pdf.addImage(imgData, 'PNG', pdfMargin, position, imgWidth, imgHeight);
-        heightLeft -= (pageHeight - (pdfMargin * 2));
-
-        while (heightLeft > 0) {
-            position = heightLeft - imgHeight + pdfMargin;
-            pdf.addPage();
-            pdf.addImage(imgData, 'PNG', pdfMargin, position, imgWidth, imgHeight);
-            heightLeft -= (pageHeight - (pdfMargin * 2));
-        }
+        pdf.addImage(imgData, 'PNG', imageX, imageY, imgWidth, imgHeight);
 
         // ----- 5. Скачиваем -----
         const safeName = project.name.replace(/[^a-zA-Z0-9а-яА-Я\s]/g, '').trim().replace(/\s+/g, '_');
