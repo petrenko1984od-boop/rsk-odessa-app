@@ -87,10 +87,11 @@
                 <div class="flex flex-wrap gap-2 items-center">
                     <button onclick="switchTab('projects')" id="btn-projects" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты (<span id="projects-badge">0</span>)</button>
                     <button onclick="switchTab('employees')" id="btn-employees" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники (<span id="employees-badge">0</span>)</button>
+                    <button onclick="switchTab('tasks')" id="btn-tasks" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Задачи (<span id="tasks-badge">0</span>)</button>
                     <button onclick="switchTab('orders')" id="btn-orders" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение (<span id="orders-badge">0</span>)</button>
                     <button onclick="switchTab('cash-requests')" id="btn-cash-requests" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Заявки финансов (<span id="cash-requests-badge">0</span>)</button>
                     <button onclick="switchTab('registry')" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
-                    <button onclick="openNewOrderForm()" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заявка на материалы</button>
+                    <button onclick="openNewOrderForm()" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заявка на материалы</button>
                     <button onclick="openNewCashRequestForm()" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Заявка финансов</button>
 
                     <div class="relative">
@@ -113,6 +114,7 @@
                             <button onclick="openMyCard()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">👤 <span>Карточка сотрудника</span></button>
                             <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Финансовый отчёт</span></button>
                             <button onclick="openMyRequests()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span>Мои заявки</span></button>
+                            <button onclick="openMyTasks()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📌 <span>Мои задачи</span></button>
                             <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
                         </div>
                     </div>
@@ -186,6 +188,27 @@
                 <div id="employees-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </section>
 
+            <!-- ЗАДАЧИ -->
+            <section id="tab-tasks" class="hidden space-y-4">
+                <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-800">📋 Задачи</h2>
+                        <p class="text-xs text-gray-500">Задачи для прорабов и сотрудников</p>
+                    </div>
+                    <button onclick="openNewTaskForm()" id="create-task-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать задачу</button>
+                </div>
+
+                <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
+                    <button onclick="switchTasksTab('active')" id="tasks-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
+                    <button onclick="switchTasksTab('pending')" id="tasks-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Новые</button>
+                    <button onclick="switchTasksTab('in_progress')" id="tasks-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔵 В работе</button>
+                    <button onclick="switchTasksTab('done')" id="tasks-filter-done" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выполненные</button>
+                    <button onclick="switchTasksTab('all')" id="tasks-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
+                </div>
+
+                <div id="tasks-container" class="space-y-3"></div>
+            </section>
+
             <!-- СНАБЖЕНИЕ -->
             <section id="tab-orders" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
@@ -208,7 +231,7 @@
                 <div id="orders-container" class="space-y-3"></div>
             </section>
 
-            <!-- ЗАЯВКИ ФИНАНСОВ (для кассиров) -->
+            <!-- ЗАЯВКИ ФИНАНСОВ -->
             <section id="tab-cash-requests" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
                     <div>
@@ -295,7 +318,7 @@
                 </div>
             </section>
 
-               </main>
+          </main>
     </div>
 
     <!-- ============================================================ -->
@@ -430,25 +453,312 @@
         </div>
     </div>
 
-    <!-- МОИ ЗАЯВКИ (объединённый список) -->
+    <!-- МОИ ЗАЯВКИ -->
     <div id="my-requests-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📋 Мои заявки</h3>
                 <button onclick="closeMyRequests()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
-
-            <!-- Табы -->
             <div class="flex flex-wrap gap-2">
                 <button onclick="switchMyRequestsTab('materials')" id="myreq-tab-materials" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">📦 Материалы</button>
                 <button onclick="switchMyRequestsTab('finance')" id="myreq-tab-finance" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">💰 Финансы</button>
             </div>
-
             <div id="my-requests-content" class="space-y-3 text-gray-800"></div>
-
             <div class="pt-2 border-t flex justify-end">
                 <button onclick="closeMyRequests()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
             </div>
+        </div>
+    </div>
+
+    <!-- МОИ ЗАДАЧИ -->
+    <div id="my-tasks-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
+        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">📌 Мои задачи</h3>
+                <button onclick="closeMyTasks()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="my-tasks-content" class="space-y-3 text-gray-800"></div>
+            <div class="pt-2 border-t flex justify-end">
+                <button onclick="closeMyTasks()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- НОВАЯ ЗАДАЧА -->
+    <div id="new-task-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">📋 Новая задача</h3>
+                <button onclick="hideModal('new-task-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="new-task-form" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Заголовок задачи: *</label>
+                    <input type="text" id="new-task-title" required placeholder="Например: Смонтировать каркас"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Описание:</label>
+                    <textarea id="new-task-description" placeholder="Подробности задачи..."
+                              class="w-full border rounded-lg p-2.5 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d] h-24"></textarea>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Объект:</label>
+                        <select id="new-task-project" onchange="loadSectionsForTask()"
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">— Без объекта —</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел:</label>
+                        <select id="new-task-section"
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">— Раздел не нужен —</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Приоритет: *</label>
+                        <select id="new-task-priority" required
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="normal">📋 Обычная</option>
+                            <option value="important">⭐ Важный</option>
+                            <option value="urgent">⚡ Срочно</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Дедлайн:</label>
+                        <input type="date" id="new-task-deadline"
+                               class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Исполнитель: *</label>
+                    <select id="new-task-assignee" required class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <option value="">— Загрузка... —</option>
+                    </select>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать задачу</button>
+                    <button type="button" onclick="hideModal('new-task-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ПРОСМОТР ЗАДАЧИ -->
+    <div id="task-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">📋 Задача</h3>
+                <button onclick="hideModal('task-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="task-detail-content" class="space-y-3 text-sm text-gray-800"></div>
+            <div id="task-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
+        </div>
+    </div>
+
+    <!-- ВЫПОЛНЕНИЕ ЗАДАЧИ -->
+    <div id="complete-task-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" id="complete-task-title">✅ Выполнить задачу</h3>
+                <button onclick="hideModal('complete-task-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="complete-task-form" class="space-y-3">
+                <input type="hidden" id="complete-task-id">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">📸 Фотоотчёт (опционально):</label>
+                    <input type="file" id="complete-task-photo" accept="image/*"
+                           class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-[#15803d] hover:file:bg-emerald-100 cursor-pointer border rounded-lg bg-white">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">💬 Комментарий:</label>
+                    <textarea id="complete-task-comment" placeholder="Что сделано, замечания..."
+                              class="w-full border rounded-lg p-2.5 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d] h-20"></textarea>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">✅ Отметить выполненной</button>
+                    <button type="button" onclick="hideModal('complete-task-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- НОВАЯ ЗАЯВКА НА МАТЕРИАЛЫ -->
+    <div id="new-order-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">📦 Новая заявка на материалы</h3>
+                <button onclick="hideModal('new-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="new-order-form" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Объект: *</label>
+                        <select id="new-order-project" onchange="loadSectionsForOrder()" required
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">— Выбери объект —</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы: *</label>
+                        <select id="new-order-section" required
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">Сначала выбери объект</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Желаемая дата поставки: *</label>
+                    <input type="date" id="new-order-date" required
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="border-t border-b py-3 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                            📦 Позиции: <span id="new-order-items-count" class="text-[#15803d]">1</span>
+                        </label>
+                        <button type="button" onclick="addOrderItemRow()" 
+                                class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
+                    </div>
+                    <div id="new-order-items" class="space-y-2"></div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
+                    <input type="text" id="new-order-comment" placeholder="Например: Срочно для заливки"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать заявку</button>
+                    <button type="button" onclick="hideModal('new-order-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ПРОСМОТР ЗАЯВКИ НА МАТЕРИАЛЫ -->
+    <div id="order-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">📦 Заявка</h3>
+                <button onclick="hideModal('order-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="order-detail-content" class="space-y-3 text-sm text-gray-800"></div>
+            <div id="order-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
+        </div>
+    </div>
+
+    <!-- ЗАКРЫТИЕ ЗАЯВКИ НА МАТЕРИАЛЫ -->
+    <div id="close-order-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" id="close-order-title">✅ Закрытие заявки</h3>
+                <button onclick="hideModal('close-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="close-order-form" class="space-y-4">
+                <input type="hidden" id="close-order-id">
+                <div id="close-order-info"></div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">🏬 Поставщик / Магазин / База: *</label>
+                    <input type="text" id="close-order-supplier" required placeholder="Эпицентр / База на Мельницкой"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="border-t border-b py-3 space-y-3">
+                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💰 Цены по позициям:</p>
+                    <div id="close-order-items" class="space-y-2"></div>
+                </div>
+                <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
+                    <span class="text-xs font-bold text-gray-600 uppercase">Итого:</span>
+                    <span class="text-lg font-bold text-[#166534]" id="close-order-total">0,00 грн</span>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-3 border space-y-2">
+                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💳 Способ оплаты: *</p>
+                    <label class="flex items-center gap-2 cursor-pointer text-sm">
+                        <input type="radio" name="close-order-payment-source" value="company" id="close-order-payment-company" checked class="w-4 h-4">
+                        <span>🏢 <b>Фирма</b> (по счёту / безнал)</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-sm">
+                        <input type="radio" name="close-order-payment-source" value="employee" class="w-4 h-4">
+                        <span>💵 <b>Снабженец</b> (наличными из подотчёта)</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий снабженца:</label>
+                    <input type="text" id="close-order-notes" placeholder="Например: Привезли утром"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Закрыть заявку</button>
+                    <button type="button" onclick="hideModal('close-order-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- НОВАЯ ЗАЯВКА ФИНАНСОВ -->
+    <div id="new-cashreq-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">💰 Новая заявка финансов</h3>
+                <button onclick="hideModal('new-cashreq-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="new-cashreq-form" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Объект: *</label>
+                        <select id="new-cashreq-project" onchange="loadSectionsForCashRequest()" required
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">— Выбери объект —</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы: *</label>
+                        <select id="new-cashreq-section" required
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">Сначала выбери объект</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="border-t border-b py-3 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                            🛠 Позиции работ: <span id="new-cashreq-items-count" class="text-[#15803d]">1</span>
+                        </label>
+                        <button type="button" onclick="addCashRequestItemRow()" 
+                                class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
+                    </div>
+                    <div id="new-cashreq-items" class="space-y-2"></div>
+                </div>
+                <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
+                    <span class="text-xs font-bold text-gray-600 uppercase">Итого:</span>
+                    <span class="text-lg font-bold text-[#166534]" id="new-cashreq-total">0,00 грн</span>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
+                    <input type="text" id="new-cashreq-comment" placeholder="Например: На штукатурные работы"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать заявку</button>
+                    <button type="button" onclick="hideModal('new-cashreq-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ПРОСМОТР ЗАЯВКИ ФИНАНСОВ -->
+    <div id="cash-request-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">💰 Заявка финансов</h3>
+                <button onclick="hideModal('cash-request-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="cash-request-detail-content" class="space-y-3 text-sm text-gray-800"></div>
+            <div id="cash-request-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
         </div>
     </div>
 
@@ -541,191 +851,6 @@
                     <button type="button" onclick="hideModal('cash-return-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <!-- НОВАЯ ЗАЯВКА НА МАТЕРИАЛЫ -->
-    <div id="new-order-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
-            <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">📦 Новая заявка на материалы</h3>
-                <button onclick="hideModal('new-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
-            </div>
-            <form id="new-order-form" class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Объект: *</label>
-                        <select id="new-order-project" onchange="loadSectionsForOrder()" required
-                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                            <option value="">— Выбери объект —</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы: *</label>
-                        <select id="new-order-section" required
-                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                            <option value="">Сначала выбери объект</option>
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Желаемая дата поставки: *</label>
-                    <input type="date" id="new-order-date" required
-                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                </div>
-
-                <div class="border-t border-b py-3 space-y-3">
-                    <div class="flex justify-between items-center">
-                        <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">
-                            📦 Позиции: <span id="new-order-items-count" class="text-[#15803d]">1</span>
-                        </label>
-                        <button type="button" onclick="addOrderItemRow()" 
-                                class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
-                    </div>
-                    <div id="new-order-items" class="space-y-2"></div>
-                </div>
-
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
-                    <input type="text" id="new-order-comment" placeholder="Например: Срочно для заливки"
-                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                </div>
-                <div class="flex gap-2 pt-2">
-                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать заявку</button>
-                    <button type="button" onclick="hideModal('new-order-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- ПРОСМОТР ЗАЯВКИ НА МАТЕРИАЛЫ -->
-    <div id="order-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
-            <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">📦 Заявка</h3>
-                <button onclick="hideModal('order-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
-            </div>
-            <div id="order-detail-content" class="space-y-3 text-sm text-gray-800"></div>
-            <div id="order-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
-        </div>
-    </div>
-
-    <!-- ЗАКРЫТИЕ ЗАЯВКИ НА МАТЕРИАЛЫ -->
-    <div id="close-order-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
-            <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800" id="close-order-title">✅ Закрытие заявки</h3>
-                <button onclick="hideModal('close-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
-            </div>
-            <form id="close-order-form" class="space-y-4">
-                <input type="hidden" id="close-order-id">
-                <div id="close-order-info"></div>
-
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">🏬 Поставщик / Магазин / База: *</label>
-                    <input type="text" id="close-order-supplier" required placeholder="Эпицентр / База на Мельницкой"
-                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                </div>
-
-                <div class="border-t border-b py-3 space-y-3">
-                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💰 Цены по позициям:</p>
-                    <div id="close-order-items" class="space-y-2"></div>
-                </div>
-
-                <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
-                    <span class="text-xs font-bold text-gray-600 uppercase">Итого:</span>
-                    <span class="text-lg font-bold text-[#166534]" id="close-order-total">0,00 грн</span>
-                </div>
-
-                <div class="bg-gray-50 rounded-lg p-3 border space-y-2">
-                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💳 Способ оплаты: *</p>
-                    <label class="flex items-center gap-2 cursor-pointer text-sm">
-                        <input type="radio" name="close-order-payment-source" value="company" id="close-order-payment-company" checked class="w-4 h-4">
-                        <span>🏢 <b>Фирма</b> (по счёту / безнал)</span>
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer text-sm">
-                        <input type="radio" name="close-order-payment-source" value="employee" class="w-4 h-4">
-                        <span>💵 <b>Снабженец</b> (наличными из подотчёта)</span>
-                    </label>
-                </div>
-
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий снабженца:</label>
-                    <input type="text" id="close-order-notes" placeholder="Например: Привезли утром"
-                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                </div>
-
-                <div class="flex gap-2 pt-2">
-                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Закрыть заявку</button>
-                    <button type="button" onclick="hideModal('close-order-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- НОВАЯ ЗАЯВКА ФИНАНСОВ -->
-    <div id="new-cashreq-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
-            <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">💰 Новая заявка финансов</h3>
-                <button onclick="hideModal('new-cashreq-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
-            </div>
-            <form id="new-cashreq-form" class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Объект: *</label>
-                        <select id="new-cashreq-project" onchange="loadSectionsForCashRequest()" required
-                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                            <option value="">— Выбери объект —</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы: *</label>
-                        <select id="new-cashreq-section" required
-                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                            <option value="">Сначала выбери объект</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="border-t border-b py-3 space-y-3">
-                    <div class="flex justify-between items-center">
-                        <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">
-                            🛠 Позиции работ: <span id="new-cashreq-items-count" class="text-[#15803d]">1</span>
-                        </label>
-                        <button type="button" onclick="addCashRequestItemRow()" 
-                                class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
-                    </div>
-                    <div id="new-cashreq-items" class="space-y-2"></div>
-                </div>
-
-                <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
-                    <span class="text-xs font-bold text-gray-600 uppercase">Итого:</span>
-                    <span class="text-lg font-bold text-[#166534]" id="new-cashreq-total">0,00 грн</span>
-                </div>
-
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
-                    <input type="text" id="new-cashreq-comment" placeholder="Например: На штукатурные работы"
-                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                </div>
-                <div class="flex gap-2 pt-2">
-                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать заявку</button>
-                    <button type="button" onclick="hideModal('new-cashreq-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- ПРОСМОТР ЗАЯВКИ ФИНАНСОВ -->
-    <div id="cash-request-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
-            <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">💰 Заявка финансов</h3>
-                <button onclick="hideModal('cash-request-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
-            </div>
-            <div id="cash-request-detail-content" class="space-y-3 text-sm text-gray-800"></div>
-            <div id="cash-request-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
         </div>
     </div>
 

@@ -61,6 +61,21 @@ import {
 } from './modules/cash-requests.js';
 
 import {
+    loadTasks,
+    switchTasksTab,
+    openNewTaskForm,
+    loadSectionsForTask,
+    saveNewTask,
+    takeTaskToWork,
+    openCompleteTaskModal,
+    completeTask,
+    cancelTask,
+    deleteTask,
+    addTaskComment,
+    updateTasksBadge
+} from './modules/tasks.js';
+
+import {
     loadRegistry
 } from './modules/registry.js';
 
@@ -79,8 +94,8 @@ export const AppState = {
 // НАВИГАЦИЯ
 // =====================================================================
 
-const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'orders', 'cash-requests', 'registry', 'new-order'];
-const TAB_BUTTONS = ['projects', 'employees', 'orders', 'cash-requests', 'registry', 'new-order'];
+const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'tasks', 'orders', 'cash-requests', 'registry'];
+const TAB_BUTTONS = ['projects', 'employees', 'tasks', 'orders', 'cash-requests', 'registry'];
 
 export function switchTab(tabId) {
     if (!canSeeTab(tabId) && tabId !== 'welcome' && tabId !== 'project-detail') {
@@ -112,9 +127,10 @@ export function switchTab(tabId) {
 
     AppState.currentTab = tabId;
 
-    // Триггеры загрузки данных при открытии вкладки
+    // Триггеры загрузки данных
     if (tabId === 'projects') loadProjects();
     if (tabId === 'employees') loadEmployees();
+    if (tabId === 'tasks') loadTasks();
     if (tabId === 'orders') loadOrders();
     if (tabId === 'cash-requests') loadCashRequests();
     if (tabId === 'registry') loadRegistry();
@@ -132,6 +148,10 @@ function applyPermissionsToUI() {
     if (employeesBtn) {
         employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
     }
+
+    // Задачи — видны всем, кто видит задачи (Прораб/Снабженец/Инж ПТО/Админ/Директор/Гл. инженер)
+    // Просто проверяем, есть ли у пользователя задачи вообще — оставим кнопку видимой всем, но вкладка фильтрует контент.
+    // Задачи — кнопку всегда показываем (у всех будут задачи или право их ставить).
 
     // Снабжение — только Админ + Снабженец
     const ordersBtn = document.getElementById('btn-orders');
@@ -190,7 +210,7 @@ export function openMyCard() {
 window.openMyCard = openMyCard;
 
 /**
- * Открыть модалку «Мои заявки» (объединённый список: материалы + финансы).
+ * «Мои заявки» (материалы + финансы).
  */
 export async function openMyRequests() {
     const emp = getEmployee();
@@ -214,9 +234,6 @@ window.closeMyRequests = () => {
     document.getElementById('my-requests-modal')?.classList.add('hidden');
 };
 
-/**
- * Переключение вкладок в «Моих заявках».
- */
 export async function switchMyRequestsTab(tab) {
     const matBtn = document.getElementById('myreq-tab-materials');
     const finBtn = document.getElementById('myreq-tab-finance');
@@ -237,7 +254,6 @@ export async function switchMyRequestsTab(tab) {
     const emp = getEmployee();
     if (!emp) return;
 
-    // Загружаем заявки автора
     const { db } = await import('./database.js');
     const { escapeHtml, formatDate, formatMoney } = await import('./utils.js');
 
@@ -329,6 +345,86 @@ export async function switchMyRequestsTab(tab) {
 
 window.switchMyRequestsTab = switchMyRequestsTab;
 
+/**
+ * «Мои задачи» (открывается из кабинета).
+ */
+export async function openMyTasks() {
+    const emp = getEmployee();
+    if (!emp) {
+        toast('Ваш аккаунт не привязан', 'warning');
+        return;
+    }
+
+    const menu = document.getElementById('profile-menu');
+    if (menu) menu.classList.add('hidden');
+
+    const container = document.getElementById('my-tasks-content');
+    if (!container) return;
+
+    container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Загрузка...</p>';
+
+    const modal = document.getElementById('my-tasks-modal');
+    if (modal) modal.classList.remove('hidden');
+
+    const { db } = await import('./database.js');
+    const { escapeHtml, formatDate } = await import('./utils.js');
+
+    const { data: tasks } = await db.select('tasks', {
+        filters: { assignee_employee_id: emp.id },
+        orderBy: { column: 'created_at', asc: false }
+    });
+
+    if (!tasks || tasks.length === 0) {
+        container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">У вас нет задач</p>';
+        return;
+    }
+
+    const { data: projects } = await db.select('projects');
+    const projMap = {};
+    (projects || []).forEach(p => { projMap[p.id] = p.name; });
+
+    const statusLabels = {
+        'pending':     { text: '🟡 Новая',      cls: 'bg-yellow-100 text-yellow-800' },
+        'in_progress': { text: '🔵 В работе',   cls: 'bg-blue-100 text-blue-700' },
+        'done':        { text: '🟢 Выполнена',  cls: 'bg-green-100 text-green-700' },
+        'cancelled':   { text: '⚫ Отменена',   cls: 'bg-gray-200 text-gray-600' }
+    };
+
+    const priorityLabels = {
+        'urgent':    '⚡ Срочно',
+        'important': '⭐ Важный',
+        'normal':    '📋 Обычная'
+    };
+
+    container.innerHTML = tasks.map(t => {
+        const st = statusLabels[t.status] || { text: t.status, cls: 'bg-gray-100' };
+        const prio = priorityLabels[t.priority] || '';
+        return `
+            <button onclick="window.openTaskDetail(${t.id})" class="w-full text-left bg-white border rounded-lg p-3 text-xs space-y-1 hover:bg-emerald-50/60 transition">
+                <div class="flex justify-between items-start gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100">${prio}</span>
+                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${st.cls}">${st.text}</span>
+                    </div>
+                    ${t.deadline ? `<span class="text-[10px] text-gray-500">📅 ${formatDate(t.deadline)}</span>` : ''}
+                </div>
+                <p class="font-bold text-[#166534]">${escapeHtml(t.title || t.text || '—')}</p>
+                ${t.project_id ? `<p class="text-gray-600">🏗 ${escapeHtml(projMap[t.project_id] || '—')}</p>` : ''}
+            </button>
+        `;
+    }).join('');
+}
+
+window.openMyTasks = openMyTasks;
+
+window.closeMyTasks = () => {
+    document.getElementById('my-tasks-modal')?.classList.add('hidden');
+};
+
+// =====================================================================
+// RENDER PROFILE
+// =====================================================================
+
 function renderProfile() {
     const emp = getEmployee();
     if (!emp) return;
@@ -383,18 +479,17 @@ async function startApp(user) {
 
     toast(`Добро пожаловать, ${user?.email || 'гость'}!`, 'success');
 
-    // Права
     await loadPermissions();
     applyPermissionsToUI();
     renderProfile();
 
-    // Первичная загрузка данных
     try {
         await Promise.all([
             loadEmployees(),
             loadProjects(),
             loadOrders(),
-            loadCashRequests()
+            loadCashRequests(),
+            loadTasks()
         ]);
     } catch (err) {
         log.error('Ошибка загрузки данных:', err);
@@ -417,7 +512,7 @@ function stopApp() {
 }
 
 // =====================================================================
-// ОБРАБОТЧИКИ ФОРМ
+// ФОРМЫ
 // =====================================================================
 
 function bindForms() {
@@ -449,6 +544,13 @@ function bindForms() {
     // Заявки финансов
     const newCashReqForm = document.getElementById('new-cashreq-form');
     if (newCashReqForm) newCashReqForm.addEventListener('submit', saveNewCashRequest);
+
+    // Задачи
+    const newTaskForm = document.getElementById('new-task-form');
+    if (newTaskForm) newTaskForm.addEventListener('submit', saveNewTask);
+
+    const completeTaskForm = document.getElementById('complete-task-form');
+    if (completeTaskForm) completeTaskForm.addEventListener('submit', completeTask);
 }
 
 // =====================================================================
