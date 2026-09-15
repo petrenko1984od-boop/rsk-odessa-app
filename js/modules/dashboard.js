@@ -374,7 +374,7 @@ export async function loadDashboard() {
     const container = document.getElementById('dashboard-content');
     if (!container) return;
 
-    container.innerHTML = '<div class="rounded-xl bg-white p-8 text-center text-sm text-gray-500 shadow-sm">Загрузка показателей...</div>';
+    container.innerHTML = '<div class="app-loading app-loading-card text-sm"><span class="app-spinner" aria-hidden="true"></span><span>Загрузка показателей...</span></div>';
 
     const employee = getEmployee();
         const isForeman = employee?.position === 'Прораб';

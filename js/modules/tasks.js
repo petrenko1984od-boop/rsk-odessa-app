@@ -104,6 +104,11 @@ function canSeeTask(task) {
 export async function loadTasks() {
     log.info('Загрузка задач...');
 
+    const tasksContainer = document.getElementById('tasks-container');
+    if (tasksContainer) {
+        tasksContainer.innerHTML = '<div class="app-loading app-loading-card text-sm"><span class="app-spinner" aria-hidden="true"></span><span>Загрузка задач...</span></div>';
+    }
+
     const { data, error } = await db.select('tasks', {
         select: `
             *,

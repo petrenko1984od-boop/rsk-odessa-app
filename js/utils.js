@@ -208,7 +208,7 @@ export function lockButton(button, loadingText = 'Загрузка...') {
     const originalText = button.innerHTML;
     const wasDisabled = button.disabled;
     button.disabled = true;
-    button.innerHTML = `<span class="inline-block animate-spin">⏳</span> ${loadingText}`;
+    button.innerHTML = `<span class="app-spinner" aria-hidden="true"></span> ${loadingText}`;
     return function unlock() {
         button.disabled = wasDisabled;
         button.innerHTML = originalText;

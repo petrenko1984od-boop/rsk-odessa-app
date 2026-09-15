@@ -1,0 +1,178 @@
+:root {
+    --app-green: #15803d;
+    --app-green-dark: #166534;
+    --app-ink: #172033;
+    --app-muted: #64748b;
+    --app-line: #e2e8f0;
+    --app-surface: #ffffff;
+    --app-page: #f1f5f9;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    font-family: 'Manrope', sans-serif;
+    background: var(--app-page);
+}
+
+body {
+    color: var(--app-ink);
+    letter-spacing: 0;
+}
+
+body.font-sans,
+body.font-sans button,
+body.font-sans input,
+body.font-sans select,
+body.font-sans textarea {
+    font-family: 'Manrope', sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+button:not(:disabled),
+summary {
+    -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+    cursor: wait;
+    opacity: 0.72;
+}
+
+summary::-webkit-details-marker {
+    display: none;
+}
+
+summary::after {
+    content: '⌄';
+    flex: 0 0 auto;
+    color: #94a3b8;
+    font-size: 0.9rem;
+    transition: transform 180ms ease;
+}
+
+details[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.app-spinner {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 999px;
+    animation: app-spin 700ms linear infinite;
+    vertical-align: -0.15em;
+}
+
+.app-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    min-height: 7rem;
+    color: var(--app-muted);
+}
+
+.app-loading-card {
+    border: 1px solid var(--app-line);
+    border-radius: 0.75rem;
+    background: var(--app-surface);
+    box-shadow: 0 4px 16px rgb(15 23 42 / 0.04);
+}
+
+@keyframes app-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 640px) {
+    #app-container > header > div {
+        align-items: stretch;
+    }
+
+    #app-container > header > div > div:last-child {
+        justify-content: stretch;
+        width: 100%;
+    }
+
+    #app-container > header button {
+        min-height: 2.65rem;
+    }
+
+    main {
+        padding: 0.75rem !important;
+    }
+
+    #dashboard-content,
+    #tasks-content {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+
+    #dashboard-content details > summary {
+        min-height: 3.25rem;
+        padding: 0.85rem 1rem;
+        font-size: 0.78rem;
+    }
+
+    #dashboard-content details > div:not(.border-t) {
+        padding: 0.9rem 1rem;
+    }
+
+    #dashboard-content .text-2xl {
+        font-size: 1.25rem;
+        line-height: 1.15;
+    }
+
+    #dashboard-content .text-xs {
+        line-height: 1.35;
+    }
+
+    [id$='-modal'] > div {
+        max-height: calc(100vh - 1rem);
+        padding: 1rem;
+        border-radius: 0.9rem;
+    }
+
+    #task-filter-modal > div {
+        padding: 0.85rem;
+    }
+
+    #task-filter-modal table {
+        font-size: 0.72rem;
+    }
+
+    #task-filter-modal th,
+    #task-filter-modal td {
+        padding: 0.65rem 0.55rem;
+    }
+
+    #tasks-content > div:first-child,
+    #tasks-content > div:nth-child(2) {
+        align-items: stretch;
+    }
+
+    #tasks-content > div:first-child button,
+    #tasks-content > div:nth-child(2) button {
+        flex: 1 1 auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

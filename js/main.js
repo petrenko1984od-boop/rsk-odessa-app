@@ -270,7 +270,7 @@ export async function switchMyRequestsTab(tab) {
     const container = document.getElementById('my-requests-content');
     if (!container) return;
 
-    container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Загрузка...</p>';
+    container.innerHTML = '<div class="app-loading text-sm"><span class="app-spinner" aria-hidden="true"></span><span>Загрузка заявок...</span></div>';
 
     const emp = getEmployee();
     if (!emp) return;
@@ -382,7 +382,7 @@ export async function openMyTasks() {
     const container = document.getElementById('my-tasks-content');
     if (!container) return;
 
-    container.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Загрузка...</p>';
+    container.innerHTML = '<div class="app-loading text-sm"><span class="app-spinner" aria-hidden="true"></span><span>Загрузка задач...</span></div>';
 
     const modal = document.getElementById('my-tasks-modal');
     if (modal) modal.classList.remove('hidden');
