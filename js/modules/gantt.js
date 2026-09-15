@@ -519,17 +519,21 @@ export async function downloadGanttPDF() {
         const viewBoxHeight = Number(viewBox?.height) || 0;
         const svgWidth = Number.parseFloat(svgElement.getAttribute('width')) || 0;
         const svgHeight = Number.parseFloat(svgElement.getAttribute('height')) || 0;
-        const svgRect = svgElement.getBoundingClientRect();
-        const svgCoordinateWidth = viewBoxWidth || svgWidth || svgRect.width;
-        const svgScale = svgRect.width > 0 ? svgCoordinateWidth / svgRect.width : 1;
+        const svgCoordinateWidth = viewBoxWidth || svgWidth || svgElement.getBoundingClientRect().width;
         const bars = [...svgElement.querySelectorAll('.bar-wrapper')]
-            .map(bar => bar.getBoundingClientRect())
-            .filter(rect => rect.width > 0 && rect.height > 0);
+            .map(bar => {
+                try {
+                    return bar.getBBox();
+                } catch {
+                    return null;
+                }
+            })
+            .filter(box => box && box.width > 0 && box.height > 0);
         const firstBarX = bars.length
-            ? Math.min(...bars.map(rect => (rect.left - svgRect.left) * svgScale))
+            ? Math.min(...bars.map(box => box.x))
             : 0;
         const lastBarX = bars.length
-            ? Math.max(...bars.map(rect => (rect.right - svgRect.left) * svgScale))
+            ? Math.max(...bars.map(box => box.x + box.width))
             : svgCoordinateWidth;
         const cropPadding = 24;
         const cropX = Math.max(0, firstBarX - cropPadding);
