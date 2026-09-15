@@ -88,6 +88,11 @@ import {
     loadRegistry
 } from './modules/registry.js';
 
+import {
+    loadDashboard,
+    shouldShowEmployeeDashboard
+} from './modules/dashboard.js';
+
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
@@ -142,6 +147,7 @@ export function switchTab(tabId) {
     if (tabId === 'orders') loadOrders();
     if (tabId === 'cash-requests') loadCashRequests();
     if (tabId === 'registry') loadRegistry();
+    if (tabId === 'welcome' && shouldShowEmployeeDashboard()) loadDashboard();
 }
 
 window.switchTab = switchTab;
@@ -497,6 +503,17 @@ async function startApp(user) {
         ]);
     } catch (err) {
         log.error('Ошибка загрузки данных:', err);
+    }
+
+    const dashboard = document.getElementById('dashboard-content');
+    const directorWelcome = document.getElementById('director-welcome');
+    if (shouldShowEmployeeDashboard()) {
+        if (dashboard) dashboard.classList.remove('hidden');
+        if (directorWelcome) directorWelcome.classList.add('hidden');
+        await loadDashboard();
+    } else {
+        if (dashboard) dashboard.classList.add('hidden');
+        if (directorWelcome) directorWelcome.classList.remove('hidden');
     }
 
     switchTab('welcome');
