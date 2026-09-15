@@ -35,19 +35,17 @@ let currentSections = [];
 
 /**
  * Может ли текущий пользователь редактировать график (даты)?
- * Только Админ / Гл. инженер / Инженер ПТО.
  */
 export function canEditGantt() {
     const role = getEmployee()?.position;
     if (!role) return false;
-    return role === 'Администратор' 
-        || role === 'Главный инженер' 
+    return role === 'Администратор'
+        || role === 'Главный инженер'
         || role === 'Инженер ПТО';
 }
 
 /**
  * Может ли текущий пользователь закрывать раздел?
- * Только Прораб, и только для объекта, где он назначен.
  */
 export function canCloseSection(project) {
     const emp = getEmployee();
@@ -60,9 +58,6 @@ export function canCloseSection(project) {
 // ЗАГРУЗКА ДАННЫХ
 // =====================================================================
 
-/**
- * Загружает разделы объекта с датами.
- */
 export async function loadGanttData(projectId) {
     currentProjectId = projectId;
 
@@ -85,16 +80,12 @@ export async function loadGanttData(projectId) {
 // ОТРИСОВКА
 // =====================================================================
 
-/**
- * Рисует диаграмму Ганта для объекта.
- */
 export async function renderGantt(project) {
     const container = document.getElementById('gantt-container');
     if (!container) return;
 
     const sections = await loadGanttData(project.id);
 
-    // Заглушка: нет разделов
     if (sections.length === 0) {
         container.innerHTML = `
             <div class="p-8 bg-gray-50 rounded-xl border text-center space-y-2">
@@ -110,7 +101,6 @@ export async function renderGantt(project) {
 
     const hasDates = sections.some(s => s.planned_start_date && s.planned_end_date);
 
-    // Заглушка: нет дат и нельзя редактировать
     if (!hasDates && !canEditGantt()) {
         container.innerHTML = `
             <div class="p-8 bg-gray-50 rounded-xl border text-center space-y-2">
@@ -124,7 +114,6 @@ export async function renderGantt(project) {
         return;
     }
 
-    // Строим задачи: план + факт (для каждого раздела)
     const tasks = [];
     sections
         .filter(s => s.planned_start_date && s.planned_end_date)
@@ -132,7 +121,6 @@ export async function renderGantt(project) {
             tasks.push(...buildGanttTasks(section));
         });
 
-    // Заглушка: разделы есть, но даты не заданы
     if (tasks.length === 0) {
         if (canEditGantt()) {
             container.innerHTML = `
@@ -158,7 +146,6 @@ export async function renderGantt(project) {
         return;
     }
 
-    // Кнопки управления
     const controlsHtml = canEditGantt()
         ? `<div class="flex justify-end gap-2 mb-3">
                <button onclick="window.openEditDatesModal()" 
@@ -181,7 +168,6 @@ export async function renderGantt(project) {
                </select>
            </div>`;
 
-    // Рендер
     container.innerHTML = `
         <div class="space-y-3">
             ${controlsHtml}
@@ -217,7 +203,8 @@ function buildGanttTasks(section) {
         dependencies: '',
         custom_class: 'gantt-bar-plan',
         _section: section,
-        _type: 'plan'
+        _type: 'plan',
+        _color: '#15803d' // зелёный
     });
 
     // --- 2. Фактическая полоса (только если раздел закрыт) ---
@@ -235,7 +222,8 @@ function buildGanttTasks(section) {
             dependencies: '',
             custom_class: isLate ? 'gantt-bar-fact-late' : 'gantt-bar-fact-ok',
             _section: section,
-            _type: 'fact'
+            _type: 'fact',
+            _color: isLate ? '#ef4444' : '#3b82f6' // красный / синий
         });
     }
 
@@ -286,6 +274,10 @@ function initGanttChart(tasks) {
         });
 
         log.info('✅ Диаграмма Ганта отрисована');
+
+        // 👇 Применяем inline-цвета (гарантированно, независимо от CSS-классов)
+        applyBarColors(tasks);
+
     } catch (err) {
         log.error('Ошибка инициализации Gantt:', err);
         chartContainer.innerHTML = '<p class="text-center text-red-500 py-4 text-sm">Ошибка отрисовки диаграммы</p>';
@@ -293,7 +285,50 @@ function initGanttChart(tasks) {
 }
 
 /**
- * Клик по полосе диаграммы.
+ * Применяет inline-цвета к полосам (обход проблем с CSS-классами в Gantt 0.6.1).
+ */
+function applyBarColors(tasks) {
+    setTimeout(() => {
+        const chartContainer = document.getElementById('gantt-chart');
+        if (!chartContainer) return;
+
+        // Gantt 0.6.1 использует data-id на .bar-wrapper
+        tasks.forEach(task => {
+            if (!task._color) return;
+
+            // Пробуем несколько селекторов — на случай разных версий
+            const selectors = [
+                `.bar-wrapper[data-id="${task.id}"] .bar`,
+                `[data-id="${task.id}"] .bar`,
+                `.bar-wrapper .bar[data-id="${task.id}"]`
+            ];
+
+            for (const sel of selectors) {
+                const bar = chartContainer.querySelector(sel);
+                if (bar) {
+                    bar.setAttribute('fill', task._color);
+                    break;
+                }
+            }
+        });
+
+        // Fallback: если data-id не сработал — пробуем по порядку полос
+        const allWrappers = chartContainer.querySelectorAll('.bar-wrapper');
+        if (allWrappers.length === tasks.length) {
+            allWrappers.forEach((wrapper, i) => {
+                const task = tasks[i];
+                if (!task || !task._color) return;
+                const bar = wrapper.querySelector('.bar');
+                if (bar) bar.setAttribute('fill', task._color);
+            });
+        }
+
+        log.info(`🎨 Применено цветов к полосам: ${tasks.filter(t => t._color).length}`);
+    }, 200);
+}
+
+/**
+ * Клик по полосе.
  */
 function onGanttBarClick(task) {
     if (!task._section) return;
@@ -302,7 +337,6 @@ function onGanttBarClick(task) {
 
 /**
  * Изменение даты через drag-and-drop.
- * Работает только для ПЛАНОВОЙ полосы (id начинается с "plan_") и для редакторов.
  */
 async function onGanttDateChange(task, start, end) {
     if (!canEditGantt()) {
@@ -347,6 +381,16 @@ export function changeGanttView() {
     const mode = document.getElementById('gantt-view-mode')?.value;
     if (currentGantt && mode) {
         currentGantt.change_view_mode(mode);
+
+        // Перекрашиваем после смены режима
+        setTimeout(() => {
+            const chartContainer = document.getElementById('gantt-chart');
+            if (!chartContainer) return;
+            // Задачи были переданы в buildGanttTasks — но здесь их нет.
+            // Поэтому просто перерисуем график:
+            const project = window.__getCurrentProject?.();
+            if (project) renderGantt(project);
+        }, 200);
     }
 }
 
@@ -483,9 +527,6 @@ export async function saveAllDates(event) {
 // ЗАКРЫТИЕ РАЗДЕЛА (прораб)
 // =====================================================================
 
-/**
- * Открывает модалку деталей раздела (клик по полосе).
- */
 export function openSectionDetailFromGantt(section) {
     const emp = getEmployee();
     if (!emp) return;
@@ -551,9 +592,6 @@ export function openSectionDetailFromGantt(section) {
     showModal('section-detail-gantt-modal');
 }
 
-/**
- * Открывает модалку закрытия раздела.
- */
 export function openCloseSectionModal(sectionId) {
     const section = currentSections.find(s => s.id === sectionId);
     if (!section) {
@@ -571,9 +609,6 @@ export function openCloseSectionModal(sectionId) {
     showModal('close-section-modal');
 }
 
-/**
- * Сохранение закрытия раздела.
- */
 export async function confirmCloseSection(event) {
     event.preventDefault();
 
@@ -612,9 +647,6 @@ export async function confirmCloseSection(event) {
     }
 }
 
-/**
- * Снять отметку о закрытии (для редакторов).
- */
 export async function uncloseSection(sectionId) {
     if (!canEditGantt()) {
         toast('Нет прав', 'error');
@@ -646,9 +678,6 @@ export async function uncloseSection(sectionId) {
 // ХЕЛПЕРЫ
 // =====================================================================
 
-/**
- * Возвращает информацию о статусе раздела.
- */
 export function getSectionStatusInfo(section) {
     if (section.actual_end_date) {
         const actual = new Date(section.actual_end_date).getTime();
@@ -676,9 +705,6 @@ export function getSectionStatusInfo(section) {
     return { label: '🔵 В плане', bg: 'bg-blue-100', color: 'text-blue-700' };
 }
 
-/**
- * Формат даты в ISO (YYYY-MM-DD).
- */
 function formatDateISO(date) {
     if (!date) return null;
     const d = date instanceof Date ? date : new Date(date);
