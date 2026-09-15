@@ -199,38 +199,40 @@
                     </div>
 
                     <div id="proj-subtab-info" class="space-y-4"></div>
-<div id="proj-subtab-planfact" class="hidden space-y-4"></div>
-    <!-- СЕКЦИЯ: СМЕТА -->
-    <div class="border-t pt-4 space-y-3">
-        <div class="flex justify-between items-center">
-            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 Смета объекта</h3>
-        </div>
-        <div id="estimate-block"></div>
-    </div>
 
-    <!-- СЕКЦИЯ: ДОП. ФАЙЛЫ -->
-    <div class="border-t pt-4 space-y-3">
-        <div class="flex justify-between items-center flex-wrap gap-2">
-            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📁 Документация по объекту</h3>
-            <button onclick="window.openUploadFileModal('project')" id="upload-file-btn"
-                    class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">
-                📤 Загрузить файл
-            </button>
-        </div>
-        <p class="text-xs text-gray-500">
-            Загружайте документы, чертежи, фото и прочие материалы по объекту. Размер до 50 МБ, любой формат.
-        </p>
-        <div id="proj-files-list" class="space-y-4"></div>
-    </div>
-</div>
-<div id="proj-subtab-schedule" class="hidden space-y-4">
-    <div id="gantt-container">
-        <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
-            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📅 График производства работ</h3>
-            <p class="text-xs text-gray-500">Загрузка...</p>
-        </div>
-    </div>
-</div>
+                    <div id="proj-subtab-planfact" class="hidden space-y-4">
+                        <div class="border-t pt-4 space-y-3">
+                            <div class="flex justify-between items-center">
+                                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 Смета объекта</h3>
+                            </div>
+                            <div id="estimate-block"></div>
+                        </div>
+                    </div>
+
+                    <div id="proj-subtab-files" class="hidden space-y-4">
+                        <div class="border-t pt-4 space-y-3">
+                            <div class="flex justify-between items-center flex-wrap gap-2">
+                                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📁 Документация по объекту</h3>
+                                <button onclick="window.openUploadFileModal('project')" id="upload-file-btn"
+                                        class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">
+                                    📤 Загрузить файл
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500">
+                                Загружайте документы, чертежи, фото и прочие материалы по объекту. Размер до 50 МБ, любой формат.
+                            </p>
+                            <div id="proj-files-list" class="space-y-4"></div>
+                        </div>
+                    </div>
+
+                    <div id="proj-subtab-schedule" class="hidden space-y-4">
+                        <div id="gantt-container">
+                            <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
+                                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📅 График производства работ</h3>
+                                <p class="text-xs text-gray-500">Загрузка...</p>
+                            </div>
+                        </div>
+                    </div>
 </div>
 </section>
 
