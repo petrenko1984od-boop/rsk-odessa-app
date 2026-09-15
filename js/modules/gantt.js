@@ -371,11 +371,15 @@ async function onGanttDateChange(task, start, end) {
 /**
  * Смена режима отображения.
  */
-export function changeGanttView() {
+export async function changeGanttView() {
     const mode = document.getElementById('gantt-view-mode')?.value;
-    if (currentGantt && mode) {
-        currentViewMode = mode;
-        currentGantt.change_view_mode(mode);
+    if (!mode) return;
+
+    currentViewMode = mode;
+
+    const project = window.__getCurrentProject?.();
+    if (project) {
+        await renderGantt(project);
     }
 }
 
