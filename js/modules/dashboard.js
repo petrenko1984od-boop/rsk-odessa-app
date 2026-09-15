@@ -274,12 +274,13 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                 <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
             </div>
 
-            <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
-                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
-                    <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <h3 class="text-sm font-bold text-gray-800">💰 Подотчёт сотрудников</h3>
-                        <span class="text-xs text-gray-400">общий остаток</span>
-                    </div>
+            <div class="flex min-w-0 flex-col gap-3">
+                <details open class="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-5 py-4 font-bold text-gray-800 [&::-webkit-details-marker]:hidden">
+                        <span>💰 Подотчёт сотрудников</span>
+                        <span class="text-xs font-normal text-gray-400">общий остаток ·⌄</span>
+                    </summary>
+                    <div class="border-t border-gray-200 p-5">
                     <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
                         ${renderMetric('💵', 'Общий баланс', formatMoney(totalBalance), 'все сотрудники', totalBalance >= 0 ? 'emerald' : 'amber')}
                         ${renderMetric('📉', 'С отрицательным балансом', negative.length, 'должники по подотчёту', 'red')}
@@ -295,31 +296,36 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                             <div class="space-y-2">${positiveList}</div>
                         </div>
                     </div>
-                </div>
-
-                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
-                    <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <div class="min-w-0">
-                            <h3 class="text-sm font-bold text-gray-800">📋 Задачи</h3>
-                            <span class="text-xs text-gray-400">по плану</span>
-                        </div>
-                        ${canCreateTask ? `
-                            <button type="button" onclick="window.openNewTaskForm()"
-                                    class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">
-                                ➕ Поставить задачу
-                            </button>
-                        ` : ''}
                     </div>
-                    <div class="mt-3">${renderTaskSummary(tasks)}</div>
-                </div>
-            </div>
+                </details>
 
-            <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
-                <div class="flex items-center justify-between gap-2 border-b pb-3">
-                    <h3 class="text-sm font-bold text-gray-800">💳 Задолженность по материалам</h3>
-                    <span class="text-xs text-gray-400">неоплаченные позиции</span>
-                </div>
-                <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                <details open class="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-5 py-4 font-bold text-gray-800 [&::-webkit-details-marker]:hidden">
+                        <span class="min-w-0">
+                            <span>📋 Задачи</span>
+                            <span class="ml-2 text-xs font-normal text-gray-400">по плану ·⌄</span>
+                        </span>
+                    </summary>
+                    <div class="border-t border-gray-200 p-5">
+                        ${canCreateTask ? `
+                            <div class="mb-3 flex justify-end">
+                                <button type="button" onclick="window.openNewTaskForm()"
+                                        class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">
+                                    ➕ Поставить задачу
+                                </button>
+                            </div>
+                        ` : ''}
+                        <div>${renderTaskSummary(tasks)}</div>
+                    </div>
+                </details>
+
+                <details class="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-5 py-4 font-bold text-gray-800 [&::-webkit-details-marker]:hidden">
+                        <span>💳 Задолженность по материалам</span>
+                        <span class="text-xs font-normal text-gray-400">неоплаченные позиции ·⌄</span>
+                    </summary>
+                    <div class="border-t border-gray-200 p-5">
+                    <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                     ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'по закрытым / архивным заявкам', unpaidDebt > 0 ? 'amber' : 'emerald')}
                     ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные строки', unpaidItemsCount > 0 ? 'red' : 'emerald')}
                 </div>
@@ -334,14 +340,16 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                         </table>
                     </div>
                 </div>
-            </div>
+                    </div>
+                </details>
 
-            <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
-                <div class="flex items-center justify-between gap-2 border-b pb-3">
-                    <h3 class="text-sm font-bold text-gray-800">📊 Рейтинг объектов по перерасходу материалов</h3>
-                    <span class="text-xs text-gray-400">сверху — больше перерасход</span>
-                </div>
-                <div class="mt-3 overflow-x-auto">
+                <details class="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-5 py-4 font-bold text-gray-800 [&::-webkit-details-marker]:hidden">
+                        <span>📊 Рейтинг объектов по перерасходу материалов</span>
+                        <span class="text-xs font-normal text-gray-400">сверху — больше перерасход ·⌄</span>
+                    </summary>
+                    <div class="border-t border-gray-200 p-5">
+                <div class="overflow-x-auto">
                     <table class="w-full min-w-[520px] text-sm">
                         <thead class="border-b text-left text-[11px] uppercase text-gray-500">
                             <tr>
@@ -355,6 +363,8 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                         <tbody class="divide-y">${overrunRows}</tbody>
                     </table>
                 </div>
+                    </div>
+                </details>
             </div>
         </div>
     `;
