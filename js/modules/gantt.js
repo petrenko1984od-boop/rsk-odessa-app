@@ -419,6 +419,8 @@ export async function downloadGanttPDF() {
         wrapper.style.left = '-9999px';
         wrapper.style.top = '0';
         wrapper.style.width = '1600px';
+        wrapper.style.minWidth = '1600px';
+        wrapper.style.overflow = 'visible';
         wrapper.style.padding = '40px';
         wrapper.style.background = '#ffffff';
         wrapper.style.fontFamily = 'system-ui, -apple-system, sans-serif';
@@ -466,6 +468,30 @@ export async function downloadGanttPDF() {
 
         const svgClone = svgElement.cloneNode(true);
         const pdfContent = wrapper.querySelector('#pdf-gantt-content');
+
+        // График на экране находится в горизонтальном scroll-контейнере.
+        // Для PDF берём полный размер SVG, иначе html2canvas захватит только видимую часть.
+        const viewBox = svgElement.viewBox?.baseVal;
+        const viewBoxWidth = Number(viewBox?.width) || 0;
+        const viewBoxHeight = Number(viewBox?.height) || 0;
+        const svgWidth = Number.parseFloat(svgElement.getAttribute('width')) || 0;
+        const svgHeight = Number.parseFloat(svgElement.getAttribute('height')) || 0;
+        const fullWidth = Math.max(
+            1600,
+            chartContainer.scrollWidth,
+            viewBoxWidth,
+            svgWidth
+        );
+        const fullHeight = viewBoxHeight || svgHeight || svgElement.getBoundingClientRect().height;
+
+        wrapper.style.width = `${fullWidth + 80}px`;
+        wrapper.style.minWidth = `${fullWidth + 80}px`;
+        svgClone.setAttribute('width', String(fullWidth));
+        if (fullHeight > 0) svgClone.setAttribute('height', String(fullHeight));
+        svgClone.style.width = `${fullWidth}px`;
+        svgClone.style.maxWidth = 'none';
+        svgClone.style.height = fullHeight > 0 ? `${fullHeight}px` : 'auto';
+        svgClone.style.display = 'block';
         pdfContent.appendChild(svgClone);
 
         document.body.appendChild(wrapper);
