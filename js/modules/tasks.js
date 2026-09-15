@@ -143,13 +143,31 @@ function getFilteredTasks() {
         );
     }
 
+    if (currentFilter === 'overdue') {
+        return tasksCache.filter(t => {
+            if (!t.deadline || t.status === 'done' || t.status === 'cancelled') return false;
+            const deadline = new Date(`${t.deadline}T23:59:59`);
+            return !Number.isNaN(deadline.getTime()) && deadline < new Date();
+        });
+    }
+
+    if (currentFilter === 'done_30') {
+        return tasksCache.filter(t => {
+            if (t.status !== 'done' || !t.completed_at) return false;
+            const completed = new Date(t.completed_at);
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - 30);
+            return !Number.isNaN(completed.getTime()) && completed >= cutoff;
+        });
+    }
+
     return tasksCache.filter(t => t.status === currentFilter);
 }
 
 export function switchTasksTab(filter) {
     currentFilter = filter;
 
-    const filters = ['active', 'pending', 'in_progress', 'done', 'all'];
+    const filters = ['active', 'pending', 'in_progress', 'done', 'all', 'overdue', 'done_30'];
     filters.forEach(f => {
         const btn = document.getElementById(`tasks-filter-${f}`);
         if (!btn) return;

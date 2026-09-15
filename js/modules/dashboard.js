@@ -33,22 +33,32 @@ function operationLabel(operation) {
     return labels[operation.operation_type] || operation.operation_type || 'Операция';
 }
 
-function renderMetric(icon, label, value, detail, tone = 'emerald') {
+function renderMetric(icon, label, value, detail, tone = 'emerald', onClick = null) {
     const tones = {
         emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
         blue: 'border-blue-200 bg-blue-50 text-blue-800',
         amber: 'border-amber-200 bg-amber-50 text-amber-800',
         red: 'border-red-200 bg-red-50 text-red-800'
     };
-    return `
-        <div class="rounded-xl border p-4 ${tones[tone] || tones.emerald}">
+    const content = `
+        <div class="flex min-h-[104px] w-full flex-col justify-between rounded-xl border p-4 text-left ${tones[tone] || tones.emerald}">
             <div class="flex items-start justify-between gap-2">
                 <span class="text-2xl" aria-hidden="true">${icon}</span>
                 <span class="text-2xl font-bold leading-none">${value}</span>
             </div>
-            <p class="mt-3 text-xs font-bold uppercase tracking-wide">${label}</p>
-            <p class="mt-1 text-[11px] opacity-75">${detail}</p>
+            <div class="mt-3">
+                <p class="text-xs font-bold uppercase tracking-wide">${label}</p>
+                <p class="mt-1 text-[11px] opacity-75">${detail}</p>
+            </div>
         </div>
+    `;
+
+    if (!onClick) return content;
+
+    return `
+        <button type="button" onclick="${onClick}" class="w-full text-left focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
+            ${content}
+        </button>
     `;
 }
 
@@ -129,33 +139,6 @@ function renderEmployeeBalances(balances, employees) {
     `;
 }
 
-function renderPeopleSummary(employees) {
-    const all = employees || [];
-    const active = all.filter(emp => !emp.status || emp.status === 'active').length;
-    const blocked = all.filter(emp => emp.status === 'blocked').length;
-    const byRole = [...new Set(all.map(emp => emp.position).filter(Boolean))].sort().map(position => {
-        const count = all.filter(emp => emp.position === position).length;
-        return `
-            <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
-                <span class="font-medium text-gray-700">${escapeHtml(position)}</span>
-                <span class="font-bold text-gray-800">${count}</span>
-            </div>
-        `;
-    }).join('');
-
-    return `
-        <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-            ${renderMetric('👥', 'Всего', all.length, 'Все сотрудники', 'emerald')}
-            ${renderMetric('✅', 'Активных', active, 'Работают сейчас', 'blue')}
-            ${renderMetric('🚫', 'Заблокированных', blocked, 'Не активны', 'amber')}
-        </div>
-        <div class="mt-4">
-            <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">Разбивка по должностям</p>
-            <div class="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">${byRole || '<p class="text-sm text-gray-500">Нет данных.</p>'}</div>
-        </div>
-    `;
-}
-
 function renderTaskSummary(tasks) {
     const active = tasks.filter(task => ['pending', 'in_progress'].includes(task.status)).length;
     const overdue = tasks.filter(task => isOverdueTask(task)).length;
@@ -170,9 +153,9 @@ function renderTaskSummary(tasks) {
 
     return `
         <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-            ${renderMetric('📌', 'Активные', active, 'pending + in_progress', 'blue')}
-            ${renderMetric('⏰', 'Просроченные', overdue, 'дедлайн уже прошёл', overdue ? 'red' : 'emerald')}
-            ${renderMetric('✅', 'Выполнено за 30 дней', done30, 'статус done', 'emerald')}
+            ${renderMetric('📌', 'Активные', active, 'pending + in_progress', 'blue', "switchTab('tasks'); switchTasksTab('active');")}
+            ${renderMetric('⏰', 'Просроченные', overdue, 'дедлайн уже прошёл', overdue ? 'red' : 'emerald', "switchTab('tasks'); switchTasksTab('overdue');")}
+            ${renderMetric('✅', 'Выполнено за 30 дней', done30, 'статус done', 'emerald', "switchTab('tasks'); switchTasksTab('done_30');")}
         </div>
     `;
 }
@@ -321,35 +304,25 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                 </div>
             </div>
 
-            <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
-                    <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <h3 class="text-sm font-bold text-gray-800">💳 Задолженность по материалам</h3>
-                        <span class="text-xs text-gray-400">неоплаченные позиции</span>
-                    </div>
-                    <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-                        ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'по закрытым / архивным заявкам', unpaidDebt > 0 ? 'amber' : 'emerald')}
-                        ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные строки', unpaidItemsCount > 0 ? 'red' : 'emerald')}
-                    </div>
-                    <div class="mt-4">
-                        <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">Рейтинг не оплаченных материалов по поставщикам</p>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-sm">
-                                <thead class="border-b text-left text-[11px] uppercase text-gray-500">
-                                    <tr><th class="px-2 py-2">Поставщик</th><th class="px-2 py-2 text-right">Сумма</th></tr>
-                                </thead>
-                                <tbody class="divide-y">${supplierDebtRows}</tbody>
-                            </table>
-                        </div>
-                    </div>
+            <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
+                <div class="flex items-center justify-between gap-2 border-b pb-3">
+                    <h3 class="text-sm font-bold text-gray-800">💳 Задолженность по материалам</h3>
+                    <span class="text-xs text-gray-400">неоплаченные позиции</span>
                 </div>
-
-                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
-                    <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <h3 class="text-sm font-bold text-gray-800">👥 Сотрудники</h3>
-                        <span class="text-xs text-gray-400">по статусам</span>
+                <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                    ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'по закрытым / архивным заявкам', unpaidDebt > 0 ? 'amber' : 'emerald')}
+                    ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные строки', unpaidItemsCount > 0 ? 'red' : 'emerald')}
+                </div>
+                <div class="mt-4">
+                    <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">Рейтинг не оплаченных материалов по поставщикам</p>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="border-b text-left text-[11px] uppercase text-gray-500">
+                                <tr><th class="px-2 py-2">Поставщик</th><th class="px-2 py-2 text-right">Сумма</th></tr>
+                            </thead>
+                            <tbody class="divide-y">${supplierDebtRows}</tbody>
+                        </table>
                     </div>
-                    <div class="mt-3">${renderPeopleSummary(employees)}</div>
                 </div>
             </div>
 
