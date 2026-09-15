@@ -277,6 +277,20 @@ export async function openTaskDetail(id) {
         `).join('')
         : '<p class="text-xs text-gray-400 italic text-center py-2">Комментариев нет</p>';
 
+    const completionComment = Array.isArray(task.history)
+        ? [...task.history].reverse().find(item => item.action === 'Задача выполнена' && item.comment)
+        : null;
+
+    const completionBlock = completionComment && completionComment.comment
+        ? `
+            <div class="bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-green-700">✅ Результат выполнения</p>
+                <p class="text-sm text-gray-700 whitespace-pre-line">${escapeHtml(completionComment.comment)}</p>
+                <p class="text-[10px] text-gray-500">👤 ${escapeHtml(completionComment.author || '—')} · 📅 ${formatDate(completionComment.date)}</p>
+            </div>
+        `
+        : '';
+
     // Фотоотчёт
     const photoHtml = task.photo_path
         ? `<div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-center justify-between">
@@ -317,6 +331,8 @@ export async function openTaskDetail(id) {
         </div>
 
         ${photoHtml}
+
+        ${completionBlock}
 
         <div class="border-t pt-3 space-y-2">
             <p class="text-xs font-bold text-gray-500 uppercase tracking-wider">💬 Комментарии (${comments.length}):</p>
@@ -739,6 +755,23 @@ export async function completeTask(event) {
     submitBtn.textContent = 'Сохраняем...';
 
     const comment = document.getElementById('complete-task-comment').value.trim();
+    if (!comment) {
+        toast('Перед закрытием задачи обязательно напиши комментарий', 'error');
+
+        const commentInput = document.getElementById('complete-task-comment');
+        if (commentInput) {
+            commentInput.focus();
+            commentInput.classList.add('border-red-500', 'ring-2', 'ring-red-200');
+            setTimeout(() => {
+                commentInput.classList.remove('border-red-500', 'ring-2', 'ring-red-200');
+            }, 1800);
+        }
+
+        submitBtn.disabled = false;
+        submitBtn.textContent = '✅ Отметить выполненной';
+        return;
+    }
+
     const photoFile = document.getElementById('complete-task-photo')?.files[0] || null;
 
     // Загрузка фотоотчёта (если есть)
@@ -759,7 +792,15 @@ export async function completeTask(event) {
         }
     }
 
-    // Обновляем историю
+    // Добавляем комментарий в список комментариев и в историю
+    const comments = Array.isArray(task.comments) ? [...task.comments] : [];
+    comments.push({
+        text: comment,
+        author: emp.name,
+        author_id: emp.id,
+        date: new Date().toISOString()
+    });
+
     const history = Array.isArray(task.history) ? task.history : [];
     history.push({
         action: 'Задача выполнена',
@@ -773,6 +814,7 @@ export async function completeTask(event) {
         status: 'done',
         photo_path: photoPath,
         completed_at: new Date().toISOString(),
+        comments,
         history
     }, { id: taskId });
 
