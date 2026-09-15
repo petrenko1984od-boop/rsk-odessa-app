@@ -10,8 +10,9 @@
 // Возможности:
 //   - Админ / Гл. инженер / Инженер ПТО: задают и двигают даты.
 //   - Прораб: смотрит свои объекты + может закрывать выполненные разделы.
+//   - Экспорт диаграммы в PDF.
 //
-// Библиотека: Frappe Gantt 0.6.1 (CDN, open-source, MIT-лицензия).
+// Библиотеки: Frappe Gantt 0.6.1, html2canvas, jsPDF.
 // =====================================================================
 
 import { db } from '../database.js';
@@ -141,10 +142,14 @@ export async function renderGantt(project) {
     }
 
     const controlsHtml = canEditGantt()
-        ? `<div class="flex justify-end gap-2 mb-3">
+        ? `<div class="flex flex-wrap justify-end gap-2 mb-3">
                <button onclick="window.openEditDatesModal()" 
                        class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow">
                    ✏️ Редактировать даты
+               </button>
+               <button onclick="window.downloadGanttPDF()" 
+                       class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow">
+                   📥 Скачать PDF
                </button>
                <select id="gantt-view-mode" onchange="window.changeGanttView()"
                        class="border rounded-lg px-3 py-1.5 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
@@ -153,7 +158,11 @@ export async function renderGantt(project) {
                    <option value="Month">📅 Месяц</option>
                </select>
            </div>`
-        : `<div class="flex justify-end mb-3">
+        : `<div class="flex flex-wrap justify-end gap-2 mb-3">
+               <button onclick="window.downloadGanttPDF()" 
+                       class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow">
+                   📥 Скачать PDF
+               </button>
                <select id="gantt-view-mode" onchange="window.changeGanttView()"
                        class="border rounded-lg px-3 py-1.5 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                    <option value="Day">📆 День</option>
@@ -296,14 +305,12 @@ function applyBarColors(tasks) {
             return;
         }
 
-        // Применяем цвета по порядку: task[0] → bar[0], task[1] → bar[1], ...
         allWrappers.forEach((wrapper, i) => {
             const task = tasks[i];
             if (!task || !task._color) return;
 
             const bar = wrapper.querySelector('.bar');
             if (bar) {
-                // Основной цвет полосы
                 bar.setAttribute('fill', task._color);
                 bar.style.fill = task._color;
             }
@@ -330,7 +337,6 @@ async function onGanttDateChange(task, start, end) {
         return;
     }
 
-    // Редактировать можно только плановую полосу
     if (!task.id.startsWith('plan_')) {
         return;
     }
@@ -368,11 +374,157 @@ export function changeGanttView() {
     if (currentGantt && mode) {
         currentGantt.change_view_mode(mode);
 
-        // После смены режима перерисовываем — чтобы цвета применились заново
         setTimeout(() => {
             const project = window.__getCurrentProject?.();
             if (project) renderGantt(project);
         }, 200);
+    }
+}
+
+// =====================================================================
+// СКАЧИВАНИЕ ГРАФИКА В PDF
+// =====================================================================
+
+/**
+ * Генерирует PDF с диаграммой Ганта и скачивает его.
+ */
+export async function downloadGanttPDF() {
+    const project = window.__getCurrentProject?.();
+    if (!project) {
+        toast('Не удалось определить объект', 'error');
+        return;
+    }
+
+    const chartContainer = document.getElementById('gantt-chart');
+    if (!chartContainer || chartContainer.innerHTML.trim() === '') {
+        toast('Диаграмма не отрисована', 'warning');
+        return;
+    }
+
+    toast('Готовим PDF...', 'info');
+
+    // Проверка библиотек
+    if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
+        toast('Библиотеки PDF не загружены', 'error');
+        log.error('html2canvas или jsPDF не найдены');
+        return;
+    }
+
+    try {
+        // ----- 1. Временный контейнер с заголовком, диаграммой и легендой -----
+        const wrapper = document.createElement('div');
+        wrapper.style.position = 'fixed';
+        wrapper.style.left = '-9999px';
+        wrapper.style.top = '0';
+        wrapper.style.width = '1600px';
+        wrapper.style.padding = '40px';
+        wrapper.style.background = '#ffffff';
+        wrapper.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+        wrapper.style.color = '#111827';
+
+        const dateStr = new Date().toLocaleDateString('ru-RU');
+
+        wrapper.innerHTML = `
+            <div style="margin-bottom: 25px; padding-bottom: 20px; border-bottom: 3px solid #15803d;">
+                <div style="font-size: 28px; font-weight: 700; color: #166534; margin-bottom: 8px;">
+                    📅 График работ
+                </div>
+                <div style="font-size: 18px; color: #374151;">
+                    Объект: <strong>${escapeHtml(project.name)}</strong>
+                </div>
+                <div style="font-size: 13px; color: #6b7280; margin-top: 6px;">
+                    Дата формирования: ${dateStr}
+                </div>
+            </div>
+
+            <div id="pdf-gantt-content" style="background: #fff;"></div>
+
+            <div style="margin-top: 25px; padding-top: 20px; border-top: 2px solid #e5e7eb; display: flex; gap: 30px; font-size: 13px; color: #374151;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="display: inline-block; width: 16px; height: 16px; border-radius: 4px; background: #15803d;"></span>
+                    <span>📋 План</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="display: inline-block; width: 16px; height: 16px; border-radius: 4px; background: #3b82f6;"></span>
+                    <span>✅ Факт (в срок)</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="display: inline-block; width: 16px; height: 16px; border-radius: 4px; background: #ef4444;"></span>
+                    <span>⚠️ Факт (с опозданием)</span>
+                </div>
+            </div>
+        `;
+
+        // Копируем SVG диаграммы во временный контейнер
+        const svgElement = chartContainer.querySelector('svg');
+        if (!svgElement) {
+            toast('SVG диаграммы не найден', 'error');
+            return;
+        }
+
+        const svgClone = svgElement.cloneNode(true);
+        const pdfContent = wrapper.querySelector('#pdf-gantt-content');
+        pdfContent.appendChild(svgClone);
+
+        document.body.appendChild(wrapper);
+
+        // ----- 2. Ждём отрисовку -----
+        await new Promise(resolve => setTimeout(resolve, 400));
+
+        // ----- 3. Рендерим через html2canvas -----
+        const canvas = await html2canvas(wrapper, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            windowWidth: 1600
+        });
+
+        // ----- 4. Создаём PDF -----
+        const { jsPDF } = window.jspdf;
+
+        const pdf = new jsPDF({
+            orientation: 'landscape',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+
+        const imgWidth = pageWidth - 20;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        const imgData = canvas.toDataURL('image/png');
+
+        let heightLeft = imgHeight;
+        let position = 10;
+
+        pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+        heightLeft -= (pageHeight - 20);
+
+        while (heightLeft > 0) {
+            position = heightLeft - imgHeight + 10;
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+            heightLeft -= (pageHeight - 20);
+        }
+
+        // ----- 5. Скачиваем -----
+        const safeName = project.name.replace(/[^a-zA-Z0-9а-яА-Я\s]/g, '').trim().replace(/\s+/g, '_');
+        const fileName = `График_${safeName}_${new Date().toISOString().split('T')[0]}.pdf`;
+
+        pdf.save(fileName);
+
+        // ----- 6. Убираем временный контейнер -----
+        document.body.removeChild(wrapper);
+
+        log.info('✅ PDF сохранён:', fileName);
+        toast('PDF скачан', 'success');
+
+    } catch (err) {
+        log.error('Ошибка генерации PDF:', err);
+        toast('Ошибка генерации PDF: ' + err.message, 'error');
     }
 }
 
@@ -711,3 +863,4 @@ window.changeGanttView = changeGanttView;
 window.openEditDatesModal = openEditDatesModal;
 window.openCloseSectionModal = openCloseSectionModal;
 window.uncloseSection = uncloseSection;
+window.downloadGanttPDF = downloadGanttPDF;
