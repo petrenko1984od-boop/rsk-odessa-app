@@ -183,8 +183,10 @@ export function switchTasksTab(filter) {
     renderTasks();
 }
 
-export function openTaskFilterModal(filter) {
+export async function openTaskFilterModal(filter) {
     currentFilter = filter;
+
+    await loadTasks();
 
     const labels = {
         active: 'Активные задачи',
@@ -215,8 +217,8 @@ export function openTaskFilterModal(filter) {
     }
 
     container.innerHTML = `
-        <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-            <table class="min-w-full border-collapse text-sm text-gray-800">
+        <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+            <table class="min-w-[920px] w-full border-collapse text-sm text-gray-800">
                 <thead class="bg-gray-50 text-left text-[11px] font-bold uppercase tracking-wide text-gray-600">
                     <tr>
                         <th class="border-b border-gray-200 px-3 py-2">Заголовок</th>
@@ -239,14 +241,14 @@ export function openTaskFilterModal(filter) {
                         return `
                             <tr onclick="window.openTaskDetail(${task.id}); window.hideModal('task-filter-modal');"
                                 class="cursor-pointer border-b border-gray-200 last:border-0 transition hover:bg-emerald-50/60">
-                                <td class="px-3 py-2 align-top font-semibold text-gray-800">${escapeHtml(title)}</td>
-                                <td class="px-3 py-2 align-top text-gray-600">${escapeHtml(projectName)}</td>
-                                <td class="px-3 py-2 align-top text-gray-600">${escapeHtml(assigneeName)}</td>
-                                <td class="px-3 py-2 align-top text-gray-600">${deadline}</td>
-                                <td class="px-3 py-2 align-top">
+                                <td class="w-[28%] px-3 py-3 align-top font-semibold text-gray-800">${escapeHtml(title)}</td>
+                                <td class="w-[18%] px-3 py-3 align-top text-gray-600">${escapeHtml(projectName)}</td>
+                                <td class="w-[18%] px-3 py-3 align-top text-gray-600">${escapeHtml(assigneeName)}</td>
+                                <td class="w-[14%] px-3 py-3 align-top text-gray-600">${deadline}</td>
+                                <td class="w-[12%] px-3 py-3 align-top">
                                     <span class="inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${statusInfo.bg} ${statusInfo.color}">${statusInfo.label}</span>
                                 </td>
-                                <td class="px-3 py-2 align-top text-gray-600">${escapeHtml(authorName)}</td>
+                                <td class="w-[18%] px-3 py-3 align-top text-gray-600">${escapeHtml(authorName)}</td>
                             </tr>
                         `;
                     }).join('')}
@@ -310,7 +312,7 @@ function renderTaskCard(task) {
 
     return `
         <button onclick="window.openTaskDetail(${task.id})"
-            class="w-full text-left rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-3 border-l-4 ${isOverdue ? 'border-red-500' : statusInfo.border} hover:bg-emerald-50/50 transition cursor-pointer group">
+            class="flex min-h-[184px] w-full cursor-pointer flex-col gap-3 rounded-xl border border-gray-200 border-l-4 bg-white p-4 text-left shadow-sm transition hover:bg-emerald-50/50 group ${isOverdue ? 'border-l-red-500' : statusInfo.border.replace('border-', 'border-l-')} ">
             <div class="flex justify-between items-start gap-2 w-full">
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs font-bold px-2 py-0.5 rounded ${priorityInfo.bg} ${priorityInfo.color}">${priorityInfo.label}</span>
@@ -408,13 +410,13 @@ export async function openTaskDetail(id) {
         <h3 class="text-lg font-bold text-[#166534]">${escapeHtml(task.title || task.text || '—')}</h3>
 
         ${task.description ? `
-            <div class="bg-gray-50 p-3 rounded-lg border text-xs">
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
                 <p class="font-bold text-gray-500 uppercase tracking-wider mb-1">📝 Описание:</p>
                 <p class="text-gray-700 whitespace-pre-line">${escapeHtml(task.description)}</p>
             </div>
         ` : ''}
 
-        <div class="bg-gray-50 p-3 rounded-lg border space-y-2 text-xs">
+        <div class="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
             <p><strong>🏗 Объект:</strong> <span class="font-semibold text-gray-800">${escapeHtml(projectName)}</span></p>
             ${task.section_id ? `<p><strong>📂 Раздел:</strong> <span class="font-semibold text-gray-800">${escapeHtml(sectionName)}</span></p>` : ''}
             <p><strong>👤 Исполнитель:</strong> ${escapeHtml(assigneeName)}</p>

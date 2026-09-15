@@ -254,7 +254,7 @@
                     <button onclick="openNewTaskForm()" id="create-task-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать задачу</button>
                 </div>
 
-                <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
+                <div class="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
                     <button onclick="switchTasksTab('active')" id="tasks-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
                     <button onclick="switchTasksTab('pending')" id="tasks-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Новые</button>
                     <button onclick="switchTasksTab('in_progress')" id="tasks-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔵 В работе</button>
@@ -262,7 +262,7 @@
                     <button onclick="switchTasksTab('all')" id="tasks-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
                 </div>
 
-                <div id="tasks-container" class="space-y-3"></div>
+                <div id="tasks-container" class="grid grid-cols-1 gap-3"></div>
                 </div>
             </section>
 
@@ -544,7 +544,7 @@
 
     <!-- НОВАЯ ЗАДАЧА -->
     <div id="new-task-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+        <div class="w-full max-w-2xl space-y-4 overflow-y-auto rounded-xl border border-gray-200 bg-white p-6 shadow-lg max-h-[95vh]">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📋 Новая задача</h3>
                 <button onclick="hideModal('new-task-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
