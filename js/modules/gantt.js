@@ -341,7 +341,7 @@ export function changeGanttView() {
 /**
  * Открывает модалку массового редактирования дат.
  */
-export function openEditDatesModal() {
+export async function openEditDatesModal() {
     if (!canEditGantt()) {
         toast('Нет прав на редактирование графика', 'error');
         return;
@@ -350,34 +350,63 @@ export function openEditDatesModal() {
     const container = document.getElementById('edit-dates-content');
     if (!container) return;
 
-    if (currentSections.length === 0) {
-        container.innerHTML = '<p class="text-center text-gray-400 py-3 text-sm">Нет разделов</p>';
-        showModal('edit-dates-modal');
+    // ВСЕГДА загружаем разделы заново — чтобы не было проблем с кэшем от другого объекта
+    const project = window.__getCurrentProject?.();
+    if (!project) {
+        toast('Не удалось определить объект', 'error');
         return;
     }
 
-    container.innerHTML = currentSections.map(s => `
+    log.info(`Открываем редактор дат для объекта #${project.id} (${project.name})`);
+
+    // Показать индикатор загрузки
+    container.innerHTML = '<p class="text-center text-gray-400 py-3 text-sm">Загрузка разделов...</p>';
+    showModal('edit-dates-modal');
+
+    // Загружаем разделы именно этого объекта
+    const { data: sections, error } = await db.select('sections', {
+        filters: { project_id: project.id },
+        orderBy: { column: 'id', asc: true }
+    });
+
+    if (error) {
+        container.innerHTML = `<p class="text-center text-red-500 py-3 text-sm">Ошибка загрузки: ${error.message}</p>`;
+        return;
+    }
+
+    if (!sections || sections.length === 0) {
+        container.innerHTML = '<p class="text-center text-gray-400 py-3 text-sm">В этом объекте нет разделов. Загрузите смету на вкладке «📁 Файлы».</p>';
+        return;
+    }
+
+    log.info(`Загружено ${sections.length} разделов для объекта #${project.id}`);
+
+    // Обновляем кэш
+    currentSections = sections;
+
+    // Рендерим форму
+    container.innerHTML = sections.map(s => `
         <div class="bg-gray-50 border rounded-lg p-3 space-y-2" data-section-id="${s.id}">
             <p class="font-semibold text-gray-800 text-xs">📌 ${escapeHtml(s.name)}</p>
             <div class="grid grid-cols-2 gap-2">
                 <div>
                     <label class="block text-[10px] font-semibold text-gray-500 mb-1">Начало:</label>
-                    <input type="date" 
+                    <input type="date"
                            class="section-start w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
                            value="${s.planned_start_date || ''}">
                 </div>
                 <div>
                     <label class="block text-[10px] font-semibold text-gray-500 mb-1">Окончание:</label>
-                    <input type="date" 
+                    <input type="date"
                            class="section-end w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
                            value="${s.planned_end_date || ''}">
                 </div>
             </div>
         </div>
     `).join('');
-
-    showModal('edit-dates-modal');
 }
+
+
 
 /**
  * Сохраняет все даты из модалки.
