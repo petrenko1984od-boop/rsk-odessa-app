@@ -26,15 +26,17 @@
         .gantt .lower-text, .gantt .upper-text { fill: #374151; font-size: 11px; }
         .gantt .arrow { stroke: #9ca3af; }
 
-        /* Цвета полос по статусу */
-        .gantt-bar-done .bar { fill: #10b981 !important; }
-        .gantt-bar-done .bar-progress { fill: #059669 !important; }
-        .gantt-bar-overdue .bar { fill: #ef4444 !important; }
-        .gantt-bar-overdue .bar-progress { fill: #dc2626 !important; }
-        .gantt-bar-overdue_done .bar { fill: #f59e0b !important; }
-        .gantt-bar-overdue_done .bar-progress { fill: #d97706 !important; }
-        .gantt-bar-plan .bar { fill: #15803d; }
-        .gantt-bar-plan .bar-progress { fill: #16a34a; }
+       /* 📋 Плановая полоса — ВСЕГДА зелёная */
+.gantt-bar-plan .bar { fill: #15803d !important; }
+.gantt-bar-plan .bar-progress { fill: #16a34a !important; }
+
+/* ✅ Фактическая полоса — синяя (выполнено в срок или раньше) */
+.gantt-bar-fact-ok .bar { fill: #3b82f6 !important; }
+.gantt-bar-fact-ok .bar-progress { fill: #2563eb !important; }
+
+/* ⚠️ Фактическая полоса — красная (выполнено ПОЗЖЕ плана) */
+.gantt-bar-fact-late .bar { fill: #ef4444 !important; }
+.gantt-bar-fact-late .bar-progress { fill: #dc2626 !important; }
     </style>
 </head>
 <body class="bg-gray-100 font-sans min-h-screen">

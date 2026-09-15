@@ -3,11 +3,15 @@
 // =====================================================================
 // Показывает разделы сметы как полосы на временной шкале.
 //
+// Логика отображения:
+//   - 📋 Плановая полоса — ВСЕГДА зелёная (не меняется).
+//   - ✅ Фактическая полоса (вторая строка) — синяя (в срок) или красная (с опозданием).
+//
 // Возможности:
 //   - Админ / Гл. инженер / Инженер ПТО: задают и двигают даты (drag-and-drop).
 //   - Прораб: только смотрит свои объекты + может закрывать выполненные разделы.
 //
-// Библиотека: Frappe Gantt (CDN, open-source, MIT-лицензия).
+// Библиотека: Frappe Gantt 0.6.1 (CDN, open-source, MIT-лицензия).
 // =====================================================================
 
 import { db } from '../database.js';
@@ -21,7 +25,7 @@ import { getEmployee } from '../permissions.js';
 // СОСТОЯНИЕ
 // =====================================================================
 
-let currentGantt = null;       // Инстанс Gantt (для перерисовки)
+let currentGantt = null;
 let currentProjectId = null;
 let currentSections = [];
 
@@ -88,10 +92,9 @@ export async function renderGantt(project) {
     const container = document.getElementById('gantt-container');
     if (!container) return;
 
-    // Загружаем разделы
     const sections = await loadGanttData(project.id);
 
-    // Если нет разделов — показать заглушку
+    // Заглушка: нет разделов
     if (sections.length === 0) {
         container.innerHTML = `
             <div class="p-8 bg-gray-50 rounded-xl border text-center space-y-2">
@@ -105,10 +108,9 @@ export async function renderGantt(project) {
         return;
     }
 
-    // Проверяем, есть ли хотя бы одна дата
     const hasDates = sections.some(s => s.planned_start_date && s.planned_end_date);
 
-    // Если нет дат и пользователь не может редактировать — показать заглушку
+    // Заглушка: нет дат и нельзя редактировать
     if (!hasDates && !canEditGantt()) {
         container.innerHTML = `
             <div class="p-8 bg-gray-50 rounded-xl border text-center space-y-2">
@@ -122,12 +124,15 @@ export async function renderGantt(project) {
         return;
     }
 
-    // Строим задачи для Gantt
-    const tasks = sections
+    // Строим задачи: план + факт (для каждого раздела)
+    const tasks = [];
+    sections
         .filter(s => s.planned_start_date && s.planned_end_date)
-        .map(section => buildGanttTask(section));
+        .forEach(section => {
+            tasks.push(...buildGanttTasks(section));
+        });
 
-    // Если нет ни одной заполненной задачи
+    // Заглушка: разделы есть, но даты не заданы
     if (tasks.length === 0) {
         if (canEditGantt()) {
             container.innerHTML = `
@@ -153,7 +158,7 @@ export async function renderGantt(project) {
         return;
     }
 
-    // Кнопки управления (для редакторов)
+    // Кнопки управления
     const controlsHtml = canEditGantt()
         ? `<div class="flex justify-end gap-2 mb-3">
                <button onclick="window.openEditDatesModal()" 
@@ -176,57 +181,65 @@ export async function renderGantt(project) {
                </select>
            </div>`;
 
-    // Рендерим контейнер
+    // Рендер
     container.innerHTML = `
         <div class="space-y-3">
             ${controlsHtml}
             <div id="gantt-chart" class="bg-white rounded-xl border p-3 overflow-x-auto"></div>
             <div class="flex flex-wrap gap-3 text-[11px] text-gray-500 pt-2 border-t">
-                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-[#15803d]"></span> План (в процессе)</span>
-                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-emerald-500"></span> Выполнено</span>
-                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-red-500"></span> Просрочка</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded" style="background:#15803d"></span> 📋 План</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded" style="background:#3b82f6"></span> ✅ Факт (в срок)</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded" style="background:#ef4444"></span> ⚠️ Факт (с опозданием)</span>
             </div>
         </div>
     `;
 
-    // Инициализируем Gantt
     setTimeout(() => {
         initGanttChart(tasks);
     }, 100);
 }
 
 /**
- * Преобразует раздел сметы в задачу для Gantt.
+ * Преобразует раздел сметы в ДВЕ задачи для Gantt:
+ *   1. План — зелёная полоса (всегда).
+ *   2. Факт — синяя (в срок) или красная (позже плана). Только если раздел закрыт.
  */
-function buildGanttTask(section) {
-    // Определяем статус
-    let status = 'plan';
-    if (section.actual_end_date) {
-        // Проверяем, в срок ли закрыли
-        const actual = new Date(section.actual_end_date).getTime();
-        const planned = new Date(section.planned_end_date).getTime();
-        status = actual <= planned ? 'done' : 'overdue_done';
-    } else {
-        // Проверяем, не просрочен ли план
-        const today = new Date().getTime();
-        const planned = new Date(section.planned_end_date).getTime();
-        if (today > planned) {
-            status = 'overdue';
-        }
-    }
+function buildGanttTasks(section) {
+    const tasks = [];
 
-    return {
-        id: String(section.id),
-        name: truncate(section.name, 40),
+    // --- 1. Плановая полоса (ВСЕГДА зелёная) ---
+    tasks.push({
+        id: `plan_${section.id}`,
+        name: `📋 ${truncate(section.name, 40)}`,
         start: section.planned_start_date,
         end: section.planned_end_date,
-        progress: section.actual_end_date ? 100 : 0,
+        progress: 0,
         dependencies: '',
-        custom_class: `gantt-bar-${status}`,
-        // Дополнительные данные для клика
+        custom_class: 'gantt-bar-plan',
         _section: section,
-        _status: status
-    };
+        _type: 'plan'
+    });
+
+    // --- 2. Фактическая полоса (только если раздел закрыт) ---
+    if (section.actual_end_date) {
+        const actual = new Date(section.actual_end_date).getTime();
+        const planned = new Date(section.planned_end_date).getTime();
+        const isLate = actual > planned;
+
+        tasks.push({
+            id: `fact_${section.id}`,
+            name: `✅ ${truncate(section.name, 40)}`,
+            start: section.planned_start_date,
+            end: section.actual_end_date,
+            progress: 100,
+            dependencies: '',
+            custom_class: isLate ? 'gantt-bar-fact-late' : 'gantt-bar-fact-ok',
+            _section: section,
+            _type: 'fact'
+        });
+    }
+
+    return tasks;
 }
 
 /**
@@ -236,14 +249,12 @@ function initGanttChart(tasks) {
     const chartContainer = document.getElementById('gantt-chart');
     if (!chartContainer) return;
 
-    // Проверка наличия библиотеки
     if (typeof Gantt === 'undefined') {
         log.error('Frappe Gantt не загружен');
         chartContainer.innerHTML = '<p class="text-center text-red-500 py-4 text-sm">Ошибка: библиотека Gantt не загружена</p>';
         return;
     }
 
-    // Уничтожаем старый инстанс
     if (currentGantt) {
         currentGantt = null;
         chartContainer.innerHTML = '';
@@ -291,6 +302,7 @@ function onGanttBarClick(task) {
 
 /**
  * Изменение даты через drag-and-drop.
+ * Работает только для ПЛАНОВОЙ полосы (id начинается с "plan_") и для редакторов.
  */
 async function onGanttDateChange(task, start, end) {
     if (!canEditGantt()) {
@@ -298,7 +310,12 @@ async function onGanttDateChange(task, start, end) {
         return;
     }
 
-    const sectionId = parseInt(task.id, 10);
+    // Редактировать можно только плановую полосу
+    if (!task.id.startsWith('plan_')) {
+        return;
+    }
+
+    const sectionId = parseInt(task.id.replace('plan_', ''), 10);
     const startDate = formatDateISO(start);
     const endDate = formatDateISO(end);
 
@@ -316,7 +333,6 @@ async function onGanttDateChange(task, start, end) {
 
     toast('Даты сохранены', 'success');
 
-    // Обновляем кэш
     const sec = currentSections.find(s => s.id === sectionId);
     if (sec) {
         sec.planned_start_date = startDate;
@@ -338,9 +354,6 @@ export function changeGanttView() {
 // МОДАЛКА РЕДАКТИРОВАНИЯ ДАТ
 // =====================================================================
 
-/**
- * Открывает модалку массового редактирования дат.
- */
 export async function openEditDatesModal() {
     if (!canEditGantt()) {
         toast('Нет прав на редактирование графика', 'error');
@@ -350,7 +363,6 @@ export async function openEditDatesModal() {
     const container = document.getElementById('edit-dates-content');
     if (!container) return;
 
-    // ВСЕГДА загружаем разделы заново — чтобы не было проблем с кэшем от другого объекта
     const project = window.__getCurrentProject?.();
     if (!project) {
         toast('Не удалось определить объект', 'error');
@@ -359,11 +371,9 @@ export async function openEditDatesModal() {
 
     log.info(`Открываем редактор дат для объекта #${project.id} (${project.name})`);
 
-    // Показать индикатор загрузки
     container.innerHTML = '<p class="text-center text-gray-400 py-3 text-sm">Загрузка разделов...</p>';
     showModal('edit-dates-modal');
 
-    // Загружаем разделы именно этого объекта
     const { data: sections, error } = await db.select('sections', {
         filters: { project_id: project.id },
         orderBy: { column: 'id', asc: true }
@@ -381,10 +391,8 @@ export async function openEditDatesModal() {
 
     log.info(`Загружено ${sections.length} разделов для объекта #${project.id}`);
 
-    // Обновляем кэш
     currentSections = sections;
 
-    // Рендерим форму
     container.innerHTML = sections.map(s => `
         <div class="bg-gray-50 border rounded-lg p-3 space-y-2" data-section-id="${s.id}">
             <p class="font-semibold text-gray-800 text-xs">📌 ${escapeHtml(s.name)}</p>
@@ -406,8 +414,6 @@ export async function openEditDatesModal() {
     `).join('');
 }
 
-
-
 /**
  * Сохраняет все даты из модалки.
  */
@@ -419,21 +425,27 @@ export async function saveAllDates(event) {
         return;
     }
 
+    const project = window.__getCurrentProject?.();
+    if (!project) {
+        toast('Не удалось определить объект', 'error');
+        return;
+    }
+
     const rows = document.querySelectorAll('#edit-dates-content [data-section-id]');
     const updates = [];
+
+    log.info(`Сохранение дат для объекта #${project.id} (${project.name}). Строк: ${rows.length}`);
 
     for (const row of rows) {
         const sectionId = parseInt(row.dataset.sectionId, 10);
         const start = row.querySelector('.section-start')?.value || null;
         const end = row.querySelector('.section-end')?.value || null;
 
-        // Проверка: если одна дата указана — обе должны быть
         if ((start && !end) || (!start && end)) {
-            toast(`Раздел #${sectionId}: укажи обе даты (начало и окончание)`, 'error');
+            toast(`Раздел #${sectionId}: укажи обе даты`, 'error');
             return;
         }
 
-        // Проверка: начало ≤ окончание
         if (start && end && start > end) {
             toast(`Раздел #${sectionId}: начало позже окончания`, 'error');
             return;
@@ -442,7 +454,8 @@ export async function saveAllDates(event) {
         updates.push({ id: sectionId, planned_start_date: start, planned_end_date: end });
     }
 
-    // Сохраняем всё
+    log.info(`Обновлений к сохранению: ${updates.length}`);
+
     let savedCount = 0;
     for (const upd of updates) {
         const { error } = await db.update('sections', {
@@ -450,16 +463,19 @@ export async function saveAllDates(event) {
             planned_end_date: upd.planned_end_date
         }, { id: upd.id });
 
-        if (!error) savedCount++;
+        if (!error) {
+            savedCount++;
+            log.db(`Обновлён раздел #${upd.id}`);
+        } else {
+            log.error(`Ошибка раздела #${upd.id}:`, error.message);
+        }
     }
 
-    toast(`Сохранено разделов: ${savedCount}`, 'success');
+    toast(`Сохранено разделов: ${savedCount} из ${updates.length}`, 'success');
     hideModal('edit-dates-modal');
 
-    // Перерисовываем график
-    if (window.__getCurrentProject) {
-        const project = window.__getCurrentProject();
-        if (project) await renderGantt(project);
+    if (project && window.renderGantt) {
+        await window.renderGantt(project);
     }
 }
 
@@ -468,13 +484,12 @@ export async function saveAllDates(event) {
 // =====================================================================
 
 /**
- * Открывает модалку подтверждения закрытия раздела.
+ * Открывает модалку деталей раздела (клик по полосе).
  */
 export function openSectionDetailFromGantt(section) {
     const emp = getEmployee();
     if (!emp) return;
 
-    // Определяем статус
     const statusInfo = getSectionStatusInfo(section);
 
     const container = document.getElementById('section-detail-gantt-content');
@@ -509,12 +524,10 @@ export function openSectionDetailFromGantt(section) {
         ` : ''}
     `;
 
-    // Кнопки действий
     const actionsContainer = document.getElementById('section-detail-gantt-actions');
     if (actionsContainer) {
         let actionsHtml = '';
 
-        // Прораб может закрыть раздел (если это его объект и раздел не закрыт)
         if (!section.actual_end_date && emp.position === 'Прораб') {
             const currentProject = window.__getCurrentProject?.();
             if (currentProject && currentProject.foreman_id === emp.id) {
@@ -525,7 +538,6 @@ export function openSectionDetailFromGantt(section) {
             }
         }
 
-        // Редакторы могут убрать отметку о закрытии
         if (section.actual_end_date && canEditGantt()) {
             actionsHtml += `<button onclick="window.uncloseSection(${section.id})" 
                             class="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
@@ -594,7 +606,6 @@ export async function confirmCloseSection(event) {
 
     hideModal('close-section-modal');
 
-    // Обновляем график
     if (window.__getCurrentProject) {
         const project = window.__getCurrentProject();
         if (project) await renderGantt(project);
@@ -640,23 +651,21 @@ export async function uncloseSection(sectionId) {
  */
 export function getSectionStatusInfo(section) {
     if (section.actual_end_date) {
-        // Раздел закрыт — в срок или с опозданием?
         const actual = new Date(section.actual_end_date).getTime();
         const planned = section.planned_end_date ? new Date(section.planned_end_date).getTime() : null;
 
         if (planned && actual <= planned) {
             return { label: '🟢 Выполнено в срок', bg: 'bg-green-100', color: 'text-green-700' };
         } else {
-            return { label: '🟠 Выполнено с опозданием', bg: 'bg-amber-100', color: 'text-amber-800' };
+            return { label: '🔴 Выполнено с опозданием', bg: 'bg-red-100', color: 'text-red-700' };
         }
     }
 
-    // Не закрыт — проверяем просрочку
     if (section.planned_end_date) {
         const today = new Date().getTime();
         const planned = new Date(section.planned_end_date).getTime();
         if (today > planned) {
-            return { label: '🔴 Просрочено', bg: 'bg-red-100', color: 'text-red-700' };
+            return { label: '⚠️ Просрочено', bg: 'bg-amber-100', color: 'text-amber-800' };
         }
     }
 
