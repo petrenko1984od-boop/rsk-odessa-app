@@ -3,7 +3,7 @@
 // =====================================================================
 
 import { db } from '../database.js';
-import { escapeHtml, formatDate, formatMoney } from '../utils.js';
+import { escapeHtml, formatDate, formatMoney, log } from '../utils.js';
 import { getEmployee } from '../permissions.js';
 
 const DASHBOARD_ROLES = ['Прораб', 'Сметчик', 'Инженер ПТО', 'Администратор', 'Директор', 'Главный инженер'];
@@ -484,7 +484,7 @@ export async function loadDashboard() {
 
     if (isExecutive) {
         const [projectsResult, sectionsResult, cashOperationsResult, balancesResult, tasksResult, ordersResult, employeesResult, orderItemsResult] = await Promise.all([
-            db.select('projects', { select: 'id, name, foreman_id, status' }),
+            db.select('projects', { select: 'id, name, foreman_id' }),
             db.select('sections', { select: 'id, project_id, plan_materials' }),
             db.select('cash_operations', {
                 select: 'id, order_id, project_id, section_id, operation_type, category, amount, created_at',
