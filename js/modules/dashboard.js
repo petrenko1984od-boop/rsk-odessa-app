@@ -6,7 +6,7 @@ import { db } from '../database.js';
 import { escapeHtml, formatDate, formatMoney } from '../utils.js';
 import { getEmployee } from '../permissions.js';
 
-const DASHBOARD_ROLES = ['Прораб', 'Сметчик', 'Инженер ПТО'];
+const DASHBOARD_ROLES = ['Прораб', 'Сметчик', 'Инженер ПТО', 'Администратор', 'Директор', 'Главный инженер'];
 
 export function shouldShowEmployeeDashboard() {
     const position = getEmployee()?.position;
@@ -129,6 +129,219 @@ function renderEmployeeBalances(balances, employees) {
     `;
 }
 
+function renderPeopleSummary(employees) {
+    const all = employees || [];
+    const active = all.filter(emp => !emp.status || emp.status === 'active').length;
+    const blocked = all.filter(emp => emp.status === 'blocked').length;
+    const byRole = [...new Set(all.map(emp => emp.position).filter(Boolean))].sort().map(position => {
+        const count = all.filter(emp => emp.position === position).length;
+        return `
+            <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
+                <span class="font-medium text-gray-700">${escapeHtml(position)}</span>
+                <span class="font-bold text-gray-800">${count}</span>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+            ${renderMetric('👥', 'Всего', all.length, 'Все сотрудники', 'emerald')}
+            ${renderMetric('✅', 'Активных', active, 'Работают сейчас', 'blue')}
+            ${renderMetric('🚫', 'Заблокированных', blocked, 'Не активны', 'amber')}
+        </div>
+        <div class="mt-4">
+            <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">Разбивка по должностям</p>
+            <div class="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">${byRole || '<p class="text-sm text-gray-500">Нет данных.</p>'}</div>
+        </div>
+    `;
+}
+
+function renderTaskSummary(tasks) {
+    const active = tasks.filter(task => ['pending', 'in_progress'].includes(task.status)).length;
+    const overdue = tasks.filter(task => isOverdueTask(task)).length;
+    const now = new Date();
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - 30);
+    const done30 = tasks.filter(task => {
+        if (task.status !== 'done' || !task.completed_at) return false;
+        const dt = new Date(task.completed_at);
+        return !Number.isNaN(dt.getTime()) && dt >= cutoff;
+    }).length;
+
+    return `
+        <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+            ${renderMetric('📌', 'Активные', active, 'pending + in_progress', 'blue')}
+            ${renderMetric('⏰', 'Просроченные', overdue, 'дедлайн уже прошёл', overdue ? 'red' : 'emerald')}
+            ${renderMetric('✅', 'Выполнено за 30 дней', done30, 'статус done', 'emerald')}
+        </div>
+    `;
+}
+
+function renderExecutiveDashboard({ employees, balances, tasks, orders, orderItems, cashOperations, projects, sections }) {
+    const employeeMap = new Map((employees || []).map(emp => [emp.id, emp]));
+
+    const totalBalance = (balances || []).reduce((sum, item) => sum + (Number(item.balance) || 0), 0);
+    const negative = (balances || [])
+        .map(item => ({ ...item, employee: employeeMap.get(item.employee_id) }))
+        .filter(item => item.employee && (Number(item.balance) || 0) < 0)
+        .sort((a, b) => (Number(a.balance) || 0) - (Number(b.balance) || 0))
+        .slice(0, 8);
+    const positive = (balances || [])
+        .map(item => ({ ...item, employee: employeeMap.get(item.employee_id) }))
+        .filter(item => item.employee && (Number(item.balance) || 0) > 0)
+        .sort((a, b) => (Number(b.balance) || 0) - (Number(a.balance) || 0))
+        .slice(0, 8);
+
+    const validOrderIds = new Set((orders || []).filter(order => ['closed', 'archived'].includes(order.status)).map(order => order.id));
+    const unpaidDebt = (orderItems || [])
+        .filter(item => validOrderIds.has(item.order_id) && (item.payment_status || 'paid') === 'debt')
+        .reduce((sum, item) => sum + (Number(item.total_price) || 0), 0);
+    const unpaidItemsCount = (orderItems || []).filter(item => validOrderIds.has(item.order_id) && (item.payment_status || 'paid') === 'debt').length;
+
+    const projectPlanMap = new Map();
+    (sections || []).forEach(section => {
+        const projectId = section.project_id;
+        if (!projectId) return;
+        projectPlanMap.set(projectId, (projectPlanMap.get(projectId) || 0) + (Number(section.plan_total) || 0));
+    });
+
+    const projectFactMap = new Map();
+    (cashOperations || []).forEach(operation => {
+        const projectId = operation.project_id;
+        if (!projectId) return;
+        const category = String(operation.category || '').toLowerCase();
+        if (operation.operation_type !== 'expense' || (!['materials', 'delivery'].includes(category) && !['materials', 'delivery'].includes(String(operation.category || '')))) return;
+        projectFactMap.set(projectId, (projectFactMap.get(projectId) || 0) + (Number(operation.amount) || 0));
+    });
+
+    const projectRows = (projects || []).map(project => {
+        const plan = Number(projectPlanMap.get(project.id)) || 0;
+        const fact = Number(projectFactMap.get(project.id)) || 0;
+        const overrun = fact - plan;
+        const percent = plan > 0 ? (overrun / plan) * 100 : 0;
+        return { ...project, plan, fact, overrun, percent };
+    }).filter(project => project.plan > 0 || project.fact > 0)
+      .sort((a, b) => Math.abs(b.overrun) - Math.abs(a.overrun));
+
+    const negativeList = negative.length
+        ? negative.map(item => `
+            <div class="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs">
+                <span class="font-medium text-red-700">${escapeHtml(item.employee?.name || '—')}</span>
+                <span class="font-bold text-red-800">${formatMoney(Number(item.balance) || 0)}</span>
+            </div>
+        `).join('')
+        : '<p class="text-sm text-gray-500">Нет должников.</p>';
+
+    const positiveList = positive.length
+        ? positive.map(item => `
+            <div class="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs">
+                <span class="font-medium text-emerald-700">${escapeHtml(item.employee?.name || '—')}</span>
+                <span class="font-bold text-emerald-800">${formatMoney(Number(item.balance) || 0)}</span>
+            </div>
+        `).join('')
+        : '<p class="text-sm text-gray-500">Нет крупных остатков.</p>';
+
+    const overrunRows = projectRows.slice(0, 8).map(project => {
+        const tone = project.overrun > 0 ? 'text-red-600' : 'text-emerald-700';
+        return `
+            <tr>
+                <td class="px-2 py-3 text-left text-sm font-semibold text-gray-800">${escapeHtml(project.name || '—')}</td>
+                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(project.plan)}</td>
+                <td class="px-2 py-3 text-right text-sm text-gray-600">${formatMoney(project.fact)}</td>
+                <td class="px-2 py-3 text-right text-sm font-bold ${tone}">${formatMoney(project.overrun)}</td>
+                <td class="px-2 py-3 text-right text-sm font-bold ${project.overrun > 0 ? 'text-red-600' : 'text-emerald-700'}">${Math.abs(project.percent || 0).toFixed(1)}%</td>
+            </tr>
+        `;
+    }).join('') || '<tr><td colspan="5" class="px-2 py-4 text-center text-sm text-gray-500">Нет данных по объектам.</td></tr>';
+
+    return `
+        <div class="w-full min-w-0 space-y-4">
+            <div class="flex min-w-0 flex-wrap items-end justify-between gap-3 rounded-xl bg-white px-4 py-4 shadow-sm sm:px-5">
+                <div>
+                    <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Дашборд руководителя</p>
+                    <h2 class="mt-1 text-2xl font-bold text-gray-800">Компания в целом</h2>
+                    <p class="mt-1 text-sm text-gray-500">Финансы, сотрудники и задачи по текущему состоянию</p>
+                </div>
+                <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
+            </div>
+
+            <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
+                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
+                    <div class="flex items-center justify-between gap-2 border-b pb-3">
+                        <h3 class="text-sm font-bold text-gray-800">💰 Подотчёт по компании</h3>
+                        <span class="text-xs text-gray-400">общий остаток</span>
+                    </div>
+                    <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
+                        ${renderMetric('💵', 'Общий баланс', formatMoney(totalBalance), 'все сотрудники', totalBalance >= 0 ? 'emerald' : 'amber')}
+                        ${renderMetric('📉', 'С отрицательным балансом', negative.length, 'должники по подотчёту', 'red')}
+                        ${renderMetric('📈', 'С большим остатком', positive.length, 'сотрудники с плюсом', 'blue')}
+                    </div>
+                    <div class="mt-4 grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
+                        <div>
+                            <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-red-600">Сотрудники с отрицательным балансом</p>
+                            <div class="space-y-2">${negativeList}</div>
+                        </div>
+                        <div>
+                            <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-emerald-600">Сотрудники с большим положительным балансом</p>
+                            <div class="space-y-2">${positiveList}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
+                    <div class="flex items-center justify-between gap-2 border-b pb-3">
+                        <h3 class="text-sm font-bold text-gray-800">📋 Задачи</h3>
+                        <span class="text-xs text-gray-400">по плану</span>
+                    </div>
+                    <div class="mt-3">${renderTaskSummary(tasks)}</div>
+                </div>
+            </div>
+
+            <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
+                    <div class="flex items-center justify-between gap-2 border-b pb-3">
+                        <h3 class="text-sm font-bold text-gray-800">💳 Задолженность по заявкам материалов</h3>
+                        <span class="text-xs text-gray-400">неоплаченные позиции</span>
+                    </div>
+                    <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                        ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'по закрытым / архивным заявкам', unpaidDebt > 0 ? 'amber' : 'emerald')}
+                        ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные строки', unpaidItemsCount > 0 ? 'red' : 'emerald')}
+                    </div>
+                </div>
+
+                <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
+                    <div class="flex items-center justify-between gap-2 border-b pb-3">
+                        <h3 class="text-sm font-bold text-gray-800">👥 Сотрудники</h3>
+                        <span class="text-xs text-gray-400">по статусам</span>
+                    </div>
+                    <div class="mt-3">${renderPeopleSummary(employees)}</div>
+                </div>
+            </div>
+
+            <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
+                <div class="flex items-center justify-between gap-2 border-b pb-3">
+                    <h3 class="text-sm font-bold text-gray-800">📊 Рейтинг объектов по перерасходу материалов</h3>
+                    <span class="text-xs text-gray-400">сверху — больше перерасход</span>
+                </div>
+                <div class="mt-3 overflow-x-auto">
+                    <table class="w-full min-w-[520px] text-sm">
+                        <thead class="border-b text-left text-[11px] uppercase text-gray-500">
+                            <tr>
+                                <th class="px-2 py-2">Объект</th>
+                                <th class="px-2 py-2 text-right">План</th>
+                                <th class="px-2 py-2 text-right">Факт</th>
+                                <th class="px-2 py-2 text-right">Перерасход</th>
+                                <th class="px-2 py-2 text-right">%</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y">${overrunRows}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 export async function loadDashboard() {
     const container = document.getElementById('dashboard-content');
     if (!container) return;
@@ -167,6 +380,45 @@ export async function loadDashboard() {
             `;
             return;
         }
+
+    const isExecutive = ['Администратор', 'Директор', 'Главный инженер'].includes(employee?.position);
+
+    if (isExecutive) {
+        const [projectsResult, sectionsResult, cashOperationsResult, balancesResult, tasksResult, ordersResult, employeesResult, orderItemsResult] = await Promise.all([
+            db.select('projects', { select: 'id, name, foreman_id, status' }),
+            db.select('sections', { select: 'id, project_id, plan_total' }),
+            db.select('cash_operations', {
+                select: 'id, project_id, operation_type, category, amount, created_at',
+                orderBy: { column: 'created_at', asc: false }
+            }),
+            db.select('employee_cash_balance', { select: 'employee_id, balance' }),
+            db.select('tasks', { select: 'id, title, project_id, status, deadline, completed_at, created_at' }),
+            db.select('orders', { select: 'id, status, project_id, request_number, created_at' }),
+            db.select('employees', { select: 'id, name, position, status' }),
+            db.select('order_items', { select: 'id, order_id, total_price, payment_status' })
+        ]);
+
+        const projects = projectsResult.data || [];
+        const sections = sectionsResult.data || [];
+        const cashOperations = cashOperationsResult.data || [];
+        const balances = balancesResult.data || [];
+        const tasks = tasksResult.data || [];
+        const orders = ordersResult.data || [];
+        const employees = employeesResult.data || [];
+        const orderItems = orderItemsResult.data || [];
+
+        container.innerHTML = renderExecutiveDashboard({
+            employees,
+            balances,
+            tasks,
+            orders,
+            orderItems,
+            cashOperations,
+            projects,
+            sections
+        });
+        return;
+    }
 
     const [projectsResult, sectionsResult, expensesResult, balancesResult, tasksResult, ordersResult, operationsResult, employeesResult] = await Promise.all([
         db.select('projects', { select: 'id, name, foreman_id' }),
