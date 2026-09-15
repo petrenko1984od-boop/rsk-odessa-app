@@ -208,12 +208,19 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
     });
 
     const sectionFactMap = new Map();
+    const projectFactMap = new Map();
     (cashOperations || []).forEach(operation => {
-        if (!operation.section_id) return;
         const category = String(operation.category || '').toLowerCase();
         if (operation.operation_type !== 'expense' || (!['materials', 'delivery'].includes(category) && !['materials', 'delivery'].includes(String(operation.category || '')))) return;
-        const sectionId = String(operation.section_id);
-        sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + (Number(operation.amount) || 0));
+        const amount = Number(operation.amount) || 0;
+        if (operation.project_id) {
+            const projectId = String(operation.project_id);
+            projectFactMap.set(projectId, (projectFactMap.get(projectId) || 0) + amount);
+        }
+        if (operation.section_id) {
+            const sectionId = String(operation.section_id);
+            sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + amount);
+        }
     });
 
     const closedOrderIds = new Set((orders || [])
@@ -225,10 +232,20 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
     const orderSectionMap = new Map((orders || [])
         .filter(order => closedOrderIds.has(order.id) && order.section_id && !orderIdsWithCashOperation.has(order.id))
         .map(order => [String(order.id), String(order.section_id)]));
+    const orderProjectMap = new Map((orders || [])
+        .filter(order => closedOrderIds.has(order.id) && !orderIdsWithCashOperation.has(order.id))
+        .map(order => [String(order.id), order.project_id]));
     (orderItems || []).forEach(item => {
         const sectionId = orderSectionMap.get(String(item.order_id));
-        if (!sectionId) return;
-        sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + (Number(item.total_price) || 0));
+        const projectId = orderProjectMap.get(String(item.order_id));
+        const amount = Number(item.total_price) || 0;
+        if (projectId) {
+            const normalizedProjectId = String(projectId);
+            projectFactMap.set(normalizedProjectId, (projectFactMap.get(normalizedProjectId) || 0) + amount);
+        }
+        if (sectionId) {
+            sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + amount);
+        }
     });
 
     const projectMap = new Map((projects || []).map(project => [String(project.id), project]));
@@ -263,6 +280,17 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
             }
             return rows;
         }, [])
+        .map(row => {
+            const projectFact = Number(projectFactMap.get(String(row.project.id))) || 0;
+            const projectPlan = row.plan;
+            if (projectFact > row.fact) {
+                row.fact = projectFact;
+                row.overrun = projectFact - projectPlan;
+                row.percent = projectPlan > 0 ? (row.overrun / projectPlan) * 100 : 100;
+            }
+            row.hasSectionOverrun = row.hasSectionOverrun || row.overrun > 0;
+            return row;
+        })
         .filter(row => row.hasSectionOverrun)
         .sort((a, b) => b.overrun - a.overrun);
 
@@ -468,6 +496,22 @@ export async function loadDashboard() {
             db.select('employees', { select: 'id, name, position, status' }),
             db.select('order_items', { select: 'id, order_id, total_price, payment_status' })
         ]);
+
+        const failedResult = [
+            projectsResult,
+            sectionsResult,
+            cashOperationsResult,
+            balancesResult,
+            tasksResult,
+            ordersResult,
+            employeesResult,
+            orderItemsResult
+        ].find(result => result.error);
+        if (failedResult) {
+            log.error('Ошибка загрузки данных дашборда:', failedResult.error.message);
+            container.innerHTML = '<div class="app-loading app-loading-card text-sm text-red-600"><span>Не удалось загрузить данные дашборда.</span></div>';
+            return;
+        }
 
         const projects = projectsResult.data || [];
         const sections = sectionsResult.data || [];
