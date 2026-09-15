@@ -200,7 +200,8 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
 
     const sectionPlanMap = new Map();
     (sections || []).forEach(section => {
-        sectionPlanMap.set(section.id, {
+        sectionPlanMap.set(String(section.id), {
+            sectionId: section.id,
             projectId: section.project_id,
             plan: Number(section.plan_materials) || 0
         });
@@ -211,25 +212,26 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         if (!operation.section_id) return;
         const category = String(operation.category || '').toLowerCase();
         if (operation.operation_type !== 'expense' || (!['materials', 'delivery'].includes(category) && !['materials', 'delivery'].includes(String(operation.category || '')))) return;
-        sectionFactMap.set(operation.section_id, (sectionFactMap.get(operation.section_id) || 0) + (Number(operation.amount) || 0));
+        const sectionId = String(operation.section_id);
+        sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + (Number(operation.amount) || 0));
     });
 
     const closedOrderIds = new Set((orders || [])
         .filter(order => ['closed', 'archived'].includes(order.status))
         .map(order => order.id));
     const orderIdsWithCashOperation = new Set((cashOperations || [])
-        .map(operation => operation.order_id)
+        .map(operation => operation.order_id ? String(operation.order_id) : null)
         .filter(Boolean));
     const orderSectionMap = new Map((orders || [])
         .filter(order => closedOrderIds.has(order.id) && order.section_id && !orderIdsWithCashOperation.has(order.id))
-        .map(order => [order.id, order.section_id]));
+        .map(order => [String(order.id), String(order.section_id)]));
     (orderItems || []).forEach(item => {
-        const sectionId = orderSectionMap.get(item.order_id);
+        const sectionId = orderSectionMap.get(String(item.order_id));
         if (!sectionId) return;
         sectionFactMap.set(sectionId, (sectionFactMap.get(sectionId) || 0) + (Number(item.total_price) || 0));
     });
 
-    const projectMap = new Map((projects || []).map(project => [project.id, project]));
+    const projectMap = new Map((projects || []).map(project => [String(project.id), project]));
     const projectRows = [...sectionPlanMap.entries()]
         .map(([sectionId, section]) => {
             const plan = section.plan;
@@ -240,7 +242,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                 sectionId,
                 sectionOverrun: overrun,
                 hasSectionOverrun: overrun > 0,
-                project: projectMap.get(section.projectId),
+                project: projectMap.get(String(section.projectId)),
                 plan,
                 fact,
                 overrun,
