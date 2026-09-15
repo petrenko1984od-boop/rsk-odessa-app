@@ -282,54 +282,11 @@ function initGanttChart(tasks) {
 
         // 👇 Применяем inline-цвета по порядку
         applyBarColors(tasks);
-        trimGanttEmptyDates();
 
     } catch (err) {
         log.error('Ошибка инициализации Gantt:', err);
         chartContainer.innerHTML = '<p class="text-center text-red-500 py-4 text-sm">Ошибка отрисовки диаграммы</p>';
     }
-}
-
-/**
- * Убирает пустые даты до первой и после последней работы.
- * Важно выполнять после отрисовки SVG: только тогда известны координаты полос.
- */
-function trimGanttEmptyDates() {
-    setTimeout(() => {
-        const chartContainer = document.getElementById('gantt-chart');
-        const svgElement = chartContainer?.querySelector('svg');
-        if (!svgElement) return;
-
-        const viewBoxAttribute = svgElement.getAttribute('viewBox') || '';
-        const viewBoxValues = viewBoxAttribute.split(/[ ,]+/).map(Number);
-        const viewBoxWidth = viewBoxValues[2] || Number.parseFloat(svgElement.getAttribute('width')) || 0;
-        const viewBoxHeight = viewBoxValues[3] || Number.parseFloat(svgElement.getAttribute('height')) || 0;
-        const svgRect = svgElement.getBoundingClientRect();
-        const coordinateWidth = viewBoxWidth || svgRect.width;
-        if (!coordinateWidth || !svgRect.width) return;
-
-        const scale = coordinateWidth / svgRect.width;
-        const coordinateHeight = viewBoxHeight || svgRect.height * scale;
-        const bars = [...svgElement.querySelectorAll('.bar')]
-            .map(bar => bar.getBoundingClientRect())
-            .filter(rect => rect.width > 0 && rect.height > 0);
-        if (!bars.length) return;
-
-        const firstBar = Math.min(...bars.map(rect => (rect.left - svgRect.left) * scale));
-        const lastBar = Math.max(...bars.map(rect => (rect.right - svgRect.left) * scale));
-        const padding = 24;
-        const cropX = Math.max(0, firstBar - padding);
-        const cropRight = Math.min(coordinateWidth, lastBar + padding);
-        const cropWidth = cropRight - cropX;
-        if (cropWidth <= 0 || cropWidth >= coordinateWidth - 2) return;
-
-        svgElement.setAttribute('viewBox', `${cropX} 0 ${cropWidth} ${coordinateHeight}`);
-        svgElement.setAttribute('width', String(cropWidth));
-        svgElement.style.width = `${cropWidth}px`;
-        svgElement.style.maxWidth = 'none';
-        svgElement.style.display = 'block';
-        chartContainer.scrollLeft = 0;
-    }, 80);
 }
 
 /**
@@ -512,37 +469,16 @@ export async function downloadGanttPDF() {
         const svgClone = svgElement.cloneNode(true);
         const pdfContent = wrapper.querySelector('#pdf-gantt-content');
 
-        // График на экране находится в горизонтальном scroll-контейнере.
-        // Для PDF берём полный размер SVG, иначе html2canvas захватит только видимую часть.
         const viewBox = svgElement.viewBox?.baseVal;
         const viewBoxWidth = Number(viewBox?.width) || 0;
         const viewBoxHeight = Number(viewBox?.height) || 0;
         const svgWidth = Number.parseFloat(svgElement.getAttribute('width')) || 0;
         const svgHeight = Number.parseFloat(svgElement.getAttribute('height')) || 0;
-        const svgCoordinateWidth = viewBoxWidth || svgWidth || svgElement.getBoundingClientRect().width;
-        const bars = [...svgElement.querySelectorAll('.bar')]
-            .map(bar => {
-                try {
-                    return bar.getBBox();
-                } catch {
-                    return null;
-                }
-            })
-            .filter(box => box && box.width > 0 && box.height > 0);
-        const firstBarX = bars.length
-            ? Math.min(...bars.map(box => box.x))
-            : 0;
-        const lastBarX = bars.length
-            ? Math.max(...bars.map(box => box.x + box.width))
-            : svgCoordinateWidth;
-        const cropPadding = 24;
-        const cropX = Math.max(0, firstBarX - cropPadding);
-        const cropRight = Math.min(svgCoordinateWidth, lastBarX + cropPadding);
-        const cropWidth = Math.max(320, cropRight - cropX);
         const fullWidth = Math.max(
             1600,
             chartContainer.scrollWidth,
-            cropWidth
+            viewBoxWidth,
+            svgWidth
         );
         const fullHeight = viewBoxHeight || svgHeight || svgElement.getBoundingClientRect().height;
 
@@ -554,9 +490,6 @@ export async function downloadGanttPDF() {
         svgClone.style.maxWidth = 'none';
         svgClone.style.height = fullHeight > 0 ? `${fullHeight}px` : 'auto';
         svgClone.style.display = 'block';
-        if (viewBoxHeight > 0) {
-            svgClone.setAttribute('viewBox', `${cropX} 0 ${cropWidth} ${viewBoxHeight}`);
-        }
         pdfContent.appendChild(svgClone);
 
         document.body.appendChild(wrapper);
