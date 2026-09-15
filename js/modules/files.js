@@ -6,7 +6,7 @@
 // Возможности:
 //   1. СМЕТА (Excel) — загружают Админ / Гл. инженер / Инженер ПТО.
 //      Скачивать могут все (прораб — только PDF).
-//   2. ДОП. ФАЙЛЫ (проекты, наряды, фото, другое) — загружают редакторы,
+//   2. ДОКУМЕНТАЦИЯ (единый список файлов) — загружают редакторы,
 //      просматривают и скачивают все.
 //
 // Библиотеки: XLSX (парсинг сметы), jsPDF (генерация PDF).
@@ -24,7 +24,10 @@ import { CONFIG } from '../config.js';
 // СОСТОЯНИЕ
 // =====================================================================
 
-let currentProjectFiles = []; // Доп. файлы текущего объекта
+let currentProjectFiles = []; // Файлы текущего объекта
+
+// Все файлы хранятся в одной категории
+const DEFAULT_CATEGORY = 'documentation';
 
 // =====================================================================
 // ПРАВА
@@ -164,21 +167,11 @@ export async function downloadEstimatePDF() {
 }
 
 // =====================================================================
-// ДОП. ФАЙЛЫ ОБЪЕКТА
+// ДОКУМЕНТАЦИЯ ОБЪЕКТА
 // =====================================================================
 
 /**
- * Категории файлов.
- */
-const FILE_CATEGORIES = {
-    'project': { label: '📐 Проекты',  bucket: 'project-files' },
-    'order':   { label: '📋 Наряды',   bucket: 'project-files' },
-    'photo':   { label: '📸 Фото',     bucket: 'project-files' },
-    'other':   { label: '📄 Другое',   bucket: 'project-files' }
-};
-
-/**
- * Загружает список доп. файлов объекта из БД.
+ * Загружает список файлов объекта из БД.
  */
 export async function loadProjectFiles(projectId) {
     const { data, error } = await db.select('project_files', {
@@ -196,7 +189,7 @@ export async function loadProjectFiles(projectId) {
 }
 
 /**
- * Отрисовывает блок доп. файлов (по категориям).
+ * Отрисовывает единый список файлов объекта.
  */
 export async function renderProjectFiles(project) {
     const container = document.getElementById('proj-files-list');
@@ -211,32 +204,26 @@ export async function renderProjectFiles(project) {
         uploadBtn.style.display = canManage ? '' : 'none';
     }
 
-    // Группируем по категориям
-    const grouped = { project: [], order: [], photo: [], other: [] };
-    files.forEach(f => {
-        const cat = f.category || 'other';
-        if (grouped[cat]) grouped[cat].push(f);
-    });
-
-    let html = '';
-
-    for (const [catKey, catInfo] of Object.entries(FILE_CATEGORIES)) {
-        const catFiles = grouped[catKey] || [];
-
-        html += `
-            <div class="space-y-2">
-                <h4 class="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2">
-                    ${catInfo.label}
-                    <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-normal">${catFiles.length}</span>
-                </h4>
-                ${catFiles.length > 0
-                    ? catFiles.map(f => renderFileRow(f, canManage)).join('')
-                    : `<p class="text-xs text-gray-400 italic pl-2">Нет файлов</p>`}
+    if (files.length === 0) {
+        container.innerHTML = `
+            <div class="p-4 bg-gray-50 rounded-xl border border-dashed text-center">
+                <p class="text-xs text-gray-500">Файлов пока нет. Нажми «📤 Загрузить файл», чтобы добавить первый.</p>
             </div>
         `;
+        return;
     }
 
-    container.innerHTML = html;
+    container.innerHTML = `
+        <div class="flex justify-between items-center">
+            <h4 class="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2">
+                📁 Документация объекта
+                <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-normal">${files.length}</span>
+            </h4>
+        </div>
+        <div class="space-y-1.5">
+            ${files.map(f => renderFileRow(f, canManage)).join('')}
+        </div>
+    `;
 }
 
 /**
@@ -288,26 +275,20 @@ function getFileIcon(fileName) {
 }
 
 // =====================================================================
-// ЗАГРУЗКА ДОП. ФАЙЛА
+// ЗАГРУЗКА ФАЙЛА
 // =====================================================================
 
 /**
- * Открывает модалку загрузки файла для выбранной категории.
+ * Открывает модалку загрузки файла.
  */
-export function openUploadFileModal(category) {
+export function openUploadFileModal() {
     if (!canManageFiles()) {
         toast('Нет прав на загрузку файлов', 'error');
         return;
     }
 
-    const catInfo = FILE_CATEGORIES[category];
-    if (!catInfo) {
-        toast('Неверная категория', 'error');
-        return;
-    }
-
-    document.getElementById('upload-file-category').value = category;
-    document.getElementById('upload-file-modal-title').textContent = `📤 Загрузить в «${catInfo.label}»`;
+    document.getElementById('upload-file-category').value = DEFAULT_CATEGORY;
+    document.getElementById('upload-file-modal-title').textContent = '📤 Загрузить файл';
     document.getElementById('upload-file-input').value = '';
     document.getElementById('upload-file-description').value = '';
 
@@ -315,96 +296,106 @@ export function openUploadFileModal(category) {
 }
 
 /**
- * Сохраняет доп. файл в Storage + записывает в БД.
+ * Сохраняет файл в Storage + записывает в БД.
  */
 export async function uploadProjectFile(event) {
     event.preventDefault();
 
-    if (!canManageFiles()) {
-        toast('Нет прав', 'error');
-        return;
+    try {
+        if (!canManageFiles()) {
+            toast('Нет прав', 'error');
+            return;
+        }
+
+        const emp = getEmployee();
+        const project = window.__getCurrentProject?.();
+        if (!emp || !project) {
+            toast('Не удалось определить сотрудника или объект', 'error');
+            return;
+        }
+
+        const fileInput = document.getElementById('upload-file-input');
+        const description = document.getElementById('upload-file-description').value.trim();
+
+        if (!fileInput.files || fileInput.files.length === 0) {
+            toast('Выбери файл', 'error');
+            return;
+        }
+
+        const file = fileInput.files[0];
+
+        // Проверка размера (50 МБ)
+        const maxSize = 50 * 1024 * 1024;
+        if (file.size > maxSize) {
+            toast(`Файл больше 50 МБ (${(file.size / 1024 / 1024).toFixed(1)} МБ)`, 'error');
+            return;
+        }
+
+        const form = event.target;
+        const submitBtn = form.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Загружаем...';
+
+        log.info('Загрузка файла:', file.name, '(', (file.size / 1024 / 1024).toFixed(2), 'МБ)');
+
+        // Формируем путь
+        const safeName = sanitizeFileName(file.name);
+        const path = `project_${project.id}/${DEFAULT_CATEGORY}/${Date.now()}_${safeName}`;
+
+        log.info('Путь в Storage:', path);
+
+        // 1. Загружаем в Storage
+        const uploadResult = await db.uploadFile('project-files', path, file);
+
+        if (uploadResult.error) {
+            log.error('Ошибка uploadFile:', uploadResult.error);
+            toast('Ошибка загрузки: ' + uploadResult.error.message, 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '📤 Загрузить';
+            return;
+        }
+
+        log.info('✅ Файл в Storage:', uploadResult.path);
+
+        // 2. Записываем в БД
+        const { error: dbError } = await db.insert('project_files', {
+            project_id: project.id,
+            file_path: uploadResult.path,
+            file_name: file.name,
+            file_size: file.size,
+            mime_type: file.type || null,
+            category: DEFAULT_CATEGORY,
+            description: description || null,
+            uploaded_by_employee_id: emp.id
+        });
+
+        submitBtn.disabled = false;
+        submitBtn.textContent = '📤 Загрузить';
+
+        if (dbError) {
+            log.error('Ошибка БД:', dbError);
+            toast('Файл загружен, но запись не создана: ' + dbError.message, 'warning');
+            return;
+        }
+
+        log.info('✅ Файл загружен:', file.name);
+        toast(`Файл «${file.name}» загружен`, 'success');
+
+        hideModal('upload-file-modal');
+        form.reset();
+
+        await renderProjectFiles(project);
+
+    } catch (err) {
+        log.error('❌ Исключение в uploadProjectFile:', err);
+        toast('Ошибка: ' + err.message, 'error');
     }
-
-    const emp = getEmployee();
-    const project = window.__getCurrentProject?.();
-    if (!emp || !project) {
-        toast('Не удалось определить сотрудника или объект', 'error');
-        return;
-    }
-
-    const category = document.getElementById('upload-file-category').value;
-    const fileInput = document.getElementById('upload-file-input');
-    const description = document.getElementById('upload-file-description').value.trim();
-
-    if (!fileInput.files || fileInput.files.length === 0) {
-        toast('Выбери файл', 'error');
-        return;
-    }
-
-    const file = fileInput.files[0];
-
-    // Проверка размера (50 МБ)
-    const maxSize = 50 * 1024 * 1024;
-    if (file.size > maxSize) {
-        toast(`Файл больше 50 МБ (${(file.size / 1024 / 1024).toFixed(1)} МБ)`, 'error');
-        return;
-    }
-
-    const form = event.target;
-    const submitBtn = form.querySelector('button[type="submit"]');
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Загружаем...';
-
-    // Формируем путь: project_<id>/<category>/<timestamp>_<safeName>
-    const safeName = sanitizeFileName(file.name);
-    const path = `project_${project.id}/${category}/${Date.now()}_${safeName}`;
-
-    // 1. Загружаем в Storage
-    const uploadResult = await db.uploadFile('project-files', path, file);
-
-    submitBtn.disabled = false;
-    submitBtn.textContent = '📤 Загрузить';
-
-    if (uploadResult.error) {
-        toast('Ошибка загрузки файла: ' + uploadResult.error.message, 'error');
-        return;
-    }
-
-    // 2. Записываем в БД
-    const { error: dbError } = await db.insert('project_files', {
-        project_id: project.id,
-        file_path: uploadResult.path,
-        file_name: file.name,
-        file_size: file.size,
-        mime_type: file.type || null,
-        category: category,
-        description: description || null,
-        uploaded_by_employee_id: emp.id
-    });
-
-    if (dbError) {
-        log.error('Ошибка записи в БД:', dbError.message);
-        toast('Файл загружен, но запись не создана', 'warning');
-        return;
-    }
-
-    log.info('✅ Файл загружен:', file.name);
-    toast(`Файл «${file.name}» загружен`, 'success');
-
-    hideModal('upload-file-modal');
-    form.reset();
-
-    // Обновляем список
-    await renderProjectFiles(project);
 }
 
 // =====================================================================
-// СКАЧИВАНИЕ ДОП. ФАЙЛА
+// СКАЧИВАНИЕ ФАЙЛА
 // =====================================================================
 
-/**
- * Скачивает файл (получает подписанную ссылку и открывает).
- */
 export async function downloadProjectFile(fileId) {
     const file = currentProjectFiles.find(f => f.id === fileId);
     if (!file) {
@@ -421,19 +412,15 @@ export async function downloadProjectFile(fileId) {
         return;
     }
 
-    // Открываем в новой вкладке (браузер либо покажет, либо скачает)
     window.open(url, '_blank');
 
     log.info('✅ Файл скачан:', file.file_name);
 }
 
 // =====================================================================
-// УДАЛЕНИЕ ДОП. ФАЙЛА
+// УДАЛЕНИЕ ФАЙЛА
 // =====================================================================
 
-/**
- * Удаляет файл из Storage и БД.
- */
 export async function deleteProjectFile(fileId) {
     if (!canManageFiles()) {
         toast('Нет прав на удаление', 'error');
@@ -465,7 +452,6 @@ export async function deleteProjectFile(fileId) {
 
     toast('Файл удалён', 'success');
 
-    // Обновляем список
     const project = window.__getCurrentProject?.();
     if (project) await renderProjectFiles(project);
 }
