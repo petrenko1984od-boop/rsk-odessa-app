@@ -556,6 +556,12 @@
                            class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 </div>
                 <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Исполнитель: *</label>
+                    <select id="new-task-assignee" required class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <option value="">— Загрузка... —</option>
+                    </select>
+                </div>
+                <div>
                     <label class="block text-xs font-semibold text-gray-600 mb-1">Описание:</label>
                     <textarea id="new-task-description" placeholder="Подробности задачи..."
                               class="w-full border rounded-lg p-2.5 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d] h-24"></textarea>
@@ -591,12 +597,6 @@
                         <input type="date" id="new-task-deadline"
                                class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                     </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Исполнитель: *</label>
-                    <select id="new-task-assignee" required class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                        <option value="">— Загрузка... —</option>
-                    </select>
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать задачу</button>
