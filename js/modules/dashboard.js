@@ -198,6 +198,21 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         .reduce((sum, item) => sum + (Number(item.total_price) || 0), 0);
     const unpaidItemsCount = (orderItems || []).filter(item => validOrderIds.has(item.order_id) && (item.payment_status || 'paid') === 'debt').length;
 
+    const unpaidSupplierMap = new Map();
+    const orderMap = new Map((orders || []).map(order => [order.id, order]));
+    (orderItems || [])
+        .filter(item => validOrderIds.has(item.order_id) && (item.payment_status || 'paid') === 'debt')
+        .forEach(item => {
+            const order = orderMap.get(item.order_id);
+            const supplier = order?.supplier || 'Без поставщика';
+            const amount = Number(item.total_price) || 0;
+            unpaidSupplierMap.set(supplier, (unpaidSupplierMap.get(supplier) || 0) + amount);
+        });
+    const supplierRows = [...unpaidSupplierMap.entries()]
+        .map(([supplier, amount]) => ({ supplier, amount }))
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 8);
+
     const projectPlanMap = new Map();
     (sections || []).forEach(section => {
         const projectId = section.project_id;
@@ -254,6 +269,15 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         `;
     }).join('') || '<tr><td colspan="5" class="px-2 py-4 text-center text-sm text-gray-500">Нет данных по объектам.</td></tr>';
 
+    const supplierDebtRows = supplierRows.length
+        ? supplierRows.map((row, index) => `
+            <tr>
+                <td class="px-2 py-3 text-left text-sm font-semibold text-gray-800">${index + 1}. ${escapeHtml(row.supplier)}</td>
+                <td class="px-2 py-3 text-right text-sm font-bold text-red-600">${formatMoney(row.amount)}</td>
+            </tr>
+        `).join('')
+        : '<tr><td colspan="2" class="px-2 py-4 text-center text-sm text-gray-500">Нет задолженности.</td></tr>';
+
     return `
         <div class="w-full min-w-0 space-y-4">
             <div class="flex min-w-0 flex-wrap items-end justify-between gap-3 rounded-xl bg-white px-4 py-4 shadow-sm sm:px-5">
@@ -268,7 +292,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
             <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
                 <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
                     <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <h3 class="text-sm font-bold text-gray-800">💰 Подотчёт по компании</h3>
+                        <h3 class="text-sm font-bold text-gray-800">💰 Подотчёт сотрудников</h3>
                         <span class="text-xs text-gray-400">общий остаток</span>
                     </div>
                     <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
@@ -300,12 +324,23 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
             <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
                 <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
                     <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <h3 class="text-sm font-bold text-gray-800">💳 Задолженность по заявкам материалов</h3>
+                        <h3 class="text-sm font-bold text-gray-800">💳 Задолженность по материалам</h3>
                         <span class="text-xs text-gray-400">неоплаченные позиции</span>
                     </div>
                     <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                         ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'по закрытым / архивным заявкам', unpaidDebt > 0 ? 'amber' : 'emerald')}
                         ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные строки', unpaidItemsCount > 0 ? 'red' : 'emerald')}
+                    </div>
+                    <div class="mt-4">
+                        <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">Рейтинг не оплаченных материалов по поставщикам</p>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead class="border-b text-left text-[11px] uppercase text-gray-500">
+                                    <tr><th class="px-2 py-2">Поставщик</th><th class="px-2 py-2 text-right">Сумма</th></tr>
+                                </thead>
+                                <tbody class="divide-y">${supplierDebtRows}</tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -393,7 +428,7 @@ export async function loadDashboard() {
             }),
             db.select('employee_cash_balance', { select: 'employee_id, balance' }),
             db.select('tasks', { select: 'id, title, project_id, status, deadline, completed_at, created_at' }),
-            db.select('orders', { select: 'id, status, project_id, request_number, created_at' }),
+            db.select('orders', { select: 'id, status, project_id, request_number, supplier, created_at' }),
             db.select('employees', { select: 'id, name, position, status' }),
             db.select('order_items', { select: 'id, order_id, total_price, payment_status' })
         ]);
