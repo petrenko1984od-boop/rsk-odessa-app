@@ -113,15 +113,11 @@
                         <img src="./logo.png" alt="RSK Logo" class="h-8 w-auto object-contain"
                              onerror="this.outerHTML='<span class=\'text-[#15803d] font-bold text-lg px-1\'>RSK</span>'">
                     </div>
-                    <div>
-                        <h1 class="text-base font-bold tracking-wide leading-tight">RSK Odessa</h1>
-                        <p class="text-[10px] text-emerald-100 tracking-wider uppercase">building & repair</p>
-                    </div>
                 </div>
                 <div class="flex flex-wrap gap-2 items-center">
+                    <button onclick="switchTab('tasks')" id="btn-tasks" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Задачи (<span id="tasks-badge">0</span>)</button>
                     <button onclick="switchTab('projects')" id="btn-projects" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты (<span id="projects-badge">0</span>)</button>
                     <button onclick="switchTab('employees')" id="btn-employees" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники (<span id="employees-badge">0</span>)</button>
-                    <button onclick="switchTab('tasks')" id="btn-tasks" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Задачи (<span id="tasks-badge">0</span>)</button>
                     <button onclick="switchTab('orders')" id="btn-orders" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение (<span id="orders-badge">0</span>)</button>
                     <button onclick="switchTab('cash-requests')" id="btn-cash-requests" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Заявки финансов (<span id="cash-requests-badge">0</span>)</button>
                     <button onclick="switchTab('registry')" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
@@ -160,7 +156,6 @@
 
             <!-- ДАШБОРД СОТРУДНИКА -->
             <section id="tab-welcome" class="space-y-4">
-                <div id="dashboard-content"></div>
                 <div id="director-welcome" class="hidden rounded-xl border-t-4 border-[#15803d] bg-white p-8 text-center shadow-md">
                     <div class="text-5xl">🚧</div>
                     <h2 class="mt-3 text-lg font-bold text-gray-800">Добро пожаловать!</h2>
@@ -249,6 +244,8 @@
 
             <!-- ЗАДАЧИ -->
             <section id="tab-tasks" class="hidden space-y-4">
+                <div id="dashboard-content"></div>
+                <div id="tasks-content">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
                     <div>
                         <h2 class="text-lg font-bold text-gray-800">📋 Задачи</h2>
@@ -266,6 +263,7 @@
                 </div>
 
                 <div id="tasks-container" class="space-y-3"></div>
+                </div>
             </section>
 
             <!-- СНАБЖЕНИЕ -->

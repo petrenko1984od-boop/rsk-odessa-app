@@ -6,11 +6,11 @@ import { db } from '../database.js';
 import { escapeHtml, formatDate, formatMoney } from '../utils.js';
 import { getEmployee } from '../permissions.js';
 
-const DASHBOARD_EXCLUDED_ROLES = ['Директор', 'Главный инженер'];
+const DASHBOARD_ROLES = ['Прораб', 'Сметчик', 'Инженер ПТО'];
 
 export function shouldShowEmployeeDashboard() {
     const position = getEmployee()?.position;
-    return Boolean(position) && !DASHBOARD_EXCLUDED_ROLES.includes(position);
+    return DASHBOARD_ROLES.includes(position);
 }
 
 function isActiveProject(project) {

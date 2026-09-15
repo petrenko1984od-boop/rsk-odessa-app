@@ -143,11 +143,22 @@ export function switchTab(tabId) {
 
     if (tabId === 'projects') loadProjects();
     if (tabId === 'employees') loadEmployees();
-    if (tabId === 'tasks') loadTasks();
+    if (tabId === 'tasks') {
+        const dashboard = document.getElementById('dashboard-content');
+        const tasksContent = document.getElementById('tasks-content');
+        if (shouldShowEmployeeDashboard()) {
+            if (dashboard) dashboard.classList.remove('hidden');
+            if (tasksContent) tasksContent.classList.add('hidden');
+            loadDashboard();
+        } else {
+            if (dashboard) dashboard.classList.add('hidden');
+            if (tasksContent) tasksContent.classList.remove('hidden');
+            loadTasks();
+        }
+    }
     if (tabId === 'orders') loadOrders();
     if (tabId === 'cash-requests') loadCashRequests();
     if (tabId === 'registry') loadRegistry();
-    if (tabId === 'welcome' && shouldShowEmployeeDashboard()) loadDashboard();
 }
 
 window.switchTab = switchTab;
@@ -508,15 +519,14 @@ async function startApp(user) {
     const dashboard = document.getElementById('dashboard-content');
     const directorWelcome = document.getElementById('director-welcome');
     if (shouldShowEmployeeDashboard()) {
-        if (dashboard) dashboard.classList.remove('hidden');
+        if (dashboard) dashboard.classList.add('hidden');
         if (directorWelcome) directorWelcome.classList.add('hidden');
-        await loadDashboard();
+        switchTab('tasks');
     } else {
         if (dashboard) dashboard.classList.add('hidden');
         if (directorWelcome) directorWelcome.classList.remove('hidden');
+        switchTab('welcome');
     }
-
-    switchTab('welcome');
 
     AppState.isReady = true;
     log.info('✅ Приложение готово');
