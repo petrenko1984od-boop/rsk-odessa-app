@@ -183,6 +183,81 @@ export function switchTasksTab(filter) {
     renderTasks();
 }
 
+export function openTaskFilterModal(filter) {
+    currentFilter = filter;
+
+    const labels = {
+        active: 'Активные задачи',
+        pending: 'Новые задачи',
+        in_progress: 'Задачи в работе',
+        done: 'Выполненные задачи',
+        all: 'Все задачи',
+        overdue: 'Просроченные задачи',
+        done_30: 'Выполненные за 30 дней'
+    };
+
+    const modalTitle = document.getElementById('task-filter-title');
+    if (modalTitle) modalTitle.textContent = labels[filter] || 'Задачи';
+
+    const filtered = getFilteredTasks();
+    const container = document.getElementById('task-filter-content');
+    if (!container) return;
+
+    if (filtered.length === 0) {
+        container.innerHTML = `
+            <div class="rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 p-8 text-center">
+                <div class="text-4xl">📋</div>
+                <p class="mt-3 text-sm text-gray-500">Нет задач по выбранному фильтру.</p>
+            </div>
+        `;
+        showModal('task-filter-modal');
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <table class="min-w-full border-collapse text-sm text-gray-800">
+                <thead class="bg-gray-50 text-left text-[11px] font-bold uppercase tracking-wide text-gray-600">
+                    <tr>
+                        <th class="border-b border-gray-200 px-3 py-2">Заголовок</th>
+                        <th class="border-b border-gray-200 px-3 py-2">Объект</th>
+                        <th class="border-b border-gray-200 px-3 py-2">Исполнитель</th>
+                        <th class="border-b border-gray-200 px-3 py-2">Дедлайн</th>
+                        <th class="border-b border-gray-200 px-3 py-2">Статус</th>
+                        <th class="border-b border-gray-200 px-3 py-2">Автор</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${filtered.map(task => {
+                        const statusInfo = getTaskStatusInfo(task.status);
+                        const projectName = task.project?.name || 'Без объекта';
+                        const assigneeName = task.assignee?.name || '—';
+                        const authorName = task.author?.name || '—';
+                        const deadline = task.deadline ? formatDate(task.deadline) : '—';
+                        const title = task.title || task.text || '—';
+
+                        return `
+                            <tr onclick="window.openTaskDetail(${task.id}); window.hideModal('task-filter-modal');"
+                                class="cursor-pointer border-b border-gray-200 last:border-0 transition hover:bg-emerald-50/60">
+                                <td class="px-3 py-2 align-top font-semibold text-gray-800">${escapeHtml(title)}</td>
+                                <td class="px-3 py-2 align-top text-gray-600">${escapeHtml(projectName)}</td>
+                                <td class="px-3 py-2 align-top text-gray-600">${escapeHtml(assigneeName)}</td>
+                                <td class="px-3 py-2 align-top text-gray-600">${deadline}</td>
+                                <td class="px-3 py-2 align-top">
+                                    <span class="inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${statusInfo.bg} ${statusInfo.color}">${statusInfo.label}</span>
+                                </td>
+                                <td class="px-3 py-2 align-top text-gray-600">${escapeHtml(authorName)}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    showModal('task-filter-modal');
+}
+
 // =====================================================================
 // РЕНДЕР СПИСКА
 // =====================================================================
@@ -235,7 +310,7 @@ function renderTaskCard(task) {
 
     return `
         <button onclick="window.openTaskDetail(${task.id})"
-                class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex flex-col gap-3 border-l-4 ${isOverdue ? 'border-red-500' : statusInfo.border} hover:bg-emerald-50/50 transition cursor-pointer group">
+            class="w-full text-left rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex flex-col gap-3 border-l-4 ${isOverdue ? 'border-red-500' : statusInfo.border} hover:bg-emerald-50/50 transition cursor-pointer group">
             <div class="flex justify-between items-start gap-2 w-full">
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs font-bold px-2 py-0.5 rounded ${priorityInfo.bg} ${priorityInfo.color}">${priorityInfo.label}</span>
@@ -1007,6 +1082,7 @@ function sanitizeFileName(originalName) {
 // =====================================================================
 
 window.openTaskDetail = openTaskDetail;
+window.openTaskFilterModal = openTaskFilterModal;
 window.switchTasksTab = switchTasksTab;
 window.viewTaskPhoto = viewTaskPhoto;
 window.openNewTaskForm = openNewTaskForm;

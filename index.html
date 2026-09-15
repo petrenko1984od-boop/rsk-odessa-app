@@ -618,6 +618,20 @@
         </div>
     </div>
 
+    <!-- СПИСОК ЗАДАЧ ПО ФИЛЬТРУ -->
+    <div id="task-filter-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[75]">
+        <div class="bg-white rounded-xl shadow-lg max-w-6xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 id="task-filter-title" class="text-lg font-bold text-gray-800">📋 Задачи</h3>
+                <button onclick="hideModal('task-filter-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="task-filter-content" class="space-y-3 text-sm text-gray-800"></div>
+            <div class="pt-2 border-t flex justify-end">
+                <button onclick="hideModal('task-filter-modal')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ВЫПОЛНЕНИЕ ЗАДАЧИ -->
     <div id="complete-task-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">

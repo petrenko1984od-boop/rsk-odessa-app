@@ -153,9 +153,9 @@ function renderTaskSummary(tasks) {
 
     return `
         <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-            ${renderMetric('📌', 'Активные', active, 'pending + in_progress', 'blue', "switchTab('tasks'); switchTasksTab('active');")}
-            ${renderMetric('⏰', 'Просроченные', overdue, 'дедлайн уже прошёл', overdue ? 'red' : 'emerald', "switchTab('tasks'); switchTasksTab('overdue');")}
-            ${renderMetric('✅', 'Выполнено за 30 дней', done30, 'статус done', 'emerald', "switchTab('tasks'); switchTasksTab('done_30');")}
+            ${renderMetric('📌', 'Активные', active, 'pending + in_progress', 'blue', "switchTab('tasks'); openTaskFilterModal('active');")}
+            ${renderMetric('⏰', 'Просроченные', overdue, 'дедлайн уже прошёл', overdue ? 'red' : 'emerald', "switchTab('tasks'); openTaskFilterModal('overdue');")}
+            ${renderMetric('✅', 'Выполнено за 30 дней', done30, 'статус done', 'emerald', "switchTab('tasks'); openTaskFilterModal('done_30');")}
         </div>
     `;
 }
