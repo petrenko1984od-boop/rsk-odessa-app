@@ -26,8 +26,16 @@ import { CONFIG } from '../config.js';
 
 let currentProjectFiles = []; // Файлы текущего объекта
 
-// Все файлы хранятся в одной категории
-const DEFAULT_CATEGORY = 'documentation';
+// Файлы объекта должны храниться в категории, которая допускается CHECK constraint в таблице project_files.
+// При несовпадении значений БД отбрасывает запись, поэтому используем безопасный допустимый тип.
+const DEFAULT_CATEGORY = 'project';
+const PROJECT_FILE_CATEGORY_FALLBACK = 'project';
+
+function normalizeProjectFileCategory(category) {
+    const allowed = ['project', 'photo', 'other', 'document', 'drawing'];
+    const safeValue = String(category || '').trim().toLowerCase();
+    return allowed.includes(safeValue) ? safeValue : PROJECT_FILE_CATEGORY_FALLBACK;
+}
 
 // =====================================================================
 // ПРАВА
@@ -287,7 +295,7 @@ export function openUploadFileModal() {
         return;
     }
 
-    document.getElementById('upload-file-category').value = DEFAULT_CATEGORY;
+    document.getElementById('upload-file-category').value = normalizeProjectFileCategory(DEFAULT_CATEGORY);
     document.getElementById('upload-file-modal-title').textContent = '📤 Загрузить файл';
     document.getElementById('upload-file-input').value = '';
     document.getElementById('upload-file-description').value = '';
@@ -336,11 +344,13 @@ export async function uploadProjectFile(event) {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Загружаем...';
 
+        const safeCategory = normalizeProjectFileCategory(DEFAULT_CATEGORY);
+
         log.info('Загрузка файла:', file.name, '(', (file.size / 1024 / 1024).toFixed(2), 'МБ)');
 
         // Формируем путь
         const safeName = sanitizeFileName(file.name);
-        const path = `project_${project.id}/${DEFAULT_CATEGORY}/${Date.now()}_${safeName}`;
+        const path = `project_${project.id}/${safeCategory}/${Date.now()}_${safeName}`;
 
         log.info('Путь в Storage:', path);
 
@@ -364,7 +374,7 @@ export async function uploadProjectFile(event) {
             file_name: file.name,
             file_size: file.size,
             mime_type: file.type || null,
-            category: DEFAULT_CATEGORY,
+            category: safeCategory,
             description: description || null,
             uploaded_by_employee_id: emp.id
         });
