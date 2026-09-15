@@ -222,12 +222,6 @@ export async function renderProjectFiles(project) {
     }
 
     container.innerHTML = `
-        <div class="flex justify-between items-center">
-            <h4 class="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2">
-                📁 Документация объекта
-                <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-normal">${files.length}</span>
-            </h4>
-        </div>
         <div class="space-y-1.5">
             ${files.map(f => renderFileRow(f, canManage)).join('')}
         </div>
