@@ -258,8 +258,8 @@ export async function deleteEstimate(project) {
 /**
  * Рендерит блок сметы в контейнере #estimate-block.
  * Кнопка «Оригинал» (xlsx) — только для редакторов.
- * Кнопка «📥 PDF» — для всех.
- * Кнопка «🗑 Удалить» — только для редакторов.
+ * Кнопка «� Удалить» — только для редакторов.
+ * PDF-скачивание отключено: оставляем только Excel.
  */
 export function renderEstimateUI(project) {
     const container = document.getElementById('estimate-block');
@@ -283,15 +283,10 @@ export function renderEstimateUI(project) {
                         ${canManage ? `
                             <button onclick="window.viewEstimateFile(${project.id})" 
                                     class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1.5 rounded-lg font-semibold transition"
-                                    title="Скачать оригинал xlsx">
-                                👁 Оригинал
+                                    title="Скачать Excel">
+                                📥 Excel
                             </button>
                         ` : ''}
-                        <button onclick="window.downloadEstimatePDF()" 
-                                class="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg font-semibold transition"
-                                title="Скачать PDF">
-                            📥 PDF
-                        </button>
                         ${canManage ? `
                             <button onclick="window.deleteEstimateUI(${project.id})" 
                                     class="bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1.5 rounded-lg transition"
