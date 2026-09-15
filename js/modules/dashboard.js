@@ -151,8 +151,8 @@ export async function loadDashboard() {
             const foremanTasks = (tasksResult.data || []).filter(task => projectIds.has(task.project_id));
 
             container.innerHTML = `
-                <div class="space-y-4">
-                    <div class="flex flex-wrap items-end justify-between gap-3">
+                <div class="w-full min-w-0 space-y-4">
+                    <div class="flex min-w-0 flex-wrap items-end justify-between gap-3 rounded-xl bg-white px-4 py-4 shadow-sm sm:px-5">
                         <div>
                             <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Рабочий экран</p>
                             <h2 class="mt-1 text-2xl font-bold text-gray-800">Задания от руководства</h2>
@@ -160,7 +160,7 @@ export async function loadDashboard() {
                         </div>
                         <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
                     </div>
-                    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
                         ${renderForemanTasks(foremanTasks, projectsResult.data || [])}
                     </div>
                 </div>
@@ -205,8 +205,8 @@ export async function loadDashboard() {
     const scopeLabel = isForeman ? 'по вашим объектам' : 'по компании';
 
     container.innerHTML = `
-        <div class="space-y-4">
-            <div class="flex flex-wrap items-end justify-between gap-3">
+        <div class="w-full min-w-0 space-y-4">
+            <div class="flex min-w-0 flex-wrap items-end justify-between gap-3 rounded-xl bg-white px-4 py-4 shadow-sm sm:px-5">
                 <div>
                     <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Рабочий обзор</p>
                     <h2 class="mt-1 text-2xl font-bold text-gray-800">Добрый день, ${escapeHtml(employee?.name || 'коллега')}</h2>
@@ -215,14 +215,14 @@ export async function loadDashboard() {
                 <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
             </div>
 
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 ${renderMetric('🏗', 'Объекты', activeProjects.length, `Всего: ${projects.length}`, 'emerald')}
                 ${renderMetric('📊', 'План vs факт', formatMoney(fact), `План: ${formatMoney(plan)}`, fact > plan ? 'red' : 'blue')}
                 ${renderMetric('💰', 'Задолженность', formatMoney(debt), isForeman ? 'Ваш подотчёт' : 'По подотчётам сотрудников', debt > 0 ? 'amber' : 'emerald')}
                 ${renderMetric('⏰', 'Просроченные задачи', overdueTasks.length, `Всего задач: ${tasks.length}`, overdueTasks.length ? 'red' : 'emerald')}
             </div>
 
-            <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
                 <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-1">
                     <div class="flex items-center justify-between gap-2 border-b pb-3">
                         <h3 class="text-sm font-bold text-gray-800">💰 Баланс сотрудников</h3>
