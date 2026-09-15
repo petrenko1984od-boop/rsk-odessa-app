@@ -269,7 +269,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                 <div>
                     <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Дашборд руководителя</p>
                     <h2 class="mt-1 text-2xl font-bold text-gray-800">Компания в целом</h2>
-                    <p class="mt-1 text-sm text-gray-500">Финансы, сотрудники и задачи по текущему состоянию</p>
+                    <p class="mt-1 text-sm text-gray-500">Финансы, задачи, задолженности</p>
                 </div>
                 <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
             </div>
@@ -277,14 +277,14 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
             <div class="flex min-w-0 flex-col gap-3">
                 <details open class="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
                     <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-5 py-4 font-bold text-gray-800 [&::-webkit-details-marker]:hidden">
-                        <span>💰 Подотчёт сотрудников</span>
+                        <span>💰 Баланс сотрудников</span>
                         <span class="text-xs font-normal text-gray-400">общий остаток ·⌄</span>
                     </summary>
                     <div class="border-t border-gray-200 p-5">
                     <div class="mt-4 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
                         ${renderMetric('💵', 'Общий баланс', formatMoney(totalBalance), 'все сотрудники', totalBalance >= 0 ? 'emerald' : 'amber')}
-                        ${renderMetric('📉', 'С отрицательным балансом', negative.length, 'должники по подотчёту', 'red')}
-                        ${renderMetric('📈', 'С большим остатком', positive.length, 'сотрудники с плюсом', 'blue')}
+                        ${renderMetric('📉', 'С отрицательным балансом', negative.length, 'сотрудники с отрицательным балансом', 'red')}
+                        ${renderMetric('📈', 'С большим остатком', positive.length, 'сотрудники с положительным балансом', 'blue')}
                     </div>
                     <div class="mt-4 grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
                         <div>
@@ -326,8 +326,8 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                     </summary>
                     <div class="border-t border-gray-200 p-5">
                     <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-                    ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'по закрытым / архивным заявкам', unpaidDebt > 0 ? 'amber' : 'emerald')}
-                    ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные строки', unpaidItemsCount > 0 ? 'red' : 'emerald')}
+                    ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'закрытые заявки', unpaidDebt > 0 ? 'amber' : 'emerald')}
+                    ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные позиции', unpaidItemsCount > 0 ? 'red' : 'emerald')}
                 </div>
                 <div class="mt-4">
                     <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">Рейтинг не оплаченных материалов по поставщикам</p>
