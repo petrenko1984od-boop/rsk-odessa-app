@@ -451,8 +451,14 @@ export function openMaterialOverrunDetail(index) {
         </div>
     `;
     projectButton.onclick = () => {
+        const projectId = row.project?.id || row.id;
+        if (!projectId || typeof window.openProjectDetail !== 'function') {
+            log.error('Не удалось открыть объект из рейтинга:', { projectId, row });
+            return;
+        }
+
         hideModal('material-overrun-modal');
-        window.openProjectDetail?.(row.id);
+        window.openProjectDetail(projectId);
     };
     showModal('material-overrun-modal');
 }

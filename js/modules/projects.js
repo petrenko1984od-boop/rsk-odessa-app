@@ -219,7 +219,7 @@ export async function openProjectDetail(id) {
     // 7. Показываем карточку
     const detailEl = document.getElementById('tab-project-detail');
     if (detailEl) {
-        ['welcome', 'projects', 'employees', 'orders', 'registry', 'new-order'].forEach(t => {
+        ['welcome', 'projects', 'employees', 'tasks', 'orders', 'registry', 'new-order'].forEach(t => {
             const el = document.getElementById(`tab-${t}`);
             if (el) el.classList.add('hidden');
         });
