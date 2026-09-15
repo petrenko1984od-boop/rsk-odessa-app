@@ -75,6 +75,60 @@ function renderOperations(operations, employees) {
     }).join('');
 }
 
+function renderForemanTasks(tasks, projects) {
+    const projectMap = new Map((projects || []).map(project => [project.id, project.name]));
+    const groups = [
+        { status: 'pending', title: 'Новые', tone: 'yellow' },
+        { status: 'in_progress', title: 'В работе', tone: 'blue' },
+        { status: 'done', title: 'Законченные', tone: 'green' }
+    ];
+
+    return groups.map(group => {
+        const groupTasks = tasks.filter(task => task.status === group.status);
+        return `
+            <section class="rounded-xl bg-white p-5 shadow-sm">
+                <div class="flex items-center justify-between gap-2 border-b pb-3">
+                    <h3 class="text-sm font-bold text-gray-800">${group.title}</h3>
+                    <span class="rounded-full bg-${group.tone}-100 px-2 py-1 text-xs font-bold text-${group.tone}-800">${groupTasks.length}</span>
+                </div>
+                <div class="mt-2 space-y-2">
+                    ${groupTasks.length ? groupTasks.map(task => `
+                        <button onclick="window.openTaskDetail(${task.id})" class="w-full rounded-lg border p-3 text-left transition hover:bg-emerald-50/60">
+                            <p class="text-sm font-semibold text-gray-800">${escapeHtml(task.title || task.text || 'Без названия')}</p>
+                            <p class="mt-1 text-xs text-gray-500">${escapeHtml(projectMap.get(task.project_id) || 'Объект не указан')}${task.deadline ? ` · Срок: ${formatDate(task.deadline)}` : ''}</p>
+                        </button>
+                    `).join('') : '<p class="py-3 text-sm text-gray-500">Заданий нет.</p>'}
+                </div>
+            </section>
+        `;
+    }).join('');
+}
+
+function renderEmployeeBalances(balances, employees) {
+    const employeeMap = new Map((employees || []).map(employee => [employee.id, employee]));
+    const rows = (balances || []).map(balance => ({
+        ...balance,
+        employee: employeeMap.get(balance.employee_id)
+    })).filter(item => item.employee);
+
+    if (!rows.length) return '<p class="text-sm text-gray-500">Балансов пока нет.</p>';
+
+    return `
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[420px] text-sm">
+                <thead class="border-b text-left text-[11px] uppercase text-gray-500"><tr><th class="px-2 py-2">Сотрудник</th><th class="px-2 py-2">Должность</th><th class="px-2 py-2 text-right">Баланс</th></tr></thead>
+                <tbody class="divide-y">
+                    ${rows.map(item => {
+                        const value = Number(item.balance) || 0;
+                        const tone = value < 0 ? 'text-red-700' : value > 0 ? 'text-emerald-700' : 'text-gray-500';
+                        return `<tr><td class="px-2 py-3 font-semibold text-gray-800">${escapeHtml(item.employee.name || '—')}</td><td class="px-2 py-3 text-gray-500">${escapeHtml(item.employee.position || '—')}</td><td class="px-2 py-3 text-right font-bold ${tone}">${formatMoney(value)}</td></tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
 export async function loadDashboard() {
     const container = document.getElementById('dashboard-content');
     if (!container) return;
@@ -82,7 +136,37 @@ export async function loadDashboard() {
     container.innerHTML = '<div class="rounded-xl bg-white p-8 text-center text-sm text-gray-500 shadow-sm">Загрузка показателей...</div>';
 
     const employee = getEmployee();
-    const isForeman = employee?.position === 'Прораб';
+        const isForeman = employee?.position === 'Прораб';
+
+        if (isForeman) {
+            const [tasksResult, projectsResult] = await Promise.all([
+                db.select('tasks', {
+                    filters: { assignee_employee_id: employee.id },
+                    orderBy: { column: 'created_at', asc: false }
+                }),
+                db.select('projects', { select: 'id, name, foreman_id', filters: { foreman_id: employee.id } })
+            ]);
+
+            const projectIds = new Set((projectsResult.data || []).map(project => project.id));
+            const foremanTasks = (tasksResult.data || []).filter(task => projectIds.has(task.project_id));
+
+            container.innerHTML = `
+                <div class="space-y-4">
+                    <div class="flex flex-wrap items-end justify-between gap-3">
+                        <div>
+                            <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Рабочий экран</p>
+                            <h2 class="mt-1 text-2xl font-bold text-gray-800">Задания от руководства</h2>
+                            <p class="mt-1 text-sm text-gray-500">Только ваши задания по объектам, где вы ответственный</p>
+                        </div>
+                        <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
+                    </div>
+                    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                        ${renderForemanTasks(foremanTasks, projectsResult.data || [])}
+                    </div>
+                </div>
+            `;
+            return;
+        }
 
     const [projectsResult, sectionsResult, expensesResult, balancesResult, tasksResult, ordersResult, operationsResult, employeesResult] = await Promise.all([
         db.select('projects', { select: 'id, name, foreman_id' }),
@@ -92,7 +176,7 @@ export async function loadDashboard() {
         db.select('tasks', { select: 'id, title, project_id, status, deadline, created_at' }),
         db.select('orders', { select: 'id, project_id, request_number, status, created_at' }),
         db.select('cash_operations', { select: 'id, employee_id, project_id, operation_type, amount, operation_date, created_at', orderBy: { column: 'created_at', asc: false }, limit: 20 }),
-        db.select('employees', { select: 'id, name' })
+        db.select('employees', { select: 'id, name, position' })
     ]);
 
     const allProjects = projectsResult.data || [];
@@ -141,17 +225,10 @@ export async function loadDashboard() {
             <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <div class="rounded-xl bg-white p-5 shadow-sm lg:col-span-1">
                     <div class="flex items-center justify-between gap-2 border-b pb-3">
-                        <h3 class="text-sm font-bold text-gray-800">📦 Заявки в работе</h3>
-                        <span class="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800">${activeOrders.length}</span>
+                        <h3 class="text-sm font-bold text-gray-800">💰 Баланс сотрудников</h3>
+                        <span class="text-xs text-gray-400">получено − потрачено</span>
                     </div>
-                    <div class="mt-2">
-                        ${activeOrders.length ? activeOrders.slice(0, 5).map(order => `
-                            <div class="border-b border-gray-100 py-3 last:border-0">
-                                <p class="text-sm font-semibold text-gray-800">${escapeHtml(order.request_number || `Заявка #${order.id}`)}</p>
-                                <p class="text-xs text-gray-500">${order.status === 'in_progress' ? 'В работе' : 'Новая'} · ${formatDate(order.created_at)}</p>
-                            </div>
-                        `).join('') : '<p class="py-3 text-sm text-gray-500">Заявок в работе нет.</p>'}
-                    </div>
+                    <div class="mt-2">${renderEmployeeBalances(balances, employees)}</div>
                 </div>
 
                 <div class="rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
