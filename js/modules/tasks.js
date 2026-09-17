@@ -21,7 +21,7 @@ import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatMoney, parseNumber
 } from '../utils.js';
-import { getEmployee } from '../permissions.js';
+import { can, getEmployee } from '../permissions.js';
 import { CONFIG } from '../config.js';
 
 // =====================================================================
@@ -40,23 +40,14 @@ let currentTaskId = null;
  * Может ли текущий пользователь создавать задачи?
  */
 export function canCreateTask() {
-    const role = getEmployee()?.position;
-    if (!role) return false;
-    return role === 'Администратор' 
-        || role === 'Директор' 
-        || role === 'Главный инженер' 
-        || role === 'Инженер ПТО';
+    return can('create_task');
 }
 
 /**
  * Может ли текущий пользователь быть исполнителем задачи?
  */
 export function canBeAssignee() {
-    const role = getEmployee()?.position;
-    if (!role) return false;
-    return role === 'Прораб' 
-        || role === 'Снабженец' 
-        || role === 'Инженер ПТО';
+    return can('become_task_assignee');
 }
 
 /**
@@ -66,7 +57,7 @@ export function canBeAssignee() {
 function canCancelTask(task) {
     const emp = getEmployee();
     if (!emp) return false;
-    if (emp.position === 'Администратор') return true;
+    if (can('cancel_any_task')) return true;
     return task.author_employee_id === emp.id;
 }
 
@@ -82,7 +73,7 @@ function canCompleteTask(task) {
 
 /**
  * Видит ли текущий пользователь эту задачу?
- * - Админ/Директор — все.
+ * - Админ/Директор — все (право view_all_tasks).
  * - Автор — свои (что поставил).
  * - Исполнитель — свои (что назначены).
  */
@@ -90,7 +81,7 @@ function canSeeTask(task) {
     const emp = getEmployee();
     if (!emp) return false;
 
-    if (emp.position === 'Администратор' || emp.position === 'Директор') return true;
+    if (can('view_all_tasks')) return true;
     if (task.author_employee_id === emp.id) return true;
     if (task.assignee_employee_id === emp.id) return true;
 
@@ -400,6 +391,28 @@ export async function openTaskDetail(id) {
            </div>`
         : '';
 
+    // Комментарии (хранятся в tasks.comments как JSONB-массив)
+    const comments = Array.isArray(task.comments) ? task.comments : [];
+    const commentsBlock = `
+        <div class="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+            <p class="font-bold text-gray-500 uppercase tracking-wider">💬 Комментарии (${comments.length})</p>
+            ${comments.length === 0
+                ? '<p class="text-gray-400 italic">Комментариев пока нет</p>'
+                : comments.map(comment => `
+                    <div class="bg-white border border-gray-200 rounded-lg p-2 space-y-0.5">
+                        <p class="text-gray-700 whitespace-pre-line">${escapeHtml(comment.text || '')}</p>
+                        <p class="text-[10px] text-gray-500">👤 ${escapeHtml(comment.author || '—')} · 📅 ${formatDate(comment.date)}</p>
+                    </div>
+                `).join('')}
+            <div class="flex gap-2 pt-1">
+                <input type="text" id="task-comment-input" maxlength="1000" placeholder="Написать комментарий..."
+                       class="flex-1 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                <button type="button" onclick="window.addTaskComment(${task.id})"
+                        class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-3 py-2 rounded-lg text-xs transition">Отправить</button>
+            </div>
+        </div>
+    `;
+
     const container = document.getElementById('task-detail-content');
     if (!container) return;
 
@@ -433,7 +446,20 @@ export async function openTaskDetail(id) {
         ${photoHtml}
 
         ${completionBlock}
+
+        ${commentsBlock}
     `;
+
+    // Отправка комментария по Enter
+    const commentInput = document.getElementById('task-comment-input');
+    if (commentInput) {
+        commentInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                addTaskComment(id);
+            }
+        });
+    }
 
     renderTaskActions(task);
     showModal('task-detail-modal');
@@ -1000,13 +1026,22 @@ export async function deleteTask(id) {
  */
 export async function addTaskComment(id) {
     const task = tasksCache.find(t => t.id === id);
-    if (!task) return;
+
+    if (!task || !canSeeTask(task)) {
+        toast('Нет доступа к этой задаче', 'error');
+        return;
+    }
 
     const input = document.getElementById('task-comment-input');
     const text = input?.value.trim();
 
     if (!text) {
         toast('Введи комментарий', 'error');
+        return;
+    }
+
+    if (text.length > 1000) {
+        toast('Комментарий слишком длинный (максимум 1000 символов)', 'error');
         return;
     }
 

@@ -20,7 +20,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, formatMoney,
-    formatDate
+    formatDate, roundMoney
 } from '../utils.js';
 
 // =====================================================================
@@ -59,7 +59,10 @@ export async function loadRegistry() {
             section:sections ( id, name ),
             created_by_emp:employees!orders_created_by_employee_id_fkey ( id, name )
         `,
-        filters: { payment_source: 'company' }
+        filters: {
+            payment_source: 'company',
+            'status.in': ['closed', 'archived']   // фильтруем на сервере, а не в JS
+        }
     });
 
     if (ordersError) {
@@ -75,7 +78,8 @@ export async function loadRegistry() {
         // Загружаем order_items для этих заявок
         const orderIds = firmOrders.map(o => o.id);
         const { data: allOrderItems } = await db.select('order_items', {
-            filters: {}
+            select: 'id, order_id, name, unit, qty, unit_price, total_price, payment_status',
+            filters: { 'order_id.in': orderIds }
         });
 
         // Фильтруем items по нашим заявкам
@@ -137,7 +141,8 @@ export async function loadRegistry() {
         let orderNumbersMap = {};
         if (orderIdsForNumbers.length > 0) {
             const { data: ordersData } = await db.select('orders', {
-                select: 'id, request_number, supplier'
+                select: 'id, request_number, supplier',
+                filters: { 'id.in': orderIdsForNumbers }
             });
             (ordersData || []).forEach(o => { 
                 if (orderIdsForNumbers.includes(o.id)) {
@@ -306,7 +311,7 @@ export function renderRegistry() {
 
     const data = getFilteredData();
 
-    const totalSum = data.reduce((sum, i) => sum + (Number(i.sum) || 0), 0);
+    const totalSum = roundMoney(data.reduce((sum, i) => sum + (Number(i.sum) || 0), 0));
     const countEl = document.getElementById('registry-count');
     const sumEl = document.getElementById('registry-total-sum');
     if (countEl) countEl.textContent = data.length;

@@ -17,7 +17,7 @@ import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatMoney
 } from '../utils.js';
-import { getEmployee } from '../permissions.js';
+import { can, getEmployee } from '../permissions.js';
 import { CONFIG } from '../config.js';
 
 // =====================================================================
@@ -46,11 +46,7 @@ function normalizeProjectFileCategory(category) {
  * Только Админ / Гл. инженер / Инженер ПТО.
  */
 export function canManageFiles() {
-    const role = getEmployee()?.position;
-    if (!role) return false;
-    return role === 'Администратор'
-        || role === 'Главный инженер'
-        || role === 'Инженер ПТО';
+    return can('manage_files');
 }
 
 // =====================================================================

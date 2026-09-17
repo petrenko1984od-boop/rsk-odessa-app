@@ -18,7 +18,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatMoney
+    formatDate, formatMoney, roundMoney
 } from '../utils.js';
 import {
     can, requirePermission, getEmployee, isAdmin
@@ -38,21 +38,17 @@ let currentOrderId = null;    // Открытая карточка заявки
 
 /**
  * Может ли текущий пользователь создавать заявки?
+ * Право 'create_order' есть у всех, кроме Директора (см. permissions.js).
  */
 function canCreateOrder() {
-    const role = getEmployee()?.position;
-    if (!role) return false;
-    if (role === 'Директор') return false;
-    return true;
+    return can('create_order');
 }
 
 /**
  * Может ли текущий пользователь обрабатывать заявки?
  */
 function canProcessOrder() {
-    const role = getEmployee()?.position;
-    if (!role) return false;
-    return role === 'Снабженец' || role === 'Администратор';
+    return can('process_order');
 }
 
 /**
@@ -614,10 +610,7 @@ export async function saveNewOrder(event) {
         return;
     }
 
-    const requestNumber = await generateOrderNumber();
-
     const orderPayload = {
-        request_number: requestNumber,
         project_id: projectId,
         section_id: sectionId,
         status: 'new',
@@ -627,7 +620,40 @@ export async function saveNewOrder(event) {
         payment_source: 'company'
     };
 
-    const { data: orderData, error: orderError } = await db.insert('orders', orderPayload);
+    // Номер заявки берём как «максимум за год + 1» (см. db.getNextRequestNumber).
+    // Если тот же номер успел занять другой пользователь — БД вернёт 23505,
+    // и мы просто запрашиваем следующий номер (до 3 попыток).
+    let requestNumber = null;
+    let orderData = null;
+    let orderError = null;
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const { requestNumber: nextNumber, error: numberError } = await db.getNextRequestNumber();
+
+        if (numberError || !nextNumber) {
+            log.error('Не удалось получить номер заявки:', numberError?.message || 'нет данных');
+            toast('Не удалось получить номер заявки. Попробуйте ещё раз.', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = '💾 Создать заявку';
+            return;
+        }
+
+        const { data, error } = await db.insert('orders', { ...orderPayload, request_number: nextNumber });
+
+        if (!error) {
+            requestNumber = nextNumber;
+            orderData = data;
+            orderError = null;
+            break;
+        }
+
+        orderError = error;
+
+        // 23505 — нарушение UNIQUE(request_number): номер уже занят, берём следующий
+        if (error.code !== '23505') break;
+
+        log.warn(`Номер ${nextNumber} уже занят, пробуем следующий (попытка ${attempt} из 3)`);
+    }
 
     if (orderError) {
         log.error('Ошибка создания заявки:', orderError.message);
@@ -662,22 +688,6 @@ export async function saveNewOrder(event) {
 
     await loadOrders();
     switchTab('orders');
-}
-
-async function generateOrderNumber() {
-    const year = new Date().getFullYear();
-    const yearShort = String(year).slice(-2);
-
-    const startOfYear = `${year}-01-01T00:00:00`;
-    const startOfNextYear = `${year + 1}-01-01T00:00:00`;
-
-    const { count } = await db.count('orders', {
-        'created_at.gte': startOfYear,
-        'created_at.lt': startOfNextYear
-    });
-
-    const nextNumber = (count || 0) + 1;
-    return `№ ${nextNumber}/${yearShort}`;
 }
 
 // =====================================================================
@@ -810,7 +820,7 @@ export function recalcCloseOrderTotal() {
     rows.forEach(row => {
         const qty = parseFloat(row.dataset.itemQty) || 0;
         const price = parseFloat(row.querySelector('.close-order-price')?.value) || 0;
-        total += qty * price;
+        total = roundMoney(total + qty * price);
     });
 
     const totalEl = document.getElementById('close-order-total');
@@ -864,8 +874,8 @@ export async function closeOrder(event) {
             return;
         }
 
-        const totalPrice = qty * unitPrice;
-        totalSum += totalPrice;
+        const totalPrice = roundMoney(qty * unitPrice);
+        totalSum = roundMoney(totalSum + totalPrice);
 
         updatedItems.push({
             id: itemId,

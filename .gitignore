@@ -1,0 +1,24 @@
+# ---- ОС ----
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- Редакторы ----
+.vscode/
+.idea/
+*.swp
+
+# ---- Node (если появятся тулзы/тесты) ----
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# ---- Секреты ----
+.env
+.env.local
+*.pem
+
+# ---- Временные и бэкап-файлы ----
+*.bak
+*.tmp
+*.log

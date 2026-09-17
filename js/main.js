@@ -5,7 +5,7 @@
 import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
-import { loadPermissions, canSeeTab, getEmployee } from './permissions.js';
+import { loadPermissions, canSeeTab, getEmployee, can } from './permissions.js';
 
 // Модули разделов
 import {
@@ -186,20 +186,26 @@ function applyPermissionsToUI() {
         registryBtn.style.display = canSeeTab('registry') ? '' : 'none';
     }
 
-    // Заявки финансов — только для кассиров
+    // Заявки финансов — только тем, кто их обрабатывает
+    // (TAB_REQUIREMENTS['cash-requests'] = 'cash_view_all')
     const cashReqBtn = document.getElementById('btn-cash-requests');
     if (cashReqBtn) {
-        const role = getEmployee()?.position;
-        const isCashier = role === 'Администратор'
-                       || role === 'Директор'
-                       || role === 'Главный инженер';
-        if (isCashier) {
-            cashReqBtn.classList.remove('hidden');
-            cashReqBtn.style.display = '';
-        } else {
-            cashReqBtn.classList.add('hidden');
-            cashReqBtn.style.display = 'none';
-        }
+        const allowed = canSeeTab('cash-requests');
+        cashReqBtn.classList.toggle('hidden', !allowed);
+        cashReqBtn.style.display = allowed ? '' : 'none';
+    }
+
+    // Кнопка «Заявка финансов» в шапке — только привязанным сотрудникам
+    const newCashReqBtn = document.getElementById('btn-new-cash-request');
+    if (newCashReqBtn) {
+        newCashReqBtn.style.display = can('cash_expense_self') ? '' : 'none';
+    }
+
+    // Кнопка «Новая заявка» в шапке. Дублируем логику orders.js — иначе
+    // кнопка остаётся видимой до первого открытия вкладки «Снабжение».
+    const newOrderBtn = document.getElementById('btn-new-order');
+    if (newOrderBtn) {
+        newOrderBtn.style.display = can('create_order') ? '' : 'none';
     }
 }
 
@@ -289,8 +295,17 @@ export async function switchMyRequestsTab(tab) {
             return;
         }
 
-        const { data: projects } = await db.select('projects');
-        const { data: sections } = await db.select('sections');
+        // Грузим названия только тех объектов/разделов, что реально нужны
+        const projectIds = [...new Set(orders.map(o => o.project_id).filter(Boolean))];
+        const sectionIds = [...new Set(orders.map(o => o.section_id).filter(Boolean))];
+        const [{ data: projects }, { data: sections }] = await Promise.all([
+            projectIds.length
+                ? db.select('projects', { select: 'id, name', filters: { 'id.in': projectIds } })
+                : Promise.resolve({ data: [] }),
+            sectionIds.length
+                ? db.select('sections', { select: 'id, name', filters: { 'id.in': sectionIds } })
+                : Promise.resolve({ data: [] })
+        ]);
         const projMap = {};
         (projects || []).forEach(p => { projMap[p.id] = p.name; });
         const secMap = {};
@@ -331,8 +346,17 @@ export async function switchMyRequestsTab(tab) {
             return;
         }
 
-        const { data: projects } = await db.select('projects');
-        const { data: sections } = await db.select('sections');
+        // Грузим названия только тех объектов/разделов, что реально нужны
+        const projectIds = [...new Set(requests.map(r => r.project_id).filter(Boolean))];
+        const sectionIds = [...new Set(requests.map(r => r.section_id).filter(Boolean))];
+        const [{ data: projects }, { data: sections }] = await Promise.all([
+            projectIds.length
+                ? db.select('projects', { select: 'id, name', filters: { 'id.in': projectIds } })
+                : Promise.resolve({ data: [] }),
+            sectionIds.length
+                ? db.select('sections', { select: 'id, name', filters: { 'id.in': sectionIds } })
+                : Promise.resolve({ data: [] })
+        ]);
         const projMap = {};
         (projects || []).forEach(p => { projMap[p.id] = p.name; });
         const secMap = {};
@@ -400,7 +424,10 @@ export async function openMyTasks() {
         return;
     }
 
-    const { data: projects } = await db.select('projects');
+    const projectIds = [...new Set(tasks.map(t => t.project_id).filter(Boolean))];
+    const { data: projects } = projectIds.length
+        ? await db.select('projects', { select: 'id, name', filters: { 'id.in': projectIds } })
+        : { data: [] };
     const projMap = {};
     (projects || []).forEach(p => { projMap[p.id] = p.name; });
 
@@ -504,14 +531,10 @@ async function startApp(user) {
     applyPermissionsToUI();
     renderProfile();
 
+    // Ленивая загрузка разделов: на старте нужны только задачи (бейдж + личный
+    // дашборд). Остальное подгрузит switchTab() при первом открытии вкладки.
     try {
-        await Promise.all([
-            loadEmployees(),
-            loadProjects(),
-            loadOrders(),
-            loadCashRequests(),
-            loadTasks()
-        ]);
+        await loadTasks();
     } catch (err) {
         log.error('Ошибка загрузки данных:', err);
     }
@@ -603,12 +626,61 @@ window.showModal = (id) => document.getElementById(id)?.classList.remove('hidden
 window.hideModal = (id) => document.getElementById(id)?.classList.add('hidden');
 
 // =====================================================================
+// ОФЛАЙН-ИНДИКАТОР
+// =====================================================================
+// Без интернета Supabase недоступен: любое сохранение молча упадёт.
+// Показываем полосу внизу, чтобы пользователь не терял данные вслепую.
+
+function initOfflineBanner() {
+    let banner = document.getElementById('offline-banner');
+
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'offline-banner';
+        banner.setAttribute('role', 'status');
+        banner.setAttribute('aria-live', 'polite');
+        banner.style.cssText = [
+            'display:none',
+            'position:fixed',
+            'left:0',
+            'right:0',
+            'bottom:0',
+            'z-index:9999',
+            'background:#b45309',
+            'color:#fff',
+            'font-size:12px',
+            'font-weight:600',
+            'text-align:center',
+            'padding:6px 8px'
+        ].join(';');
+        banner.textContent = '⚠️ Нет соединения с интернетом — данные не сохраняются';
+        document.body.appendChild(banner);
+    }
+
+    const sync = () => {
+        banner.style.display = navigator.onLine ? 'none' : 'block';
+    };
+
+    window.addEventListener('online', () => {
+        sync();
+        toast('Соединение восстановлено', 'success');
+    });
+    window.addEventListener('offline', () => {
+        sync();
+        toast('Нет соединения с интернетом', 'warning');
+    });
+
+    sync();
+}
+
+// =====================================================================
 // BOOT
 // =====================================================================
 
 function boot() {
     log.info(`Загрузка ${CONFIG.APP.NAME} v${CONFIG.APP.VERSION}`);
     bindForms();
+    initOfflineBanner();
 
     initLoginScreen({
         onSuccess: (user) => {

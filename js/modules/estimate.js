@@ -89,21 +89,78 @@ export async function uploadEstimate(projectId, file) {
         return { success: false };
     }
 
-    await db.remove('sections', { project_id: projectId });
+    // ВАЖНО: разделы НЕЛЬЗЯ пересоздавать «в лоб» (удалить все и вставить заново).
+    // Вместе с ними теряются даты графика (planned_start_date/planned_end_date/
+    // actual_end_date) и «отвязываются» заявки, задачи и расходы, которые
+    // ссылаются на sections.id.
+    // Поэтому: совпадающие по названию разделы — обновляем, новые — добавляем,
+    // исчезнувшие из сметы — удаляем (если на них нет ссылок).
+    const { data: existingSections, error: existingError } = await db.select('sections', {
+        select: 'id, name',
+        filters: { project_id: projectId }
+    });
 
-    const sectionsPayload = sections.map(s => ({
-        project_id: projectId,
-        name: s.name,
-        plan_works: s.planWorks,
-        plan_materials: s.planMaterials,
-        plan_total: s.planTotal
-    }));
-
-    const { error: insertError } = await db.insertMany('sections', sectionsPayload);
-
-    if (insertError) {
-        toast('Ошибка сохранения разделов: ' + insertError.message, 'error');
+    const failAndCleanup = async (message) => {
+        toast(message, 'error');
+        // Файл уже загружен в Storage — удаляем, чтобы не оставлять мусор
+        await db.deleteFile(CONFIG.STORAGE.ESTIMATES_BUCKET, uploadResult.path);
         return { success: false };
+    };
+
+    if (existingError) {
+        return await failAndCleanup('Ошибка чтения разделов объекта: ' + existingError.message);
+    }
+
+    const normalizeName = (name) => String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+    const existingByName = new Map();
+    (existingSections || []).forEach(section => {
+        const key = normalizeName(section.name);
+        if (!existingByName.has(key)) existingByName.set(key, section);
+    });
+
+    let updatedCount = 0;
+    let removedCount = 0;
+    const keepIds = [];
+
+    for (const section of sections) {
+        const match = existingByName.get(normalizeName(section.name));
+
+        const payload = {
+            name: section.name,
+            plan_works: section.planWorks,
+            plan_materials: section.planMaterials,
+            plan_total: section.planTotal
+        };
+
+        if (match) {
+            // Даты графика и факт закрытия раздела НЕ трогаем
+            const { error } = await db.update('sections', payload, { id: match.id });
+            if (error) {
+                return await failAndCleanup('Ошибка обновления раздела: ' + error.message);
+            }
+            keepIds.push(match.id);
+            updatedCount += 1;
+        } else {
+            const { data: created, error } = await db.insert('sections', { project_id: projectId, ...payload });
+            if (error) {
+                return await failAndCleanup('Ошибка сохранения раздела: ' + error.message);
+            }
+            if (created) keepIds.push(created.id);
+        }
+    }
+
+    // Удаляем только те разделы, которых больше нет в смете
+    const staleSections = (existingSections || []).filter(section => !keepIds.includes(section.id));
+
+    for (const stale of staleSections) {
+        const { error } = await db.remove('sections', { id: stale.id });
+        if (error) {
+            // Скорее всего на раздел ссылаются заявки/задачи/расходы — оставляем как есть
+            log.warn(`Раздел "${stale.name}" не удалён: ${error.message}`);
+        } else {
+            removedCount += 1;
+        }
     }
 
     await db.update('projects', {
@@ -112,8 +169,15 @@ export async function uploadEstimate(projectId, file) {
         estimate_uploaded_at: new Date().toISOString()
     }, { id: projectId });
 
-    log.info('✅ Смета успешно загружена и разобрана');
-    return { success: true, sectionsCount: sections.length };
+    log.info(`✅ Смета загружена: разделов ${keepIds.length} (обновлено ${updatedCount}, удалено ${removedCount})`);
+
+    toast(
+        `Смета загружена: разделов ${keepIds.length}` +
+        (removedCount > 0 ? `, удалено отсутствующих в файле: ${removedCount}` : ''),
+        'success'
+    );
+
+    return { success: true, sectionsCount: keepIds.length, updatedCount, removedCount };
 }
 
 function parseExcelFile(file) {

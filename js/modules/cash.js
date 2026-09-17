@@ -12,7 +12,7 @@
 import { db } from '../database.js';
 import {
     log, toast, formatMoney, formatDate, escapeHtml,
-    parseNumber
+    parseNumber, roundMoney
 } from '../utils.js';
 import { can, getEmployee, requirePermission } from '../permissions.js';
 import { getCurrentUser } from '../auth.js';
@@ -118,16 +118,20 @@ export async function loadExpensesForProject(projectId) {
         return { map: {}, data: [], error: null };
     }
 
-    // ----- 2. Загружаем ВСЕ расходы из cash_operations -----
+    // ----- 2. Загружаем расходы ТОЛЬКО по разделам этого объекта -----
+    // (фильтр 'section_id.in' выполняется на стороне БД, а не выкачиванием всей таблицы)
     const { data: allExpenses, error: expError } = await db.select('cash_operations', {
-        filters: { operation_type: 'expense' }
+        filters: {
+            operation_type: 'expense',
+            'section_id.in': projectSectionIds
+        }
     });
 
     if (expError) {
         log.error('Ошибка загрузки расходов:', expError.message);
     }
 
-    // Фильтруем по section_id вручную
+    // Страховка: сервер уже отфильтровал, но проверим ещё раз
     const projectExpenses = (allExpenses || []).filter(exp =>
         exp.section_id && projectSectionIds.includes(exp.section_id)
     );
@@ -136,10 +140,13 @@ export async function loadExpensesForProject(projectId) {
     if (projectExpenses.length > 0) {
         const employeeIds = [...new Set(projectExpenses.map(o => o.employee_id).filter(Boolean))];
         if (employeeIds.length > 0) {
-            const { data: allEmployees } = await db.select('employees');
+            const { data: allEmployees } = await db.select('employees', {
+                select: 'id, name',
+                filters: { 'id.in': employeeIds }
+            });
             const empMap = {};
             (allEmployees || []).forEach(e => {
-                if (employeeIds.includes(e.id)) empMap[e.id] = e;
+                empMap[e.id] = e;
             });
             projectExpenses.forEach(op => {
                 op._employee = empMap[op.employee_id] || null;
@@ -170,8 +177,11 @@ export async function loadExpensesForProject(projectId) {
     );
 
     if (firmOrders.length > 0) {
-        // Загружаем order_items, потом фильтруем в JS
-        const { data: allOrderItems } = await db.select('order_items');
+        // Позиции грузим только по нужным заявкам (фильтр на сервере)
+        const orderIds = firmOrders.map(o => o.id);
+        const { data: allOrderItems } = await db.select('order_items', {
+            filters: { 'order_id.in': orderIds }
+        });
 
         const orderMap = {};
         firmOrders.forEach(o => { orderMap[o.id] = o; });
@@ -184,9 +194,12 @@ export async function loadExpensesForProject(projectId) {
         const creatorIds = [...new Set(firmOrders.map(o => o.created_by_employee_id).filter(Boolean))];
         let creatorsMap = {};
         if (creatorIds.length > 0) {
-            const { data: allEmployees } = await db.select('employees');
+            const { data: allEmployees } = await db.select('employees', {
+                select: 'id, name',
+                filters: { 'id.in': creatorIds }
+            });
             (allEmployees || []).forEach(e => {
-                if (creatorIds.includes(e.id)) creatorsMap[e.id] = e;
+                creatorsMap[e.id] = e;
             });
         }
 
@@ -299,7 +312,7 @@ export async function addExpenseMulti(payload) {
         return { success: false };
     }
 
-    const totalAmount = items.reduce((sum, it) => sum + (Number(it.sum) || 0), 0);
+    const totalAmount = roundMoney(items.reduce((sum, it) => sum + (Number(it.sum) || 0), 0));
 
     if (totalAmount <= 0) {
         toast('Сумма расхода должна быть больше нуля', 'error');
@@ -740,7 +753,7 @@ export async function saveExpense(event) {
     });
 
     if (result.success) {
-        toast(`Расход на ${formatMoney(items.reduce((s, i) => s + i.sum, 0))} сохранён`, 'success');
+        toast(`Расход на ${formatMoney(roundMoney(items.reduce((s, i) => s + i.sum, 0)))} сохранён`, 'success');
         window.hideModal('cash-expense-modal');
 
         const current = getEmployee();

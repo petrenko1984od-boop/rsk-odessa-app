@@ -20,7 +20,7 @@ import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate
 } from '../utils.js';
-import { getEmployee } from '../permissions.js';
+import { can, getEmployee } from '../permissions.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -36,17 +36,13 @@ let currentViewMode = 'Week';
 // =====================================================================
 
 export function canEditGantt() {
-    const role = getEmployee()?.position;
-    if (!role) return false;
-    return role === 'Администратор'
-        || role === 'Главный инженер'
-        || role === 'Инженер ПТО';
+    return can('edit_gantt');
 }
 
 export function canCloseSection(project) {
     const emp = getEmployee();
     if (!emp) return false;
-    if (emp.position !== 'Прораб') return false;
+    if (!can('close_section')) return false;
     return project && project.foreman_id === emp.id;
 }
 
@@ -745,7 +741,7 @@ export function openSectionDetailFromGantt(section) {
     if (actionsContainer) {
         let actionsHtml = '';
 
-        if (!section.actual_end_date && emp.position === 'Прораб') {
+        if (!section.actual_end_date && can('close_section')) {
             const currentProject = window.__getCurrentProject?.();
             if (currentProject && currentProject.foreman_id === emp.id) {
                 actionsHtml += `<button onclick="window.openCloseSectionModal(${section.id})" 

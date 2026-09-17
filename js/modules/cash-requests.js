@@ -18,9 +18,9 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatMoney, parseNumber
+    formatDate, formatMoney, parseNumber, roundMoney
 } from '../utils.js';
-import { getEmployee } from '../permissions.js';
+import { can, getEmployee } from '../permissions.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -38,9 +38,7 @@ let currentRequestId = null;
  * Может ли текущий пользователь обрабатывать заявки (одобрять/выдавать)?
  */
 function canProcessCashRequest() {
-    const role = getEmployee()?.position;
-    if (!role) return false;
-    return role === 'Администратор' || role === 'Директор' || role === 'Главный инженер';
+    return can('process_cash_request');
 }
 
 /**
@@ -512,12 +510,12 @@ export function recalcCashRequestTotal() {
     rows.forEach(row => {
         const qty = parseNumber(row.querySelector('.cashreq-item-qty')?.value);
         const price = parseNumber(row.querySelector('.cashreq-item-price')?.value);
-        const sum = qty * price;
+        const sum = roundMoney(qty * price);
 
         const sumEl = row.querySelector('.cashreq-item-sum');
         if (sumEl) sumEl.textContent = formatMoney(sum);
 
-        grandTotal += sum;
+        grandTotal = roundMoney(grandTotal + sum);
     });
 
     const totalEl = document.getElementById('new-cashreq-total');
@@ -585,8 +583,8 @@ export async function saveNewCashRequest(event) {
             return;
         }
 
-        const totalPrice = qty * unitPrice;
-        totalSum += totalPrice;
+        const totalPrice = roundMoney(qty * unitPrice);
+        totalSum = roundMoney(totalSum + totalPrice);
 
         items.push({
             name,
@@ -604,21 +602,35 @@ export async function saveNewCashRequest(event) {
         return;
     }
 
-    // Генерируем номер заявки
-    const requestNumber = await generateCashRequestNumber();
+    // Номер заявки генерируем от МАКСИМУМА за год, а не от COUNT(*):
+    // COUNT ломается при удалении заявок и в параллельных сессиях.
+    let requestNumber = await generateCashRequestNumber();
 
-    // Создаём заявку
-    const requestPayload = {
-        request_number: requestNumber,
-        project_id: projectId,
-        section_id: sectionId,
-        employee_id: emp.id,
-        total_sum: totalSum,
-        comment: comment || null,
-        status: 'pending'
-    };
+    // Создаём заявку. При коллизии номера (UNIQUE 23505) — пробуем ещё раз.
+    let reqData = null;
+    let reqError = null;
 
-    const { data: reqData, error: reqError } = await db.insert('cash_requests', requestPayload);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const requestPayload = {
+            request_number: requestNumber,
+            project_id: projectId,
+            section_id: sectionId,
+            employee_id: emp.id,
+            total_sum: totalSum,
+            comment: comment || null,
+            status: 'pending'
+        };
+
+        const result = await db.insert('cash_requests', requestPayload);
+        reqData = result.data;
+        reqError = result.error;
+
+        if (!reqError) break;
+        if (reqError.code !== '23505') break;
+
+        log.warn(`Номер ${requestNumber} уже занят, повторная попытка...`);
+        requestNumber = await generateCashRequestNumber();
+    }
 
     if (reqError) {
         log.error('Ошибка создания заявки:', reqError.message);
@@ -662,17 +674,32 @@ export async function saveNewCashRequest(event) {
 async function generateCashRequestNumber() {
     const year = new Date().getFullYear();
     const yearShort = String(year).slice(-2);
+    const prefix = 'Ф-';
+    const suffix = `/${yearShort}`;
 
     const startOfYear = `${year}-01-01T00:00:00`;
     const startOfNextYear = `${year + 1}-01-01T00:00:00`;
 
-    const { count } = await db.count('cash_requests', {
-        'created_at.gte': startOfYear,
-        'created_at.lt': startOfNextYear
+    // Берём МАКСИМАЛЬНЫЙ номер за год (COUNT(*) давал дубли после удаления заявок)
+    const { data } = await db.select('cash_requests', {
+        select: 'request_number',
+        filters: {
+            'created_at.gte': startOfYear,
+            'created_at.lt': startOfNextYear
+        }
     });
 
-    const nextNumber = (count || 0) + 1;
-    return `Ф-${nextNumber}/${yearShort}`;
+    let maxNumber = 0;
+
+    (data || []).forEach(row => {
+        const raw = String(row.request_number || '');
+        if (!raw.startsWith(prefix) || !raw.endsWith(suffix)) return;
+
+        const num = parseInt(raw.slice(prefix.length, raw.length - suffix.length), 10);
+        if (Number.isFinite(num) && num > maxNumber) maxNumber = num;
+    });
+
+    return `${prefix}${maxNumber + 1}${suffix}`;
 }
 
 // =====================================================================

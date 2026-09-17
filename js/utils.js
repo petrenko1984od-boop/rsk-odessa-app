@@ -27,6 +27,16 @@ export function formatMoney(value) {
  * Форматирует число без копеек (для смет, где суммы целые).
  * Пример: 12345.6 → "12 346 грн"
  */
+/**
+ * Округляет денежную сумму до копеек.
+ * Нужно, чтобы при сложении/умножении float-чисел не накапливалась ошибка
+ * (0.1 + 0.2 = 0.30000000000000004).
+ */
+export function roundMoney(value) {
+    const num = Number(value) || 0;
+    return Math.round((num + Number.EPSILON) * 100) / 100;
+}
+
 export function formatMoneyShort(value) {
     const num = Number(value) || 0;
     return num.toLocaleString('ru-RU', {
@@ -217,16 +227,113 @@ export function lockButton(button, loadingText = 'Загрузка...') {
 
 /**
  * Показывает/скрывает модальное окно по id.
+ *
+ * Дополнительно (доступность):
+ *   - role="dialog" + aria-modal="true" для скринридеров
+ *   - фокус переводится внутрь окна, а после закрытия возвращается назад
+ *   - Escape закрывает верхнее окно, Tab не выходит за его пределы
  */
+
+let lastFocusedElement = null;
+
+/** Все открытые модальные окна (снизу вверх). */
+function getOpenModals() {
+    return Array.from(document.querySelectorAll('[id$="-modal"]'))
+        .filter(el => !el.classList.contains('hidden'));
+}
+
+export function isAnyModalOpen() {
+    return getOpenModals().length > 0;
+}
+
+/**
+ * Закрывает верхнее открытое модальное окно. Используется по Escape.
+ * @returns {boolean} — было ли что закрывать
+ */
+export function closeTopModal() {
+    const open = getOpenModals();
+    if (open.length === 0) return false;
+    hideModal(open[open.length - 1].id);
+    return true;
+}
+
 export function showModal(id) {
     const el = document.getElementById(id);
-    if (el) el.classList.remove('hidden');
+    if (!el) return;
+
+    const active = document.activeElement;
+    lastFocusedElement = active instanceof HTMLElement ? active : null;
+
+    el.classList.remove('hidden');
+
+    if (!el.hasAttribute('role')) el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+
+    if (!el.hasAttribute('aria-labelledby')) {
+        const title = el.querySelector('h3');
+        if (title) {
+            if (!title.id) title.id = `${id}-title`;
+            el.setAttribute('aria-labelledby', title.id);
+        }
+    }
+
+    const focusable = el.querySelector(
+        'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])'
+    );
+    if (focusable) setTimeout(() => focusable.focus(), 50);
 }
 
 export function hideModal(id) {
     const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
+    if (!el) return;
+
+    el.classList.add('hidden');
+    el.removeAttribute('aria-modal');
+
+    const target = lastFocusedElement;
+    lastFocusedElement = null;
+
+    // Возвращаем фокус только если не открылось следующее окно
+    setTimeout(() => {
+        if (isAnyModalOpen()) return;
+        if (target && document.contains(target)) {
+            try { target.focus(); } catch (err) { /* элемент мог исчезнуть */ }
+        }
+    }, 0);
 }
+
+// Escape закрывает верхнее окно, Tab — не даём фокусу уйти из окна
+document.addEventListener('keydown', (event) => {
+    const open = getOpenModals();
+    if (open.length === 0) return;
+
+    const top = open[open.length - 1];
+
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        hideModal(top.id);
+        return;
+    }
+
+    if (event.key !== 'Tab') return;
+
+    const focusables = Array.from(top.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(node => node.offsetParent !== null || node === document.activeElement);
+
+    if (focusables.length === 0) return;
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+});
 
 // =====================================================================
 // РАБОТА С ФОРМАМИ
@@ -320,7 +427,8 @@ export const log = {
     info:  (msg, ...args) => console.log(`[ℹ️]`, msg, ...args),
     warn:  (msg, ...args) => console.warn(`[⚠️]`, msg, ...args),
     error: (msg, ...args) => console.error(`[❌]`, msg, ...args),
-    db:    (msg, ...args) => console.log(`[🗄️ DB]`, msg, ...args),
+    // SQL-логи печатаем только при CONFIG.APP.DEBUG = true
+    db:    (msg, ...args) => { if (CONFIG.APP.DEBUG) console.log(`[🗄️ DB]`, msg, ...args); },
     auth:  (msg, ...args) => console.log(`[🔐 AUTH]`, msg, ...args)
 };
 

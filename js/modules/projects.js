@@ -13,6 +13,7 @@
 // =====================================================================
 
 import { db } from '../database.js';
+import { CONFIG } from '../config.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatMoney
@@ -463,16 +464,110 @@ export async function saveNewProject(event) {
 async function confirmDeleteProject(id, name) {
     if (!requirePermission('delete_project')) return;
 
-    if (!confirm(`УДАЛИТЬ объект "${name}"?\n\n⚠️ Все данные объекта (заявки, задачи) будут удалены.`)) return;
+    if (!confirm(`УДАЛИТЬ объект "${name}"?\n\n⚠️ Все данные объекта (разделы, заявки, задачи, расходы, файлы) будут удалены безвозвратно.`)) return;
 
+    // Не полагаемся на ON DELETE CASCADE: если ограничений в БД нет,
+    // объект удалился бы, а «сироты» остались. Удаляем явно, в порядке зависимостей.
+    const { data: projectRow } = await db.select('projects', { filters: { id }, single: true });
+
+    const [
+        { data: sections },
+        { data: orders },
+        { data: requests },
+        { data: tasks },
+        { data: files }
+    ] = await Promise.all([
+        db.select('sections', { select: 'id', filters: { project_id: id } }),
+        db.select('orders', { select: 'id', filters: { project_id: id } }),
+        db.select('cash_requests', { select: 'id', filters: { project_id: id } }),
+        db.select('tasks', { select: 'id, photo_path', filters: { project_id: id } }),
+        db.select('project_files', { select: 'id, file_path', filters: { project_id: id } })
+    ]);
+
+    const sectionIds = (sections || []).map(s => s.id);
+    const orderIds = (orders || []).map(o => o.id);
+    const requestIds = (requests || []).map(r => r.id);
+
+    const failures = [];
+
+    // ---- 1. Storage: файлы объекта и смета ----
+    const filesBucket = CONFIG.STORAGE.PROJECT_FILES_BUCKET || 'project-files';
+
+    for (const file of files || []) {
+        const del = await db.deleteFile(filesBucket, file.file_path);
+        if (del.error) failures.push(`файл «${file.file_name || file.file_path}»: ${del.error.message}`);
+    }
+
+    if (projectRow?.estimate_file_path) {
+        const del = await db.deleteFile(
+            CONFIG.STORAGE.ESTIMATES_BUCKET || 'estimates',
+            projectRow.estimate_file_path
+        );
+        if (del.error) failures.push('смета: ' + del.error.message);
+    }
+
+    // ---- 2. Внуки (позиции и комментарии) ----
+    if (orderIds.length) {
+        const { error } = await db.remove('order_items', { 'order_id.in': orderIds });
+        if (error) failures.push('позиции заявок: ' + error.message);
+    }
+
+    if (requestIds.length) {
+        const { error } = await db.remove('cash_request_items', { 'request_id.in': requestIds });
+        if (error) failures.push('позиции заявок финансов: ' + error.message);
+    }
+
+    // Комментарии задач — это tasks.comments (JSONB), отдельной таблицы нет.
+    // А вот фото задач лежат в Storage: при массовом удалении их нужно убрать вручную.
+    for (const task of tasks || []) {
+        if (!task.photo_path) continue;
+
+        const del = await db.deleteFile(
+            CONFIG.STORAGE.TASK_PHOTOS_BUCKET || 'task-photos',
+            task.photo_path
+        );
+
+        if (del.error) failures.push('фото задачи: ' + del.error.message);
+    }
+
+    // ---- 3. Дети первого уровня ----
+    const childDeletes = [
+        ['project_files', { project_id: id }],
+        ['cash_operations', { project_id: id }],
+        ['cash_requests', { project_id: id }],
+        ['orders', { project_id: id }],
+        ['tasks', { project_id: id }]
+    ];
+
+    // Страховка: если у записи не заполнен project_id, но есть section_id
+    if (sectionIds.length) {
+        childDeletes.push(['cash_operations', { 'section_id.in': sectionIds }]);
+        childDeletes.push(['tasks', { 'section_id.in': sectionIds }]);
+        childDeletes.push(['orders', { 'section_id.in': sectionIds }]);
+    }
+
+    childDeletes.push(['sections', { project_id: id }]);
+
+    for (const [table, filters] of childDeletes) {
+        const { error } = await db.remove(table, filters);
+        if (error) failures.push(`${table}: ${error.message}`);
+    }
+
+    // ---- 4. Сам объект ----
     const { error } = await db.remove('projects', { id });
 
     if (error) {
-        toast('Ошибка удаления: ' + error.message, 'error');
+        if (failures.length) log.warn('Связанные данные удалить не удалось:', failures.join('; '));
+        toast('Ошибка удаления объекта: ' + error.message, 'error');
         return;
     }
 
-    toast('Объект удалён', 'success');
+    if (failures.length) {
+        log.warn('Объект удалён, но часть связанных данных осталась:', failures.join('; '));
+        toast('Объект удалён, но часть связанных данных осталась (детали в консоли)', 'warning');
+    } else {
+        toast('Объект удалён', 'success');
+    }
 
     if (window.switchTab) window.switchTab('projects');
     await loadProjects();

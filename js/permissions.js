@@ -3,7 +3,7 @@
 // =====================================================================
 
 import { getCurrentEmployee } from './auth.js';
-import { log } from './utils.js';
+import { log, toast } from './utils.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -33,11 +33,25 @@ const ROLE_PERMISSIONS = {
         'cash_return_self',
         'cash_issue',
         'cash_view_all',
+        // Заявки финансов
+        'process_cash_request',
         // Объекты
         'view_projects_all',
         'add_project',
         'edit_project',
         'delete_project',
+        // Заявки на материалы
+        'create_order',
+        'process_order',
+        // Задачи
+        'create_task',
+        'view_all_tasks',
+        'cancel_any_task',
+        // График работ и файлы
+        'edit_gantt',
+        'manage_files',
+        // Дашборд
+        'view_dashboard',
         // Вкладки
         'view_registry',
         'view_orders_tab'            // ← Снабжение
@@ -49,9 +63,14 @@ const ROLE_PERMISSIONS = {
         'cash_return_self',
         'cash_issue',
         'cash_view_all',
+        'process_cash_request',
         'view_projects_all',
-        'view_registry'
+        'view_registry',
+        'create_task',
+        'view_all_tasks',
+        'view_dashboard'
         // view_orders_tab — НЕТ
+        // create_order — НЕТ (директор не создаёт заявки на материалы)
     ],
     'Главный инженер': [
         'view_employees',
@@ -60,8 +79,14 @@ const ROLE_PERMISSIONS = {
         'cash_return_self',
         'cash_issue',
         'cash_view_all',
+        'process_cash_request',
         'view_projects_all',
-        'view_registry'
+        'view_registry',
+        'create_order',
+        'create_task',
+        'edit_gantt',
+        'manage_files',
+        'view_dashboard'
         // view_orders_tab — НЕТ
     ],
     'Снабженец': [
@@ -71,6 +96,9 @@ const ROLE_PERMISSIONS = {
         'cash_return_self',
         'view_projects_all',
         'view_registry',
+        'create_order',
+        'process_order',
+        'become_task_assignee',
         'view_orders_tab'            // ← Снабжение
     ],
     'Инженер ПТО': [
@@ -79,14 +107,24 @@ const ROLE_PERMISSIONS = {
         'cash_expense_self',
         'cash_return_self',
         'view_projects_all',
-        'view_registry'
+        'view_registry',
+        'create_order',
+        'create_task',
+        'become_task_assignee',
+        'edit_gantt',
+        'manage_files',
+        'view_dashboard'
         // view_orders_tab — НЕТ
     ],
     'Прораб': [
         // Только своё
         'cash_expense_self',
         'cash_return_self',
-        'view_projects_own'
+        'view_projects_own',
+        'create_order',
+        'become_task_assignee',
+        'close_section',             // закрытие раздела на своём объекте
+        'view_dashboard'
         // view_registry, view_orders_tab — НЕТ
     ]
 };
@@ -99,9 +137,8 @@ const TAB_REQUIREMENTS = {
     'projects':      null,                   // Видна всем
     'employees':     'view_tab_employees',   // Только по праву
     'orders':        'view_orders_tab',      // Только Админ + Снабженец
-    'cash-requests': null,                   // Кнопка скрывается отдельно в main.js
-    'registry':      'view_registry',        // Только по праву
-    'new-order':     null                    // Видна всем
+    'cash-requests': 'cash_view_all',        // Только кассиры (Админ, Директор, Гл. инженер)
+    'registry':      'view_registry'         // Только по праву
 };
 
 // =====================================================================
@@ -120,6 +157,11 @@ export async function loadPermissions() {
 
     currentEmployee = employee;
     currentRole = employee.position || null;
+
+    if (currentRole && !ROLE_PERMISSIONS[currentRole]) {
+        log.warn(`⚠️ Должность "${currentRole}" отсутствует в матрице прав — доступ по минимуму. Проверь справочник CONFIG.POSITIONS.`);
+    }
+
     log.auth(`Права загружены. Роль: ${currentRole}`);
 }
 
@@ -164,9 +206,7 @@ export function canSeeTab(tabId) {
 export function requirePermission(action) {
     if (can(action)) return true;
 
-    import('./utils.js').then(({ toast }) => {
-        toast('Недостаточно прав для этого действия', 'error');
-    });
+    toast('Недостаточно прав для этого действия', 'error');
 
     log.warn(`❌ Отказано в доступе: ${action}. Роль: ${currentRole || 'не привязан'}`);
     return false;

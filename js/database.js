@@ -9,7 +9,77 @@
 // =====================================================================
 
 import { supabase, CONFIG } from './config.js';
-import { log, currentYear, formatRequestNumber } from './utils.js';
+import { log, currentYear, formatRequestNumber, parseRequestNumber } from './utils.js';
+
+// =====================================================================
+// ЗАЩИТА ДАННЫХ: UPDATE / DELETE БЕЗ УСЛОВИЙ
+// =====================================================================
+// UPDATE и DELETE без фильтров в Supabase меняют/удаляют ВСЮ таблицу.
+// Один забытый аргумент — и можно потерять всю базу, поэтому здесь
+// любые массовые операции без условий блокируются на уровне слоя БД.
+// =====================================================================
+
+/**
+ * Проверяет, что payload не пустой (нечего обновлять).
+ * @returns {Error|null} — ошибка или null, если всё в порядке
+ */
+function validatePayload(table, payload, operation) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        log.error(`${operation} "${table}": payload отсутствует — операция отменена`);
+        return new Error(`${operation}: не переданы данные для записи`);
+    }
+
+    if (Object.keys(payload).length === 0) {
+        log.error(`${operation} "${table}": payload пустой — операция отменена`);
+        return new Error(`${operation}: нечего обновлять (пустой объект данных)`);
+    }
+
+    return null;
+}
+
+/**
+ * Проверяет, что фильтры заданы и есть хотя бы одно рабочее условие.
+ * @returns {Error|null} — ошибка или null, если всё в порядке
+ */
+function validateFilters(table, filters, operation) {
+    if (!filters || typeof filters !== 'object' || Array.isArray(filters)) {
+        log.error(`${operation} "${table}": не переданы фильтры — операция отменена`);
+        return new Error(`${operation}: не переданы условия. Операция отменена, чтобы не изменить всю таблицу.`);
+    }
+
+    const usable = Object.entries(filters).filter(([, value]) => value !== undefined && value !== null);
+
+    if (usable.length === 0) {
+        log.error(`${operation} "${table}": все фильтры пустые — операция отменена`);
+        return new Error(`${operation}: пустые условия. Операция отменена, чтобы не изменить всю таблицу.`);
+    }
+
+    return null;
+}
+
+/**
+ * Применяет одно условие к запросу.
+ * Поддерживает операторы: { 'id.in': [1,2] }, { 'created_at.gte': '...' }
+ */
+function applyFilter(query, key, value) {
+    if (!key.includes('.')) {
+        return query.eq(key, value);
+    }
+
+    const [field, op] = key.split('.');
+
+    switch (op) {
+        case 'gte':  return query.gte(field, value);
+        case 'lte':  return query.lte(field, value);
+        case 'gt':   return query.gt(field, value);
+        case 'lt':   return query.lt(field, value);
+        case 'neq':  return query.neq(field, value);
+        case 'in':   return query.in(field, Array.isArray(value) ? value : [value]);
+        case 'like': return query.like(field, value);
+        case 'is':   return query.is(field, value);
+        default:     return query.eq(field, value);
+    }
+}
 
 // =====================================================================
 // УНИВЕРСАЛЬНЫЕ CRUD-ОПЕРАЦИИ
@@ -46,21 +116,7 @@ export async function select(table, options = {}) {
                 if (value === undefined || value === null) continue;
 
                 // Поддержка операторов: { 'price.gte': 100 }
-                if (key.includes('.')) {
-                    const [field, op] = key.split('.');
-                    switch (op) {
-                        case 'gte': query = query.gte(field, value); break;
-                        case 'lte': query = query.lte(field, value); break;
-                        case 'gt':  query = query.gt(field, value);  break;
-                        case 'lt':  query = query.lt(field, value);  break;
-                        case 'neq': query = query.neq(field, value); break;
-                        case 'in':  query = query.in(field, value);  break;
-                        case 'like': query = query.like(field, value); break;
-                        default:    query = query.eq(field, value);
-                    }
-                } else {
-                    query = query.eq(key, value);
-                }
+                query = applyFilter(query, key, value);
             }
         }
 
@@ -161,13 +217,18 @@ export async function insertMany(table, rows) {
  * Пример: await db.update('orders', { status: 'closed' }, { id: 5 });
  */
 export async function update(table, payload, filters) {
+    const payloadGuard = validatePayload(table, payload, 'UPDATE');
+    if (payloadGuard) return { data: null, error: payloadGuard };
+
+    const filtersGuard = validateFilters(table, filters, 'UPDATE');
+    if (filtersGuard) return { data: null, error: filtersGuard };
     log.db(`UPDATE "${table}"`, { payload, filters });
 
     try {
         let query = supabase.from(table).update(payload);
 
         for (const [key, value] of Object.entries(filters)) {
-            query = query.eq(key, value);
+            query = applyFilter(query, key, value);
         }
 
         const { data, error } = await query.select();
@@ -194,13 +255,15 @@ export async function update(table, payload, filters) {
  * Пример: await db.remove('projects', { id: 5 });
  */
 export async function remove(table, filters) {
+    const guard = validateFilters(table, filters, 'DELETE');
+    if (guard) return { data: null, error: guard };
     log.db(`DELETE из "${table}"`, filters);
 
     try {
         let query = supabase.from(table).delete();
 
         for (const [key, value] of Object.entries(filters)) {
-            query = query.eq(key, value);
+            query = applyFilter(query, key, value);
         }
 
         const { data, error } = await query;
@@ -221,6 +284,11 @@ export async function remove(table, filters) {
 /**
  * Посчитать записи в таблице с фильтром.
  * @returns {Promise<{ count, error }>}
+ *
+ * ⚠️ НЕ используйте count() для нумерации документов (номер заявки + 1):
+ * COUNT(*) даёт дубли после удаления записей и в параллельных сессиях.
+ * Для номеров берите «максимум за год + 1» и повторяйте запрос при ошибке 23505
+ * (см. getNextRequestNumber ниже и generateCashRequestNumber в cash-requests.js).
  */
 export async function count(table, filters = null) {
     log.db(`COUNT в "${table}"`, filters);
@@ -232,18 +300,7 @@ export async function count(table, filters = null) {
 
         if (filters) {
             for (const [key, value] of Object.entries(filters)) {
-                if (key.includes('.')) {
-                    const [field, op] = key.split('.');
-                    switch (op) {
-                        case 'gte': query = query.gte(field, value); break;
-                        case 'lte': query = query.lte(field, value); break;
-                        case 'gt':  query = query.gt(field, value);  break;
-                        case 'lt':  query = query.lt(field, value);  break;
-                        default:    query = query.eq(field, value);
-                    }
-                } else {
-                    query = query.eq(key, value);
-                }
+                query = applyFilter(query, key, value);
             }
         }
 
@@ -277,9 +334,14 @@ export async function getNextRequestNumber() {
     const startOfYear = `${year}-01-01T00:00:00`;
     const startOfNextYear = `${year + 1}-01-01T00:00:00`;
 
-    const { count: total, error } = await count('orders', {
-        'created_at.gte': startOfYear,
-        'created_at.lt': startOfNextYear
+    // Берём МАКСИМУМ уже выданных номеров за год, а не COUNT(*):
+    // иначе после удаления заявки номер будет выдан повторно (дубликат).
+    const { data: yearOrders, error } = await select('orders', {
+        select: 'request_number',
+        filters: {
+            'created_at.gte': startOfYear,
+            'created_at.lt': startOfNextYear
+        }
     });
 
     if (error) {
@@ -287,7 +349,15 @@ export async function getNextRequestNumber() {
         return { requestNumber: null, error };
     }
 
-    const nextNumber = (total || 0) + 1;
+    let maxNumber = 0;
+    (yearOrders || []).forEach(order => {
+        const parsed = parseRequestNumber(order.request_number);
+        if (parsed && parsed.year === year && parsed.number > maxNumber) {
+            maxNumber = parsed.number;
+        }
+    });
+
+    const nextNumber = maxNumber + 1;
     const requestNumber = formatRequestNumber(nextNumber, year);
     log.db(`Следующий номер заявки: ${requestNumber}`);
     return { requestNumber, error: null };

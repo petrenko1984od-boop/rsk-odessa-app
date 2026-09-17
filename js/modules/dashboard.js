@@ -3,15 +3,17 @@
 // =====================================================================
 
 import { db } from '../database.js';
-import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal } from '../utils.js';
-import { getEmployee } from '../permissions.js';
+import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal, roundMoney } from '../utils.js';
+import { can, getEmployee } from '../permissions.js';
 
-const DASHBOARD_ROLES = ['Прораб', 'Сметчик', 'Инженер ПТО', 'Администратор', 'Директор', 'Главный инженер'];
 let materialOverrunRowsCache = [];
 
+/**
+ * Показываем «Рабочий экран» тем, у кого есть право view_dashboard:
+ * Прораб, Инженер ПТО, Администратор, Директор, Главный инженер.
+ */
 export function shouldShowEmployeeDashboard() {
-    const position = getEmployee()?.position;
-    return DASHBOARD_ROLES.includes(position);
+    return can('view_dashboard');
 }
 
 function isActiveProject(project) {
@@ -57,7 +59,7 @@ function renderMetric(icon, label, value, detail, tone = 'emerald', onClick = nu
     if (!onClick) return content;
 
     return `
-        <button type="button" onclick="${onClick}" class="w-full text-left focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
+        <button type="button" onclick="${escapeHtml(onClick)}" class="w-full text-left focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
             ${content}
         </button>
     `;
@@ -167,10 +169,9 @@ function renderTaskSummary(tasks) {
 
 function renderExecutiveDashboard({ employees, balances, tasks, orders, orderItems, cashOperations, projects, sections }) {
     const employeeMap = new Map((employees || []).map(emp => [emp.id, emp]));
-    const canCreateTask = ['Администратор', 'Директор', 'Главный инженер', 'Инженер ПТО']
-        .includes(getEmployee()?.position);
+    const canCreateTask = can('create_task');
 
-    const totalBalance = (balances || []).reduce((sum, item) => sum + (Number(item.balance) || 0), 0);
+    const totalBalance = roundMoney((balances || []).reduce((sum, item) => sum + (Number(item.balance) || 0), 0));
     const negative = (balances || [])
         .map(item => ({ ...item, employee: employeeMap.get(item.employee_id) }))
         .filter(item => item.employee && (Number(item.balance) || 0) < 0)
