@@ -13,7 +13,6 @@ import {
     openAddEmployeeModal,
     saveNewEmployee,
     confirmDeactivate,
-    openEmployeeCard
 } from './modules/employees.js';
 
 import {
@@ -219,21 +218,6 @@ export function toggleProfileMenu() {
 }
 
 window.toggleProfileMenu = toggleProfileMenu;
-
-export function openMyCard() {
-    const emp = getEmployee();
-    if (!emp) {
-        toast('Ваш аккаунт не привязан к сотруднику', 'warning');
-        return;
-    }
-
-    const menu = document.getElementById('profile-menu');
-    if (menu) menu.classList.add('hidden');
-
-    openEmployeeCard(emp.id);
-}
-
-window.openMyCard = openMyCard;
 
 /**
  * «Мои заявки» (материалы + финансы).
