@@ -3,7 +3,10 @@
 // =====================================================================
 // Загрузка, парсинг и хранение смет.
 // + Отображение план-факта с фактическими расходами.
-// + UI блока сметы в карточке объекта (в контейнере #estimate-block).
+// + UI блока сметы в карточке объекта — вкладка «📁 Файлы», контейнер #estimate-block.
+//   ВАЖНО: блок живёт именно на вкладке «Файлы». На вкладке «План-факт» его держать нельзя:
+//   renderSectionsUI() целиком перезаписывает её через innerHTML и стирал блок сметы
+//   (именно поэтому загрузка сметы «пропадала» из интерфейса).
 //
 // ВАЖНО: renderSectionsUI принимает:
 //   - project      — объект проекта
@@ -320,14 +323,19 @@ export async function deleteEstimate(project) {
 // =====================================================================
 
 /**
- * Рендерит блок сметы в контейнере #estimate-block.
+ * Рендерит блок сметы в контейнере #estimate-block (вкладка «📁 Файлы» карточки объекта).
  * Кнопка «Оригинал» (xlsx) — только для редакторов.
  * Кнопка «� Удалить» — только для редакторов.
  * PDF-скачивание отключено: оставляем только Excel.
  */
 export function renderEstimateUI(project) {
     const container = document.getElementById('estimate-block');
-    if (!container) return;
+    if (!container) {
+        // Регрессия-маркер: контейнер #estimate-block должен быть в index.html
+        // на вкладке «📁 Файлы» (вкладку «📊 План-факт» целиком затирает renderSectionsUI).
+        log.warn('Не найден контейнер #estimate-block — блок сметы не отрисован');
+        return;
+    }
 
     const hasEstimate = !!project.estimate_file_path;
     const canManage = canManageFiles();
@@ -631,7 +639,8 @@ export async function uploadEstimateUI(projectId) {
         const project = window.__getCurrentProject?.();
         if (project && window.openProjectDetail) {
             setTimeout(() => {
-                window.openProjectDetail(project.id);
+                // Возвращаемся на вкладку «Файлы» — откуда и загружали смету
+                window.openProjectDetail(project.id, 'files');
             }, 300);
         }
     } else {
@@ -678,7 +687,7 @@ export async function deleteEstimateUI(projectId) {
 
     if (result.success) {
         if (window.openProjectDetail) {
-            window.openProjectDetail(projectId);
+            window.openProjectDetail(projectId, 'files');
         }
     }
 }

@@ -168,7 +168,12 @@ function renderProjectCard(project) {
 // КАРТОЧКА ОБЪЕКТА
 // =====================================================================
 
-export async function openProjectDetail(id) {
+/**
+ * Открывает карточку объекта.
+ * @param {number|string} id — id объекта
+ * @param {'info'|'planfact'|'files'|'schedule'} [subTab='info'] — какую подвкладку показать
+ */
+export async function openProjectDetail(id, subTab = 'info') {
     let project = projectsCache.find(p => String(p.id) === String(id));
     if (!project) {
         const { data, error } = await db.select('projects', { filters: { id } });
@@ -227,7 +232,7 @@ export async function openProjectDetail(id) {
         detailEl.classList.remove('hidden');
     }
 
-    switchProjectSubTab('info');
+    switchProjectSubTab(subTab);
 }
 
 /**
@@ -390,6 +395,13 @@ export function switchProjectSubTab(subId) {
                 renderGantt(project);
             }, 100);
         }
+    }
+
+    // Триггер для блока сметы: контейнер #estimate-block живёт на вкладке «Файлы»,
+    // и его надо гарантированно перерисовать (вкладку «План-факт» затирает renderSectionsUI).
+    if (subId === 'files') {
+        const project = getCurrentProject();
+        if (project) renderEstimateUI(project);
     }
 }
 
