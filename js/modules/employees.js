@@ -45,7 +45,6 @@ export async function loadEmployees() {
     employeesCache = data || [];
     log.info(`Загружено: ${employeesCache.length}`);
     renderEmployees();
-    updateEmployeesBadge();
 
     // Глобальный доступ для других модулей
     window.__getEmployeeById = (id) => employeesCache.find(e => e.id === id);
@@ -403,15 +402,6 @@ async function confirmDeleteEmployee(id, name) {
     toast('Сотрудник удалён', 'success');
     hideModal('employee-card-modal');
     await loadEmployees();
-}
-
-// =====================================================================
-// БЕЙДЖ
-// =====================================================================
-
-export function updateEmployeesBadge() {
-    const badge = document.getElementById('employees-badge');
-    if (badge) badge.textContent = employeesCache.length;
 }
 
 // =====================================================================

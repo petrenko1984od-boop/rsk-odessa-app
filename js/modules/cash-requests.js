@@ -100,7 +100,7 @@ export async function loadCashRequests() {
 
     log.info(`Загружено заявок финансов: ${cashRequestsCache.length}`);
     renderCashRequests();
-    updateCashRequestsBadge();
+    updateCashRequestsNavButton();
 }
 
 // =====================================================================
@@ -318,27 +318,21 @@ export function getCashRequestStatusInfo(status) {
 }
 
 // =====================================================================
-// БЕЙДЖ
+// КНОПКА НАВИГАЦИИ («Заявки финансов»)
 // =====================================================================
+// Счётчики на кнопках навигации убраны — функция только показывает/скрывает
+// саму кнопку по правам (canProcessCashRequest()).
 
-
-  
-export function updateCashRequestsBadge() {
-    const badge = document.getElementById('cash-requests-badge');
-    if (!badge) return;
-
-    const pendingCount = cashRequestsCache.filter(r => r.status === 'pending').length;
-
+export function updateCashRequestsNavButton() {
     const btn = document.getElementById('btn-cash-requests');
-    if (btn) {
-        if (canProcessCashRequest()) {
-            btn.classList.remove('hidden');
-            btn.style.display = '';
-            badge.textContent = pendingCount;
-        } else {
-            btn.classList.add('hidden');
-            btn.style.display = 'none';
-        }
+    if (!btn) return;
+
+    if (canProcessCashRequest()) {
+        btn.classList.remove('hidden');
+        btn.style.display = '';
+    } else {
+        btn.classList.add('hidden');
+        btn.style.display = 'none';
     }
 }
 // =====================================================================

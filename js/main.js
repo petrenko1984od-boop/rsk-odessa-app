@@ -71,8 +71,7 @@ import {
     completeTask,
     cancelTask,
     deleteTask,
-    addTaskComment,
-    updateTasksBadge
+    addTaskComment
 } from './modules/tasks.js';
 
 import {
@@ -531,8 +530,8 @@ async function startApp(user) {
     applyPermissionsToUI();
     renderProfile();
 
-    // Ленивая загрузка разделов: на старте нужны только задачи (бейдж + личный
-    // дашборд). Остальное подгрузит switchTab() при первом открытии вкладки.
+    // Ленивая загрузка разделов: на старте нужны только задачи (личный дашборд
+    // сотрудника). Остальное подгрузит switchTab() при первом открытии вкладки.
     try {
         await loadTasks();
     } catch (err) {

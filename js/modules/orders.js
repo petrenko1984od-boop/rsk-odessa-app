@@ -113,7 +113,6 @@ export async function loadOrders() {
 
     log.info(`Загружено заявок: ${ordersCache.length}`);
     renderOrders();
-    updateOrdersBadge();
 }
 
 // =====================================================================
@@ -371,18 +370,6 @@ export function getStatusInfo(status) {
         'archived':    { label: '📥 Архив',      bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-400' }
     };
     return map[status] || { label: status, bg: 'bg-gray-100', color: 'text-gray-700', border: 'border-gray-300' };
-}
-
-// =====================================================================
-// БЕЙДЖ
-// =====================================================================
-
-export function updateOrdersBadge() {
-    const badge = document.getElementById('orders-badge');
-    if (!badge) return;
-
-    const activeCount = ordersCache.filter(o => o.status === 'new' || o.status === 'in_progress').length;
-    badge.textContent = activeCount;
 }
 
 // =====================================================================

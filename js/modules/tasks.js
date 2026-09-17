@@ -123,7 +123,6 @@ export async function loadTasks() {
 
     log.info(`Загружено задач: ${tasksCache.length}`);
     renderTasks();
-    updateTasksBadge();
 }
 
 // =====================================================================
@@ -519,26 +518,6 @@ export function getTaskPriorityInfo(priority) {
         'normal':    { label: '📋 Обычная', bg: 'bg-gray-100',   color: 'text-gray-700' }
     };
     return map[priority] || map.normal;
-}
-
-// =====================================================================
-// БЕЙДЖ
-// =====================================================================
-
-export function updateTasksBadge() {
-    const badge = document.getElementById('tasks-badge');
-    if (!badge) return;
-
-    const emp = getEmployee();
-    if (!emp) return;
-
-    // Счётчик = мои активные задачи (pending + in_progress), где я исполнитель
-    const myActive = tasksCache.filter(t => 
-        t.assignee_employee_id === emp.id &&
-        (t.status === 'pending' || t.status === 'in_progress')
-    ).length;
-
-    badge.textContent = myActive;
 }
 
 // =====================================================================

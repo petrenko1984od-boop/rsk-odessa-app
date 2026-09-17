@@ -56,7 +56,6 @@ export async function loadProjects() {
         } else {
             projectsCache = [];
             renderProjects();
-            updateProjectsBadge();
             return;
         }
     }
@@ -81,7 +80,6 @@ export async function loadProjects() {
     projectsCache = data || [];
     log.info(`Загружено объектов: ${projectsCache.length}`);
     renderProjects();
-    updateProjectsBadge();
 }
 
 async function loadActiveEmployees() {
@@ -583,15 +581,6 @@ async function confirmDeleteProject(id, name) {
 
     if (window.switchTab) window.switchTab('projects');
     await loadProjects();
-}
-
-// =====================================================================
-// БЕЙДЖ
-// =====================================================================
-
-export function updateProjectsBadge() {
-    const badge = document.getElementById('projects-badge');
-    if (badge) badge.textContent = projectsCache.length;
 }
 
 // =====================================================================
