@@ -45,9 +45,6 @@ export async function loadEmployees() {
     employeesCache = data || [];
     log.info(`Загружено: ${employeesCache.length}`);
     renderEmployees();
-
-    // Глобальный доступ для других модулей
-    window.__getEmployeeById = (id) => employeesCache.find(e => e.id === id);
 }
 
 export function getEmployeesCache() {

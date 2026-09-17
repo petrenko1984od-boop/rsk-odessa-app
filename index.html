@@ -144,7 +144,7 @@
                                     <span class="text-gray-500 font-bold text-sm ml-1">⚪ 0,00 грн</span>
                                 </div>
                             </div>
-                            <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Финансовый отчёт</span></button>
+                            <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Авансовый отчёт</span></button>
                             <button onclick="openMyRequests()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span>Мои заявки</span></button>
                             <button onclick="openMyTasks()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📌 <span>Мои задачи</span></button>
                             <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
@@ -503,11 +503,11 @@
         </div>
     </div>
 
-    <!-- ФИНАНСОВЫЙ ОТЧЁТ -->
+    <!-- АВАНСОВЫЙ ОТЧЁТ -->
     <div id="my-operations-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
         <div class="bg-white rounded-xl shadow-lg max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">💰 Финансовый отчёт</h3>
+                <h3 class="text-lg font-bold text-gray-800">💰 Авансовый отчёт</h3>
                 <button onclick="closeMyOperations()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="my-operations-content" class="space-y-3 text-gray-800"></div>

@@ -419,7 +419,7 @@ export async function renderProfileBalance() {
 }
 
 // =====================================================================
-// UI — «ФИНАНСОВЫЙ ОТЧЁТ»
+// UI — «АВАНСОВЫЙ ОТЧЁТ»
 // =====================================================================
 
 export async function openMyOperations() {
@@ -566,8 +566,10 @@ export async function openExpenseModal(employeeId, returnToReport = false) {
         return;
     }
 
-    const emp = window.__getEmployeeById?.(employeeId);
-    if (!emp) { toast('Сотрудник не найден', 'error'); return; }
+    // isSelf проверен выше — в отчёте всегда текущий сотрудник.
+    // Кэш «Сотрудники» для этого не годится: он заполняется только при
+    // открытии вкладки «Сотрудники» (loadEmployees), а отчёт доступен всем.
+    const emp = current;
 
     document.getElementById('cash-expense-employee-id').value = employeeId;
     document.getElementById('cash-expense-employee-id').dataset.returnToReport = returnToReport ? '1' : '';
@@ -602,8 +604,8 @@ export function openReturnModal(employeeId, returnToReport = false) {
         return;
     }
 
-    const emp = window.__getEmployeeById?.(employeeId);
-    if (!emp) { toast('Сотрудник не найден', 'error'); return; }
+    // См. комментарий в openExpenseModal — берём привязанного сотрудника.
+    const emp = current;
 
     document.getElementById('cash-return-employee-id').value = employeeId;
     document.getElementById('cash-return-employee-id').dataset.returnToReport = returnToReport ? '1' : '';
@@ -759,12 +761,10 @@ export async function saveExpense(event) {
         const current = getEmployee();
         if (current && current.id === employeeId) {
             await renderProfileBalance();
-        }
 
-        if (returnToReport) {
-            const emp = window.__getEmployeeById?.(employeeId);
-            if (emp) {
-                await renderMyOperationsContent(emp);
+            // Форму открыли из «Авансового отчёта» — возвращаемся в него
+            if (returnToReport) {
+                await renderMyOperationsContent(current);
                 document.getElementById('my-operations-modal').classList.remove('hidden');
             }
         }
@@ -789,12 +789,10 @@ export async function saveReturn(event) {
         const current = getEmployee();
         if (current && current.id === employeeId) {
             await renderProfileBalance();
-        }
 
-        if (returnToReport) {
-            const emp = window.__getEmployeeById?.(employeeId);
-            if (emp) {
-                await renderMyOperationsContent(emp);
+            // Форму открыли из «Авансового отчёта» — возвращаемся в него
+            if (returnToReport) {
+                await renderMyOperationsContent(current);
                 document.getElementById('my-operations-modal').classList.remove('hidden');
             }
         }
