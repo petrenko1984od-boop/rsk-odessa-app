@@ -122,10 +122,10 @@
                     <button onclick="switchTab('projects')" id="btn-projects" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты</button>
                     <button onclick="switchTab('employees')" id="btn-employees" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники</button>
                     <button onclick="switchTab('orders')" id="btn-orders" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение</button>
-                    <button onclick="switchTab('cash-requests')" id="btn-cash-requests" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Заявки финансов</button>
+                    <button onclick="switchTab('cash-requests')" id="btn-cash-requests" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Финансы</button>
                     <button onclick="switchTab('registry')" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
-                    <button onclick="openNewOrderForm()" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заявка на материалы</button>
-                    <button onclick="openNewCashRequestForm()" id="btn-new-cash-request" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Заявка финансов</button>
+                    <button onclick="openNewOrderForm()" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заказ материалов</button>
+                    <button onclick="openNewCashRequestForm()" id="btn-new-cash-request" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Финансовые запросы</button>
 
                     <div class="relative">
                         <button onclick="toggleProfileMenu()" id="profile-btn"
@@ -295,11 +295,11 @@
                 <div id="orders-container" class="space-y-3"></div>
             </section>
 
-            <!-- ЗАЯВКИ ФИНАНСОВ -->
+            <!-- ФИНАНСЫ (заявки на подотчёт) -->
             <section id="tab-cash-requests" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
                     <div>
-                        <h2 class="text-lg font-bold text-gray-800">💰 Заявки финансов</h2>
+                        <h2 class="text-lg font-bold text-gray-800">💰 Финансы</h2>
                         <p class="text-xs text-gray-500">Заявки на подотчёт для выполнения работ</p>
                     </div>
                     <button onclick="openNewCashRequestForm()" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
@@ -680,11 +680,11 @@
         </div>
     </div>
 
-    <!-- НОВАЯ ЗАЯВКА НА МАТЕРИАЛЫ -->
+    <!-- НОВЫЙ ЗАКАЗ МАТЕРИАЛОВ -->
     <div id="new-order-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">📦 Новая заявка на материалы</h3>
+                <h3 class="text-lg font-bold text-gray-800">📦 Новый заказ материалов</h3>
                 <button onclick="hideModal('new-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="new-order-form" class="space-y-4">
@@ -791,11 +791,11 @@
         </div>
     </div>
 
-    <!-- НОВАЯ ЗАЯВКА ФИНАНСОВ -->
+    <!-- НОВЫЙ ФИНАНСОВЫЙ ЗАПРОС -->
     <div id="new-cashreq-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">💰 Новая заявка финансов</h3>
+                <h3 class="text-lg font-bold text-gray-800">💰 Новый финансовый запрос</h3>
                 <button onclick="hideModal('new-cashreq-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="new-cashreq-form" class="space-y-4">
@@ -842,11 +842,11 @@
         </div>
     </div>
 
-    <!-- ПРОСМОТР ЗАЯВКИ ФИНАНСОВ -->
+    <!-- ПРОСМОТР ФИНАНСОВОГО ЗАПРОСА -->
     <div id="cash-request-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">💰 Заявка финансов</h3>
+                <h3 class="text-lg font-bold text-gray-800">💰 Финансовый запрос</h3>
                 <button onclick="hideModal('cash-request-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="cash-request-detail-content" class="space-y-3 text-sm text-gray-800"></div>

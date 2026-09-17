@@ -158,7 +158,7 @@ export function renderOrders() {
 
     const filtered = getFilteredOrders();
 
-    // Скрываем кнопку «Новая заявка» в шапке
+    // Скрываем кнопку «Заказ материалов» в шапке
     const newOrderBtn = document.getElementById('btn-new-order');
     if (newOrderBtn) {
         newOrderBtn.style.display = canCreateOrder() ? '' : 'none';

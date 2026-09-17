@@ -38,6 +38,14 @@ let filters = {
     dateTo: ''
 };
 
+// Человекочитаемые названия категорий (таблица реестра + экспорт в Excel)
+const CATEGORY_LABELS = {
+    'materials': '📦 Материалы',
+    'works': '🛠 Работы',
+    'delivery': '🚚 Доставка',
+    'other': '📋 Прочее'
+};
+
 // =====================================================================
 // ЗАГРУЗКА
 // =====================================================================
@@ -343,13 +351,7 @@ function renderRegistryRow(item) {
         sourceBadge = `<span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold" title="Прямой расход">💰 Расход</span>`;
     }
 
-    const categoryLabels = {
-        'materials': '📦 Материалы',
-        'works': '🛠 Работы',
-        'delivery': '🚚 Доставка',
-        'other': '📋 Прочее'
-    };
-    const categoryLabel = categoryLabels[item.category] || item.category || '—';
+    const categoryLabel = CATEGORY_LABELS[item.category] || item.category || '—';
 
     const paymentBadge = item.payment === 'debt'
         ? `<span class="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold text-[10px]">В долг</span>`
@@ -392,15 +394,36 @@ export function exportRegistryToExcel() {
         return;
     }
 
+    // Дату пишем настоящей датой Excel (формат встроенный, поэтому Excel
+    // покажет её по локали: в русской — 14.08.2026). Тогда автофильтр и
+    // сортировка по дате работают правильно, а не как по тексту.
+    // Если значение не в ISO-формате — оставляем исходный текст.
+    const excelDate = value => {
+        const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
+        if (!parts) return formatDate(value);
+
+        const date = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+        return isNaN(date.getTime()) ? formatDate(value) : date;
+    };
+
+    // Числа округляем до копеек; значение, которое не удалось распарсить,
+    // оставляем как есть — roundMoney() молча превратил бы его в 0
+    const money = value => {
+        if (value === null || value === undefined) return value;
+        if (typeof value === 'string' && value.trim() === '') return value;
+        const num = Number(value);
+        return Number.isFinite(num) ? Math.round((num + Number.EPSILON) * 100) / 100 : value;
+    };
+
     const rows = data.map(item => ({
-        'Дата': formatDate(item.date),
+        'Дата': excelDate(item.date),
         'Источник': item._orderNumber,
         'Наименование': item.name,
         'Кол-во': item.qty,
         'Ед. изм.': item.unit,
-        'Цена за ед.': item.unitPrice,
-        'Сумма': item.sum,
-        'Категория': item.category,
+        'Цена за ед.': money(item.unitPrice),
+        'Сумма': money(item.sum),
+        'Категория': CATEGORY_LABELS[item.category] || item.category || '—',
         'Оплата': item.payment === 'debt' ? 'В долг' : 'Оплачено',
         'Поставщик': item.supplier,
         'Объект': item.project,
@@ -409,6 +432,69 @@ export function exportRegistryToExcel() {
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
+
+    // Колонки берём в том порядке, в каком они перечислены в rows выше
+    const columns = Object.keys(rows[0]);
+
+    // ── ЧИТАЕМОСТЬ ФАЙЛА ─────────────────────────────────────────────
+    // Excel открывает .xlsx со своей шириной колонок (~8 символов), поэтому
+    // длинный текст в ячейках не видно. Считаем ширину каждой колонки по
+    // самому длинному значению (длину заголовка тоже учитываем).
+    // Длину значения считаем по тому, как оно будет показано в Excel:
+    // дата — как ДД.ММ.ГГГГ, а не как «Fri Aug 14 2026 00:00:00 GMT+0300»
+    const textLength = value => {
+        if (value instanceof Date) return formatDate(value).length;
+        if (value === null || value === undefined) return 0;
+        return String(value).length;
+    };
+
+    worksheet['!cols'] = columns.map(header => {
+        const maxLen = rows.reduce((max, row) => {
+            const len = textLength(row[header]);
+            return len > max ? len : max;
+        }, header.length);
+
+        // +2 — внутренние отступы Excel. Потолок 250 символов — предел ширины
+        // колонки в Excel (255), чтобы даже очень длинное наименование было видно
+        return { wch: Math.max(10, Math.min(maxLen + 2, 250)) };
+    });
+
+    // Автофильтр по шапке — сортировка и фильтр доступны сразу в Excel
+    worksheet['!autofilter'] = {
+        ref: XLSX.utils.encode_range({
+            s: { r: 0, c: 0 },
+            e: { r: rows.length, c: columns.length - 1 }
+        })
+    };
+
+    // Числовые колонки пишем числами (а не текстом), деньги — с форматом
+    // «два знака после запятой»: суммы читаются и считаются формулами.
+    // «Кол-во» оставляем без формата — 40 и 150,5 показываются как есть.
+    const numericFormats = {
+        'Кол-во': '',
+        'Цена за ед.': '#,##0.00',
+        'Сумма': '#,##0.00'
+    };
+
+    Object.entries(numericFormats).forEach(([header, numberFormat]) => {
+        const col = columns.indexOf(header);
+        if (col === -1) return;
+
+        rows.forEach((row, rowIndex) => {
+            const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex + 1, c: col })];
+            if (!cell) return;
+
+            const num = Number(cell.v);
+            if (cell.v === null || cell.v === undefined
+                || String(cell.v).trim() === '' || isNaN(num)) return;
+
+            cell.t = 'n';
+            cell.v = num;
+            if (numberFormat) cell.z = numberFormat;
+            delete cell.w;
+        });
+    });
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Реестр материалов');
 

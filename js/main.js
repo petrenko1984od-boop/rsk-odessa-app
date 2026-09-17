@@ -184,7 +184,7 @@ function applyPermissionsToUI() {
         registryBtn.style.display = canSeeTab('registry') ? '' : 'none';
     }
 
-    // Заявки финансов — только тем, кто их обрабатывает
+    // Финансы — только тем, кто обрабатывает заявки
     // (TAB_REQUIREMENTS['cash-requests'] = 'cash_view_all')
     const cashReqBtn = document.getElementById('btn-cash-requests');
     if (cashReqBtn) {
@@ -193,13 +193,13 @@ function applyPermissionsToUI() {
         cashReqBtn.style.display = allowed ? '' : 'none';
     }
 
-    // Кнопка «Заявка финансов» в шапке — только привязанным сотрудникам
+    // Кнопка «Финансовые запросы» в шапке — только привязанным сотрудникам
     const newCashReqBtn = document.getElementById('btn-new-cash-request');
     if (newCashReqBtn) {
         newCashReqBtn.style.display = can('cash_expense_self') ? '' : 'none';
     }
 
-    // Кнопка «Новая заявка» в шапке. Дублируем логику orders.js — иначе
+    // Кнопка «Заказ материалов» в шапке. Дублируем логику orders.js — иначе
     // кнопка остаётся видимой до первого открытия вкладки «Снабжение».
     const newOrderBtn = document.getElementById('btn-new-order');
     if (newOrderBtn) {
