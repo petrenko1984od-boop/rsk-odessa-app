@@ -209,8 +209,9 @@
 
                     <!-- ДОП. РАСХОДЫ (вне сметы): контейнер наполняет renderExtraCostsUI()
                          (js/modules/extra-costs.js). Здесь всё, что сотрудники привязали к
-                         служебному разделу «Доп. расходы»: расходы подотчёта, заказы материалов
-                         и финансовые запросы. В план-факт эти суммы не попадают. -->
+                         служебному разделу «Доп. расходы»: закрытые заявки разложены по спискам
+                         «Работы» и «Материалы» (клик по строке — подробности); отдельно — заявки
+                         в работе и финансовые запросы. В план-факт эти суммы не попадают. -->
                     <div id="proj-subtab-extra" class="hidden space-y-4"></div>
 
                     <div id="proj-subtab-files" class="hidden space-y-4">
@@ -1021,6 +1022,17 @@
             </div>
             <div id="section-detail-gantt-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="section-detail-gantt-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
+        </div>
+    </div>
+
+    <!-- ПОДРОБНОСТИ ЗАПИСИ ВНЕ СМЕТЫ (клик по строке на подвкладке «📦 Доп. расходы») -->
+    <div id="extra-cost-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" id="extra-cost-detail-title">⚠ Доп. расходы — подробности</h3>
+                <button onclick="hideModal('extra-cost-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="extra-cost-detail-content" class="space-y-3 text-sm text-gray-800"></div>
         </div>
     </div>
 
