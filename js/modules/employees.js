@@ -18,12 +18,22 @@ import {
 import {
     can, requirePermission, isAdmin, getEmployee
 } from '../permissions.js';
+// Баланс подотчёта — тот же, что в кабинете сотрудника
+import { loadBalance, formatBalance } from './cash.js';
+// Бейджи статуса и приоритета задачи — чтобы карточка выглядела как «Рабочий экран»
+import {
+    getTaskStatusInfo, getTaskPriorityInfo
+} from './tasks.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
 
 let employeesCache = [];
+
+// Сотрудник, карточка которого открыта сейчас: нужно, чтобы обновлять
+// блоки карточки (объекты/баланс/задачи) после постановки задачи.
+let currentCardEmployeeId = null;
 
 // =====================================================================
 // ЗАГРУЗКА
@@ -219,6 +229,9 @@ export async function openEmployeeCard(id) {
         </div>
 
         ${statusInfo}
+
+        <!-- Объекты / баланс / актуальные задачи заполняет refreshEmployeeCardExtra() -->
+        <div id="employee-card-extra"></div>
     `;
 
     // Кнопки управления (только Админ)
@@ -234,6 +247,11 @@ export async function openEmployeeCard(id) {
     }
 
     showModal('employee-card-modal');
+
+    // Объекты, баланс и актуальные задачи догружаем уже после открытия
+    // карточки, чтобы она открывалась мгновенно.
+    currentCardEmployeeId = emp.id;
+    refreshEmployeeCardExtra();
 }
 
 function renderCardActions(emp) {
@@ -261,6 +279,230 @@ function renderCardActions(emp) {
     actionsDiv.innerHTML = buttonsHTML;
     container.appendChild(actionsDiv);
 }
+
+// =====================================================================
+// БЛОКИ КАРТОЧКИ: ОБЪЕКТЫ / БАЛАНС / АКТУАЛЬНЫЕ ЗАДАЧИ
+// =====================================================================
+// Карточка открывается мгновенно, а эти данные подтягиваются следом:
+//   🏗 Объекты — объекты, где сотрудник прораб (projects.foreman_id);
+//   💰 Баланс  — та же цифра, что в кабинете сотрудника
+//                (представление employee_cash_balance);
+//   🎯 Задачи  — только актуальные (pending / in_progress), назначенные
+//                на сотрудника; выполненные и отменённые не показываем.
+// =====================================================================
+
+/**
+ * Актуальная задача — новая или в работе.
+ * Выполненные, отменённые и архивные в карточке сотрудника не показываем.
+ */
+function isActualTask(task) {
+    return task.status === 'pending' || task.status === 'in_progress';
+}
+
+/**
+ * Сортировка задач: сначала с ближайшим дедлайном, задачи без срока — в конце.
+ */
+function byDeadline(a, b) {
+    if (!a.deadline && !b.deadline) return 0;
+    if (!a.deadline) return 1;
+    if (!b.deadline) return -1;
+    return a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0;
+}
+
+/**
+ * Может ли текущий пользователь поставить задачу этому сотруднику.
+ * Право assign_task_to_employee есть у Администратора, Директора и
+ * Главного инженера. create_task проверяем дополнительно: без него форма
+ * создания задачи просто не откроется.
+ */
+function canAssignTaskTo(emp) {
+    const status = emp.status || 'active';
+    return status === 'active' && can('create_task') && can('assign_task_to_employee');
+}
+
+/**
+ * Виден ли в карточке баланс подотчёта.
+ * Кассиры (cash_view_all) видят баланс любого сотрудника, остальные — только свой.
+ */
+function canSeeEmployeeBalance(emp) {
+    const me = getEmployee();
+    return can('cash_view_all') || (!!me && me.id === emp.id);
+}
+
+/**
+ * Загружает данные для дополнительных блоков карточки сотрудника.
+ * @returns {Promise<{ projects, balance, tasks }>}
+ */
+async function loadEmployeeCardExtra(emp) {
+    const [projectsRes, balanceRes, tasksRes] = await Promise.all([
+        db.select('projects', {
+            filters: { foreman_id: emp.id },
+            orderBy: { column: 'name', asc: true }
+        }),
+        loadBalance(emp.id),
+        db.select('tasks', {
+            select: 'id, title, status, priority, deadline, created_at, author_employee_id, assignee_employee_id, project:projects ( id, name )',
+            filters: { assignee_employee_id: emp.id },
+            orderBy: { column: 'created_at', asc: false }
+        })
+    ]);
+
+    const me = getEmployee();
+
+    // Те же правила видимости, что canSeeTask() в модуле задач:
+    // Админ/Директор — все задачи, остальные — где сотрудник автор или исполнитель.
+    const tasks = (tasksRes.data || [])
+        .filter(task => {
+            if (!me) return false;
+            if (can('view_all_tasks')) return true;
+            return task.author_employee_id === me.id || task.assignee_employee_id === me.id;
+        })
+        .filter(isActualTask)
+        .sort(byDeadline);
+
+    return {
+        projects: projectsRes.data || [],
+        balance: Number(balanceRes.balance) || 0,
+        tasks
+    };
+}
+
+/**
+ * Отрисовывает дополнительные блоки карточки сотрудника.
+ * Чистая функция: данные приходят параметрами.
+ */
+function renderEmployeeCardExtra({
+    employeeId,
+    projects = [],
+    balance = 0,
+    tasks = [],
+    canSeeBalance = false,
+    canAssignTask = false
+} = {}) {
+    const money = formatBalance(balance);
+
+    const projectsBlock = `
+        <div class="bg-gray-50 p-3 rounded-lg border space-y-2 text-xs">
+            <p class="font-bold text-gray-500 uppercase tracking-wider">🏗 Объекты, которые ведёт: ${projects.length}</p>
+            ${projects.length
+                ? `<div class="space-y-1">
+                       ${projects.map(project => `
+                           <button type="button" onclick="window.openProjectFromEmployeeCard(${project.id})"
+                                   class="w-full text-left bg-white border border-gray-200 rounded-lg px-2 py-1.5 font-semibold text-[#15803d] transition hover:bg-emerald-50">
+                               🏗 ${escapeHtml(project.name)}
+                           </button>
+                       `).join('')}
+                   </div>`
+                : '<p class="italic text-gray-400">Объекты не назначены</p>'}
+        </div>`;
+
+    const balanceBlock = canSeeBalance
+        ? `
+        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex justify-between items-center gap-2 text-xs">
+            <span class="font-bold text-gray-600 uppercase tracking-wider">💰 Баланс подотчёта</span>
+            <span class="${money.color} font-bold text-sm">${money.icon} ${money.text}</span>
+        </div>`
+        : '';
+
+    const tasksBlock = `
+        <div class="bg-gray-50 p-3 rounded-lg border space-y-2 text-xs">
+            <div class="flex justify-between items-center gap-2 flex-wrap">
+                <p class="font-bold text-gray-500 uppercase tracking-wider">🎯 Актуальные задачи: ${tasks.length}</p>
+                ${canAssignTask
+                    ? `<button type="button" onclick="window.openNewTaskForm(${employeeId})"
+                              class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-3 py-1.5 rounded-lg transition shrink-0">➕ Поставить задачу</button>`
+                    : ''}
+            </div>
+            ${tasks.length
+                ? `<div class="space-y-2">${tasks.map(renderEmployeeCardTask).join('')}</div>`
+                : `<p class="italic text-gray-400">${canAssignTask
+                        ? 'Актуальных задач нет — можно поставить новую'
+                        : 'Актуальных задач нет'}</p>`}
+        </div>`;
+
+    return projectsBlock + balanceBlock + tasksBlock;
+}
+
+/**
+ * Строка задачи в карточке сотрудника (клик — карточка задачи).
+ */
+function renderEmployeeCardTask(task) {
+    const statusInfo = getTaskStatusInfo(task.status);
+    const priorityInfo = getTaskPriorityInfo(task.priority);
+
+    const today = new Date().toISOString().split('T')[0];
+    const isOverdue = !!task.deadline && task.deadline < today;
+
+    const projectName = task.project?.name || 'Без объекта';
+    const title = task.title || task.text || '—';
+
+    return `
+        <button type="button" onclick="window.openTaskFromCard(${task.id})"
+                class="w-full text-left bg-white border border-gray-200 rounded-lg p-2 space-y-1 transition hover:bg-emerald-50/60">
+            <div class="flex items-center gap-1 flex-wrap">
+                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${priorityInfo.bg} ${priorityInfo.color}">${priorityInfo.label}</span>
+                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${statusInfo.bg} ${statusInfo.color}">${statusInfo.label}</span>
+                ${isOverdue ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700">⚠️ Просрочено</span>' : ''}
+            </div>
+            <p class="font-semibold text-gray-800">${escapeHtml(title)}</p>
+            <p class="text-[10px] text-gray-500">🏗 ${escapeHtml(projectName)}${task.deadline ? ` · 📅 ${formatDate(task.deadline)}` : ''}</p>
+        </button>`;
+}
+
+/**
+ * Данные карточки догрузились — можно ли ими перерисовать блоки?
+ * Пока шли запросы, карточку могли закрыть или открыть другого сотрудника,
+ * поэтому данные «опоздавшего» запроса в вёрстку не пускаем.
+ */
+function isCardStillOpenFor(employeeId) {
+    const modal = document.getElementById('employee-card-modal');
+    if (!modal || modal.classList.contains('hidden')) return false;
+    return employeeId === currentCardEmployeeId;
+}
+
+/**
+ * Заполняет блоки карточки открытого сотрудника.
+ * Вызывается при открытии карточки и после постановки задачи.
+ */
+export async function refreshEmployeeCardExtra() {
+    const modal = document.getElementById('employee-card-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+
+    const container = document.getElementById('employee-card-extra');
+    if (!container) return;
+
+    const emp = employeesCache.find(e => e.id === currentCardEmployeeId);
+    if (!emp) return;
+
+    container.innerHTML = '<div class="app-loading app-loading-card text-sm"><span class="app-spinner" aria-hidden="true"></span><span>Загрузка данных сотрудника...</span></div>';
+
+    const { projects, balance, tasks } = await loadEmployeeCardExtra(emp);
+
+    if (!isCardStillOpenFor(emp.id)) return;
+
+    container.innerHTML = renderEmployeeCardExtra({
+        employeeId: emp.id,
+        projects,
+        balance,
+        tasks,
+        canSeeBalance: canSeeEmployeeBalance(emp),
+        canAssignTask: canAssignTaskTo(emp)
+    });
+}
+
+/**
+ * Переход из карточки сотрудника в карточку объекта.
+ */
+function openProjectFromEmployeeCard(projectId) {
+    hideModal('employee-card-modal');
+
+    if (typeof window.openProjectDetail === 'function') {
+        window.openProjectDetail(projectId);
+    } else {
+        toast('Карточка объекта недоступна', 'error');
+    }
+}
+
 
 // =====================================================================
 // БЛОКИРОВКА / ВОССТАНОВЛЕНИЕ
@@ -414,3 +656,5 @@ window.confirmDeactivate = confirmDeactivate;
 window.openLinkModal = openLinkModal;
 window.confirmLinkAccount = confirmLinkAccount;
 window.unlinkAccount = unlinkAccount;
+window.openProjectFromEmployeeCard = openProjectFromEmployeeCard;
+window.refreshEmployeeCardExtra = refreshEmployeeCardExtra;

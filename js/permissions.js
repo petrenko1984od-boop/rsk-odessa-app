@@ -45,6 +45,7 @@ const ROLE_PERMISSIONS = {
         'process_order',
         // Задачи
         'create_task',
+        'assign_task_to_employee',    // поставить задачу из карточки сотрудника
         'view_all_tasks',
         'cancel_any_task',
         // График работ и файлы
@@ -67,6 +68,7 @@ const ROLE_PERMISSIONS = {
         'view_projects_all',
         'view_registry',
         'create_task',
+        'assign_task_to_employee',    // поставить задачу из карточки сотрудника
         'view_all_tasks',
         'view_dashboard',
         // Вкладки
@@ -85,6 +87,7 @@ const ROLE_PERMISSIONS = {
         'view_registry',
         'create_order',
         'create_task',
+        'assign_task_to_employee',    // поставить задачу из карточки сотрудника
         'edit_gantt',
         'manage_files',
         'view_dashboard'

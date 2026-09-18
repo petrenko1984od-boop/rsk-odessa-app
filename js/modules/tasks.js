@@ -497,6 +497,24 @@ function renderTaskActions(task) {
     actionsContainer.innerHTML = buttonsHtml;
 }
 
+/**
+ * Открывает задачу из карточки сотрудника (раздел «👥 Сотрудники»).
+ * Карточка задачи ищет задачу в кэше, поэтому если раздел «Рабочий экран»
+ * ещё не открывался, кэш сначала наполняем — с учётом прав (canSeeTask).
+ */
+export async function openTaskFromCard(id) {
+    if (!tasksCache.some(task => task.id === id)) {
+        await loadTasks();
+    }
+
+    if (!tasksCache.some(task => task.id === id)) {
+        toast('Нет доступа к этой задаче', 'error');
+        return;
+    }
+
+    await openTaskDetail(id);
+}
+
 // =====================================================================
 // ХЕЛПЕРЫ
 // =====================================================================
@@ -542,8 +560,10 @@ export async function viewTaskPhoto(path) {
 
 /**
  * Открывает форму создания задачи.
+ * @param {number} [presetAssigneeId] — кого сразу подставить исполнителем.
+ *   Передаётся из карточки сотрудника («➕ Поставить задачу»).
  */
-export async function openNewTaskForm() {
+export async function openNewTaskForm(presetAssigneeId = null) {
     if (!canCreateTask()) {
         toast('Нет прав на создание задачи', 'error');
         return;
@@ -570,7 +590,42 @@ export async function openNewTaskForm() {
         loadAssigneesForTask()
     ]);
 
+    // Задача ставится из карточки сотрудника — сразу выбираем его исполнителем
+    if (presetAssigneeId) {
+        await presetAssigneeOption(presetAssigneeId);
+    }
+
     showModal('new-task-modal');
+}
+
+/**
+ * Подставляет исполнителя в форму создания задачи.
+ * Обычный список исполнителей — активные Прораб / Снабженец / Инженер ПТО.
+ * Если задача ставится из карточки сотрудника с другой должностью, добавляем
+ * его отдельным пунктом — чтобы не было тупика «сотрудника нет в списке».
+ */
+async function presetAssigneeOption(employeeId) {
+    const select = document.getElementById('new-task-assignee');
+    if (!select) return;
+
+    const existing = select.querySelector(`option[value="${employeeId}"]`);
+    if (existing) {
+        select.value = String(employeeId);
+        return;
+    }
+
+    const { data: employee } = await db.select('employees', {
+        filters: { id: employeeId },
+        single: true
+    });
+
+    if (!employee) return;
+
+    const option = document.createElement('option');
+    option.value = String(employee.id);
+    option.textContent = `${employee.name} (${employee.position || '—'})`;
+    select.appendChild(option);
+    select.value = String(employee.id);
 }
 
 /**
@@ -730,6 +785,11 @@ export async function saveNewTask(event) {
     form.reset();
 
     await loadTasks();
+
+    // Задачу поставили из карточки сотрудника — обновляем блок задач в ней
+    if (typeof window.refreshEmployeeCardExtra === 'function') {
+        await window.refreshEmployeeCardExtra();
+    }
 }
 // =====================================================================
 // ОБРАБОТКА ЗАДАЧИ
@@ -1090,6 +1150,7 @@ function sanitizeFileName(originalName) {
 // =====================================================================
 
 window.openTaskDetail = openTaskDetail;
+window.openTaskFromCard = openTaskFromCard;
 window.openTaskFilterModal = openTaskFilterModal;
 window.switchTasksTab = switchTasksTab;
 window.viewTaskPhoto = viewTaskPhoto;
