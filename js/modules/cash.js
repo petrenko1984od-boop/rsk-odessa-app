@@ -69,8 +69,22 @@ export async function loadAllBalances() {
 // ОПЕРАЦИИ (история)
 // =====================================================================
 
+/**
+ * История операций сотрудника.
+ *
+ * Вложенные выборки project/section нужны «Авансовому отчёту»: по объекту
+ * работает фильтр, а в Excel выгружается читаемое название, а не id.
+ * Синтаксис тот же, что в `loadRegistry()` для этой же таблицы.
+ */
 export async function loadOperations(employeeId, limit = 50) {
     const { data, error } = await db.select('cash_operations', {
+        select: `
+            id, employee_id, operation_type, amount, description, category, items,
+            project_id, section_id, order_id, source, receipt_path,
+            operation_date, created_at,
+            project:projects ( id, name ),
+            section:sections ( id, name )
+        `,
         filters: { employee_id: employeeId },
         orderBy: { column: 'created_at', asc: false },
         limit
@@ -422,6 +436,22 @@ export async function renderProfileBalance() {
 // UI — «АВАНСОВЫЙ ОТЧЁТ»
 // =====================================================================
 
+// Сколько последних операций грузим в отчёт. Фильтры и экспорт работают
+// по этому окну, поэтому 50 (как было раньше) мало: отчёт по объекту или
+// за период оказывался обрезанным. У одного сотрудника операций немного.
+const MY_OPERATIONS_LIMIT = 500;
+
+// Значение фильтра «объект не указан»: расход можно внести без объекта.
+const MY_OPS_NO_PROJECT = 'none';
+
+// Кэш операций текущего отчёта и активные фильтры.
+// Контейнер отчёта перерисовывается целиком (после «Внести расход»,
+// возврата и повторного открытия), поэтому состояние фильтров живёт здесь,
+// а не в DOM — иначе выбор пользователя терялся бы.
+let myOperationsCache = [];
+let myOperationsEmployeeId = null;
+let myOperationsFilters = { projectId: '', dateFrom: '', dateTo: '' };
+
 export async function openMyOperations() {
     const emp = getEmployee();
     if (!emp) {
@@ -440,13 +470,18 @@ async function renderMyOperationsContent(emp) {
     const container = document.getElementById('my-operations-content');
     if (!container) return;
 
-    const { data: operations } = await loadOperations(emp.id, 50);
+    const { data: operations } = await loadOperations(emp.id, MY_OPERATIONS_LIMIT);
     const { balance } = await loadBalance(emp.id);
     const formatted = formatBalance(balance);
 
-    const opsHtml = operations.length > 0
-        ? operations.map(op => renderOperationRow(op)).join('')
-        : '<p class="text-center text-gray-400 italic py-6 text-sm">Операций пока нет</p>';
+    // Отчёт всегда по текущему сотруднику. Если аккаунт сменился (перелогин
+    // без перезагрузки страницы), чужие фильтры по объектам не сохраняем.
+    if (myOperationsEmployeeId !== null && String(myOperationsEmployeeId) !== String(emp.id)) {
+        myOperationsFilters = { projectId: '', dateFrom: '', dateTo: '' };
+    }
+
+    myOperationsCache = operations || [];
+    myOperationsEmployeeId = emp.id;
 
     const isActive = !emp.status || emp.status === 'active';
     const canExpense = can('cash_expense_self') && isActive;
@@ -470,9 +505,91 @@ async function renderMyOperationsContent(emp) {
         ${buttonsHtml}
         <div class="space-y-2 pt-2 border-t mt-2">
             <p class="text-xs font-bold text-gray-500 uppercase tracking-wider pt-2">📋 История операций</p>
-            ${opsHtml}
+            <div class="bg-gray-50 border rounded-lg p-2 space-y-2">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                        <label for="my-ops-filter-project" class="block text-[10px] font-semibold text-gray-500 mb-0.5">Объект</label>
+                        <select id="my-ops-filter-project" onchange="window.applyMyOperationsFilters()"
+                                class="w-full border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="">Все объекты</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="my-ops-filter-date-from" class="block text-[10px] font-semibold text-gray-500 mb-0.5">Дата с</label>
+                        <input type="date" id="my-ops-filter-date-from" onchange="window.applyMyOperationsFilters()"
+                               class="w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </div>
+                    <div>
+                        <label for="my-ops-filter-date-to" class="block text-[10px] font-semibold text-gray-500 mb-0.5">Дата по</label>
+                        <input type="date" id="my-ops-filter-date-to" onchange="window.applyMyOperationsFilters()"
+                               class="w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="window.resetMyOperationsFilters()"
+                            class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-3 py-2 rounded-lg text-xs transition">🗑 Сброс фильтра</button>
+                    <button onclick="window.exportMyOperationsToExcel()"
+                            class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition shadow">📥 Excel</button>
+                </div>
+            </div>
+            <p id="my-ops-summary" class="text-[11px] text-gray-500"></p>
+            <div id="my-ops-list" class="space-y-2"></div>
         </div>
     `;
+
+    renderMyOperationsProjectOptions();
+    renderMyOperationsList();
+}
+
+// =====================================================================
+// ФИЛЬТРЫ «АВАНСОВОГО ОТЧЁТА»
+// =====================================================================
+// Фильтруем в браузере по уже загруженному окну операций (MY_OPERATIONS_LIMIT):
+// отдельный запрос на каждое изменение фильтра не нужен. Дата операции —
+// YYYY-MM-DD, поэтому сравнивается со значением input[type=date] как строка
+// и часовые пояса не мешают.
+// =====================================================================
+
+/** Дата операции как YYYY-MM-DD (для фильтра «с / по»). */
+function operationDateISO(op) {
+    return String(op?.operation_date || op?.created_at || '').slice(0, 10);
+}
+
+/** Операции, прошедшие активные фильтры (объект + период). */
+function getFilteredMyOperations() {
+    return myOperationsCache.filter(op => {
+        const projectFilter = myOperationsFilters.projectId;
+
+        if (projectFilter === MY_OPS_NO_PROJECT) {
+            if (op.project_id) return false;
+        } else if (projectFilter && String(op.project_id) !== String(projectFilter)) {
+            return false;
+        }
+
+        const date = operationDateISO(op);
+
+        if (myOperationsFilters.dateFrom && date < myOperationsFilters.dateFrom) return false;
+        if (myOperationsFilters.dateTo && date > myOperationsFilters.dateTo) return false;
+
+        return true;
+    });
+}
+
+/**
+ * Итоги по операциям. Знак тот же, что в списке: приход — выдача подотчёта
+ * и корректировка, расход — расход и возврат в кассу.
+ */
+function getMyOperationTotals(operations) {
+    let income = 0;
+    let expense = 0;
+
+    operations.forEach(op => {
+        const amount = Number(op.amount) || 0;
+        if (op.operation_type === 'issue' || op.operation_type === 'adjustment') income += amount;
+        else expense += amount;
+    });
+
+    return { income: roundMoney(income), expense: roundMoney(expense) };
 }
 
 function renderOperationRow(op) {
@@ -482,6 +599,9 @@ function renderOperationRow(op) {
     const sign = isIncome ? '+' : '−';
 
     const categoryLabel = op.category ? getCategoryLabel(op.category) : '';
+
+    // Объект и раздел — их видно и в фильтре отчёта, поэтому показываем в строке
+    const projectLabel = [op.project?.name, op.section?.name].filter(Boolean).join(' · ');
 
     let itemsHtml = '';
     if (op.operation_type === 'expense' && Array.isArray(op.items) && op.items.length > 0) {
@@ -511,6 +631,7 @@ function renderOperationRow(op) {
                         ${categoryLabel ? `<span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded ml-1">${categoryLabel}</span>` : ''}
                     </p>
                     <p class="text-gray-500 text-[11px] mt-0.5">${escapeHtml(op.description || '—')}</p>
+                    ${projectLabel ? `<p class="text-[11px] text-gray-500 mt-0.5">🏗 ${escapeHtml(projectLabel)}</p>` : ''}
                 </div>
                 <span class="${amountClass} font-bold whitespace-nowrap">${sign} ${formatMoney(op.amount)}</span>
             </div>
@@ -521,6 +642,306 @@ function renderOperationRow(op) {
             </p>
         </div>
     `;
+}
+
+/** Список объектов для фильтра — из загруженных операций, без лишних запросов. */
+function renderMyOperationsProjectOptions() {
+    const select = document.getElementById('my-ops-filter-project');
+    if (!select) return;
+
+    const projects = [];
+    const seen = new Set();
+    let hasWithoutProject = false;
+
+    myOperationsCache.forEach(op => {
+        if (!op.project_id) { hasWithoutProject = true; return; }
+
+        const key = String(op.project_id);
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        projects.push({ id: op.project_id, name: op.project?.name || `Объект #${op.project_id}` });
+    });
+
+    projects.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+
+    select.innerHTML = '<option value="">Все объекты</option>' +
+        projects.map(p => `<option value="${escapeHtml(String(p.id))}">${escapeHtml(p.name)}</option>`).join('') +
+        (hasWithoutProject ? `<option value="${MY_OPS_NO_PROJECT}">— Без объекта —</option>` : '');
+
+    // Контейнер отчёта перерисовывается целиком, поэтому выбор фильтра
+    // восстанавливаем из состояния. Если такого объекта в данных уже нет —
+    // фильтр сбрасываем, чтобы селект и список не расходились.
+    select.value = myOperationsFilters.projectId;
+    if (select.value !== myOperationsFilters.projectId) {
+        myOperationsFilters.projectId = '';
+        select.value = '';
+    }
+
+    const fromInput = document.getElementById('my-ops-filter-date-from');
+    if (fromInput) fromInput.value = myOperationsFilters.dateFrom;
+
+    const toInput = document.getElementById('my-ops-filter-date-to');
+    if (toInput) toInput.value = myOperationsFilters.dateTo;
+}
+
+/** Перерисовывает список под текущие фильтры (сами контролы не трогает). */
+function renderMyOperationsList() {
+    const list = document.getElementById('my-ops-list');
+    if (!list) return;
+
+    const operations = getFilteredMyOperations();
+    const totals = getMyOperationTotals(operations);
+
+    const isFiltered = Boolean(
+        myOperationsFilters.projectId || myOperationsFilters.dateFrom || myOperationsFilters.dateTo
+    );
+
+    list.innerHTML = operations.length > 0
+        ? operations.map(op => renderOperationRow(op)).join('')
+        : `<p class="text-center text-gray-400 italic py-6 text-sm">${
+              isFiltered ? 'Ничего не найдено по фильтру' : 'Операций пока нет'
+          }</p>`;
+
+    const summary = document.getElementById('my-ops-summary');
+    if (summary) {
+        summary.textContent = `📊 Показано: ${operations.length} из ${myOperationsCache.length}`
+            + ` · 🟢 Приход: ${formatMoney(totals.income)}`
+            + ` · 🔴 Расход: ${formatMoney(totals.expense)}`;
+    }
+}
+
+export function applyMyOperationsFilters() {
+    myOperationsFilters.projectId = document.getElementById('my-ops-filter-project')?.value || '';
+    myOperationsFilters.dateFrom = document.getElementById('my-ops-filter-date-from')?.value || '';
+    myOperationsFilters.dateTo = document.getElementById('my-ops-filter-date-to')?.value || '';
+
+    // Границы периода можно ставить по одной: «с» без «по» и наоборот.
+    renderMyOperationsList();
+}
+
+export function resetMyOperationsFilters() {
+    myOperationsFilters = { projectId: '', dateFrom: '', dateTo: '' };
+
+    renderMyOperationsProjectOptions();
+    renderMyOperationsList();
+}
+
+// =====================================================================
+// ЭКСПОРТ «АВАНСОВОГО ОТЧЁТА» В EXCEL
+// =====================================================================
+// Выгружаем ровно то, что видно в отчёте: активные фильтры (объект, период)
+// уважаются — иначе «Excel по объекту» приносил бы весь подотчёт сотрудника.
+// =====================================================================
+
+export function exportMyOperationsToExcel() {
+    const operations = getFilteredMyOperations();
+
+    if (operations.length === 0) {
+        toast('Нет данных для выгрузки', 'warning');
+        return;
+    }
+
+    if (typeof XLSX === 'undefined') {
+        toast('Библиотека XLSX не загружена', 'error');
+        return;
+    }
+
+    // Дату пишем настоящей датой Excel (формат встроенный, поэтому Excel
+    // покажет её по локали: в русской — 14.08.2026). Тогда автофильтр и
+    // сортировка по дате работают правильно, а не как по тексту.
+    const excelDate = value => {
+        const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
+        if (!parts) return formatDate(value);
+
+        const date = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+        return isNaN(date.getTime()) ? formatDate(value) : date;
+    };
+
+    // Числа округляем до копеек; значение, которое не удалось распарсить,
+    // оставляем как есть — roundMoney() молча превратил бы его в 0.
+    const money = value => {
+        if (value === null || value === undefined) return value;
+        if (typeof value === 'string' && value.trim() === '') return value;
+        const num = Number(value);
+        return Number.isFinite(num) ? Math.round((num + Number.EPSILON) * 100) / 100 : value;
+    };
+
+    // Расход с позициями разворачиваем в строку на позицию — иначе в Excel не
+    // видно, из чего сложилась сумма. У выдачи/возврата позиций нет.
+    const rows = [];
+
+    operations.forEach(op => {
+        const typeInfo = getOperationTypeInfo(op.operation_type);
+        const isIncome = op.operation_type === 'issue' || op.operation_type === 'adjustment';
+        const items = Array.isArray(op.items) ? op.items : [];
+
+        const base = {
+            'Дата': excelDate(operationDateISO(op)),
+            'Операция': typeInfo.label,
+            'Тип': isIncome ? 'Приход' : 'Расход',
+            'Категория': op.category ? getCategoryLabel(op.category) : '—',
+            'Объект': op.project?.name || '—',
+            'Раздел': op.section?.name || '—'
+        };
+
+        if (op.operation_type === 'expense' && items.length > 0) {
+            items.forEach(it => {
+                // У старых позиций суммы может не быть — считаем из кол-ва и цены.
+                const sum = it.sum !== null && it.sum !== undefined && it.sum !== ''
+                    ? it.sum
+                    : (Number(it.qty) || 0) * (Number(it.price) || 0);
+
+                rows.push({
+                    ...base,
+                    'Наименование': it.name || '',
+                    'Кол-во': it.qty !== null && it.qty !== undefined ? it.qty : '',
+                    'Ед. изм.': it.unit || '',
+                    'Цена за ед.': money(it.price),
+                    'Сумма': money(sum),
+                    'Комментарий': op.description || ''
+                });
+            });
+            return;
+        }
+
+        rows.push({
+            ...base,
+            'Наименование': '',
+            'Кол-во': '',
+            'Ед. изм.': '',
+            'Цена за ед.': '',
+            'Сумма': money(op.amount),
+            'Комментарий': op.description || ''
+        });
+    });
+
+    // ── ЛИСТ ─────────────────────────────────────────────────────────
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+
+    // Колонки берём в том порядке, в каком они перечислены в rows выше
+    const columns = Object.keys(rows[0]);
+
+    // ── ЧИТАЕМОСТЬ ФАЙЛА ─────────────────────────────────────────────
+    // Excel открывает .xlsx со своей шириной колонок (~8 символов), поэтому
+    // длинный текст в ячейках не видно. Ширину считаем по тому, как значение
+    // покажет Excel: дата — «14.08.2026», деньги — «40 000,00» с разрядами и
+    // двумя знаками, а не как сырое число «40000».
+    const moneyLength = value => {
+        if (value === null || value === undefined || value === '') return 0;
+
+        const num = Number(value);
+        if (!Number.isFinite(num)) return String(value).length;
+
+        return num
+            .toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            .length;
+    };
+
+    const displayLength = (header, value) => {
+        if (value === null || value === undefined) return 0;
+        if (value instanceof Date) return formatDate(value).length;
+        if (header === 'Цена за ед.' || header === 'Сумма') return moneyLength(value);
+        return String(value).length;
+    };
+
+    worksheet['!cols'] = columns.map(header => {
+        const maxLen = rows.reduce((max, row) => {
+            const len = displayLength(header, row[header]);
+            return len > max ? len : max;
+        }, header.length);
+
+        // +2 — внутренние отступы Excel. Потолок 250 символов — предел ширины
+        // колонки в Excel (255), чтобы даже длинное наименование было видно.
+        return { wch: Math.max(10, Math.min(maxLen + 2, 250)) };
+    });
+
+    // Автофильтр по шапке — сортировка и фильтр доступны сразу в Excel.
+    // Диапазон считаем ДО строк итогов, чтобы они в фильтр не попадали.
+    worksheet['!autofilter'] = {
+        ref: XLSX.utils.encode_range({
+            s: { r: 0, c: 0 },
+            e: { r: rows.length, c: columns.length - 1 }
+        })
+    };
+
+    // Числовые колонки пишем числами (а не текстом), деньги — с форматом
+    // «два знака после запятой»: суммы читаются и считаются формулами.
+    const numericFormats = {
+        'Кол-во': '',
+        'Цена за ед.': '#,##0.00',
+        'Сумма': '#,##0.00'
+    };
+
+    Object.entries(numericFormats).forEach(([header, numberFormat]) => {
+        const col = columns.indexOf(header);
+        if (col === -1) return;
+
+        rows.forEach((row, rowIndex) => {
+            const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex + 1, c: col })];
+            if (!cell) return;
+
+            const num = Number(cell.v);
+            if (cell.v === null || cell.v === undefined
+                || String(cell.v).trim() === '' || isNaN(num)) return;
+
+            cell.t = 'n';
+            cell.v = num;
+            if (numberFormat) cell.z = numberFormat;
+            delete cell.w;
+        });
+    });
+
+    // ── ИТОГИ ────────────────────────────────────────────────────────
+    // Три строки под таблицей: иначе приход/расход пришлось бы считать в
+    // Excel вручную. В диапазон автофильтра они не попадают.
+    let income = 0;
+    let expense = 0;
+
+    rows.forEach(row => {
+        const sum = Number(row['Сумма']) || 0;
+        if (row['Тип'] === 'Приход') income += sum;
+        else expense += sum;
+    });
+
+    income = roundMoney(income);
+    expense = roundMoney(expense);
+
+    const sumCol = columns.indexOf('Сумма');
+    const totalsStart = rows.length + 2;   // +1 — пустая строка после таблицы
+
+    const addTotalRow = (offset, label, value) => {
+        worksheet[XLSX.utils.encode_cell({ r: totalsStart + offset, c: 0 })] = { t: 's', v: label };
+        worksheet[XLSX.utils.encode_cell({ r: totalsStart + offset, c: sumCol })] = {
+            t: 'n',
+            v: value,
+            z: '#,##0.00'
+        };
+    };
+
+    addTotalRow(0, 'Итого приход', income);
+    addTotalRow(1, 'Итого расход', expense);
+    addTotalRow(2, 'Баланс (приход − расход)', roundMoney(income - expense));
+
+    // Ячейки итогов лежат ниже диапазона json_to_sheet — расширяем !ref,
+    // иначе Excel их не увидит.
+    worksheet['!ref'] = XLSX.utils.encode_range({
+        s: { r: 0, c: 0 },
+        e: { r: totalsStart + 2, c: columns.length - 1 }
+    });
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Авансовый отчёт');
+
+    // Имя файла — через sanitizeFileName(): кириллица транслитерируется,
+    // поэтому файл открывается без «кракозябр» в любой системе.
+    const stamp = new Date().toISOString().split('T')[0];
+    const employee = getEmployee();
+    const fileName = sanitizeFileName(`Авансовый отчёт ${employee?.name || ''} ${stamp}.xlsx`);
+
+    XLSX.writeFile(workbook, fileName);
+
+    toast(`Экспортировано строк: ${rows.length}`, 'success');
 }
 
 // =====================================================================
@@ -877,6 +1298,9 @@ window.openMyOperations = openMyOperations;
 window.closeMyOperations = () => {
     document.getElementById('my-operations-modal')?.classList.add('hidden');
 };
+window.applyMyOperationsFilters = applyMyOperationsFilters;
+window.resetMyOperationsFilters = resetMyOperationsFilters;
+window.exportMyOperationsToExcel = exportMyOperationsToExcel;
 window.viewReceipt = viewReceipt;
 window.addExpenseItemRow = addExpenseItemRow;
 window.recalcExpenseTotal = recalcExpenseTotal;
