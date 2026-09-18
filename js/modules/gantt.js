@@ -18,7 +18,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate
+    formatDate, isExtraSectionName
 } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 
@@ -64,7 +64,9 @@ export async function loadGanttData(projectId) {
         return [];
     }
 
-    currentSections = data || [];
+    // Служебный раздел «Доп. расходы» (вне сметы) в графике не показываем:
+    // у него нет плановых дат, и он не является работой по смете.
+    currentSections = (data || []).filter(section => !isExtraSectionName(section.name));
     return currentSections;
 }
 
@@ -600,16 +602,19 @@ export async function openEditDatesModal() {
         return;
     }
 
-    if (!sections || sections.length === 0) {
+    // «Доп. расходы» — служебный раздел, у него нет плановых дат
+    const planSections = (sections || []).filter(section => !isExtraSectionName(section.name));
+
+    if (planSections.length === 0) {
         container.innerHTML = '<p class="text-center text-gray-400 py-3 text-sm">В этом объекте нет разделов. Загрузите смету на вкладке «📁 Файлы».</p>';
         return;
     }
 
-    log.info(`Загружено ${sections.length} разделов для объекта #${project.id}`);
+    log.info(`Загружено ${planSections.length} разделов для объекта #${project.id}`);
 
-    currentSections = sections;
+    currentSections = planSections;
 
-    container.innerHTML = sections.map(s => `
+    container.innerHTML = planSections.map(s => `
         <div class="bg-gray-50 border rounded-lg p-3 space-y-2" data-section-id="${s.id}">
             <p class="font-semibold text-gray-800 text-xs">📌 ${escapeHtml(s.name)}</p>
             <div class="grid grid-cols-2 gap-2">

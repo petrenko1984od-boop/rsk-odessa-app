@@ -23,6 +23,7 @@ import {
 import {
     can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton
 } from '../permissions.js';
+import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -429,33 +430,16 @@ async function loadProjectsForOrder() {
         data.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
 }
 
+/**
+ * Селект «Раздел» в форме заказа материалов.
+ * Разделы сметы — группой «📊 Разделы сметы», служебный «Доп. расходы» —
+ * отдельной группой «⚠ Вне сметы» (для материалов и работ, которых нет в смете).
+ */
 export async function loadSectionsForOrder() {
     const projectId = parseInt(document.getElementById('new-order-project')?.value, 10);
     const sectionSelect = document.getElementById('new-order-section');
-    if (!sectionSelect) return;
 
-    if (!projectId) {
-        sectionSelect.innerHTML = '<option value="">Сначала выбери объект</option>';
-        return;
-    }
-
-    const { data, error } = await db.select('sections', {
-        filters: { project_id: projectId },
-        orderBy: { column: 'id', asc: true }
-    });
-
-    if (error) {
-        sectionSelect.innerHTML = '<option value="">Ошибка загрузки разделов</option>';
-        return;
-    }
-
-    if (!data || data.length === 0) {
-        sectionSelect.innerHTML = '<option value="">⚠️ У объекта нет разделов (загрузи смету)</option>';
-        return;
-    }
-
-    sectionSelect.innerHTML = '<option value="">— Выбери раздел —</option>' +
-        data.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    await fillSectionsSelect(sectionSelect, projectId);
 }
 
 export function addOrderItemRow() {

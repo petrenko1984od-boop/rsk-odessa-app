@@ -21,6 +21,7 @@ import {
     formatDate, formatMoney, parseNumber, roundMoney
 } from '../utils.js';
 import { can, getEmployee, canSeeTab, canSeeHeaderButton } from '../permissions.js';
+import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -427,33 +428,16 @@ async function loadProjectsForCashRequest() {
 /**
  * Загружает разделы выбранного объекта.
  */
+/**
+ * Селект «Раздел» в форме финансового запроса.
+ * Разделы сметы — группой «📊 Разделы сметы», служебный «Доп. расходы» —
+ * отдельной группой «⚠ Вне сметы» (если работы нет в смете).
+ */
 export async function loadSectionsForCashRequest() {
     const projectId = parseInt(document.getElementById('new-cashreq-project')?.value, 10);
     const sectionSelect = document.getElementById('new-cashreq-section');
-    if (!sectionSelect) return;
 
-    if (!projectId) {
-        sectionSelect.innerHTML = '<option value="">Сначала выбери объект</option>';
-        return;
-    }
-
-    const { data, error } = await db.select('sections', {
-        filters: { project_id: projectId },
-        orderBy: { column: 'id', asc: true }
-    });
-
-    if (error) {
-        sectionSelect.innerHTML = '<option value="">Ошибка загрузки разделов</option>';
-        return;
-    }
-
-    if (!data || data.length === 0) {
-        sectionSelect.innerHTML = '<option value="">⚠️ У объекта нет разделов (загрузи смету)</option>';
-        return;
-    }
-
-    sectionSelect.innerHTML = '<option value="">— Выбери раздел —</option>' +
-        data.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    await fillSectionsSelect(sectionSelect, projectId);
 }
 
 /**

@@ -17,7 +17,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, formatMoney,
-    formatDate
+    formatDate, isExtraSectionName
 } from '../utils.js';
 import { requirePermission } from '../permissions.js';
 import { CONFIG } from '../config.js';
@@ -118,15 +118,28 @@ export async function uploadEstimate(projectId, file) {
 
     const existingByName = new Map();
     (existingSections || []).forEach(section => {
+        // Служебный раздел «Доп. расходы» в сопоставление не берём:
+        // смета не должна его перезаписывать или считать «своим».
+        if (isExtraSectionName(section.name)) return;
+
         const key = normalizeName(section.name);
         if (!existingByName.has(key)) existingByName.set(key, section);
     });
 
     let updatedCount = 0;
     let removedCount = 0;
+    let skippedExtra = 0;
     const keepIds = [];
 
     for (const section of sections) {
+        // Раздел сметы назван как служебный «Доп. расходы» — пропускаем,
+        // иначе служебный раздел получил бы план из сметы и слился бы с ней.
+        if (isExtraSectionName(section.name)) {
+            skippedExtra += 1;
+            log.warn(`В смете есть раздел «${section.name}» — он совпадает с именем служебного раздела «Доп. расходы» и пропущен`);
+            continue;
+        }
+
         const match = existingByName.get(normalizeName(section.name));
 
         const payload = {
@@ -153,8 +166,11 @@ export async function uploadEstimate(projectId, file) {
         }
     }
 
-    // Удаляем только те разделы, которых больше нет в смете
-    const staleSections = (existingSections || []).filter(section => !keepIds.includes(section.id));
+    // Удаляем только те разделы, которых больше нет в смете.
+    // Служебный раздел «Доп. расходы» не из сметы — его не трогаем никогда.
+    const staleSections = (existingSections || []).filter(section =>
+        !keepIds.includes(section.id) && !isExtraSectionName(section.name)
+    );
 
     for (const stale of staleSections) {
         const { error } = await db.remove('sections', { id: stale.id });
@@ -176,7 +192,8 @@ export async function uploadEstimate(projectId, file) {
 
     toast(
         `Смета загружена: разделов ${keepIds.length}` +
-        (removedCount > 0 ? `, удалено отсутствующих в файле: ${removedCount}` : ''),
+        (removedCount > 0 ? `, удалено отсутствующих в файле: ${removedCount}` : '') +
+        (skippedExtra > 0 ? `. Раздел «Доп. расходы» из файла пропущен: он служебный` : ''),
         'success'
     );
 
@@ -274,6 +291,13 @@ function parseRows(rows) {
 // ЗАГРУЗКА РАЗДЕЛОВ
 // =====================================================================
 
+/**
+ * Разделы СМЕТЫ объекта (для план-факта, графика и карточки).
+ * Служебный раздел «Доп. расходы» здесь НЕ возвращается: он не из сметы,
+ * его план всегда 0, а траты собраны на подвкладке «📦 Доп. расходы»
+ * (js/modules/extra-costs.js). Нужен список вместе со служебным разделом
+ * (для выпадающих списков форм) — используй loadSectionsWithExtra().
+ */
 export async function loadSections(projectId) {
     const { data, error } = await db.select('sections', {
         filters: { project_id: projectId },
@@ -285,7 +309,7 @@ export async function loadSections(projectId) {
         return { data: [], error };
     }
 
-    return { data: data || [], error: null };
+    return { data: (data || []).filter(section => !isExtraSectionName(section.name)), error: null };
 }
 
 // =====================================================================
@@ -298,7 +322,7 @@ export async function deleteEstimate(project) {
         return { success: false };
     }
 
-    if (!confirm(`Удалить смету объекта «${project.name}»?\n\nВсе разделы план-факта будут удалены.`)) {
+    if (!confirm(`Удалить смету объекта «${project.name}»?\n\nВсе разделы план-факта будут удалены.\nСлужебный раздел «Доп. расходы» (вне сметы) останется на месте.`)) {
         return { success: false };
     }
 
@@ -306,7 +330,16 @@ export async function deleteEstimate(project) {
         await db.deleteFile(CONFIG.STORAGE.ESTIMATES_BUCKET, project.estimate_file_path);
     }
 
-    await db.remove('sections', { project_id: project.id });
+    // Удаляем все разделы объекта, КРОМЕ служебного «Доп. расходы»:
+    // на него могут ссылаться расходы и заявки, которых нет в смете.
+    const { error: removeError } = await db.remove('sections', {
+        project_id: project.id,
+        'name.neq': CONFIG.EXTRA_SECTION?.NAME || 'Доп. расходы'
+    });
+
+    if (removeError) {
+        log.warn('Не все разделы удалены при удалении сметы:', removeError.message);
+    }
 
     await db.update('projects', {
         estimate_file_path: null,

@@ -27,6 +27,7 @@ import {
     loadSections
 } from './estimate.js';
 import { loadExpensesForProject } from './cash.js';
+import { renderExtraCostsUI } from './extra-costs.js';
 import { renderGantt } from './gantt.js';
 import { renderProjectFiles } from './files.js';
 
@@ -196,11 +197,13 @@ export async function openProjectDetail(id, subTab = 'info') {
     const { data: sections } = await loadSections(project.id);
     currentSectionsCache = sections || [];
 
-    // 2. ОДИН запрос — все расходы объекта (map: { [section_id]: [ops] })
-    const { map: expensesMap } = await loadExpensesForProject(project.id);
+    // 2. ОДИН запрос — все расходы объекта:
+    //    map: { [section_id]: [ops] } — разделы сметы,
+    //    extraOps — траты вне сметы (служебный раздел «Доп. расходы»)
+    const { map: expensesMap, extraOps } = await loadExpensesForProject(project.id);
 
     // 3. Рендерим общую информацию (передаём готовые расходы)
-    renderProjectInfo(project, expensesMap);
+    renderProjectInfo(project, expensesMap, extraOps);
 
     // 4. Рендерим вкладку «Файлы»
     renderEstimateUI(project);
@@ -276,7 +279,27 @@ function calcFact(expensesMap) {
     return { works, materials, total };
 }
 
-function renderProjectInfo(project, expensesMap = {}) {
+/**
+ * Траты вне сметы (служебный раздел «Доп. расходы»).
+ * materials = materials + delivery — как в calcFact выше.
+ */
+function calcExtraSpend(operations) {
+    let works = 0;
+    let materials = 0;
+    let other = 0;
+
+    (operations || []).forEach(op => {
+        const amount = Number(op.amount) || 0;
+
+        if (op.category === 'works') works += amount;
+        else if (op.category === 'materials' || op.category === 'delivery') materials += amount;
+        else other += amount;
+    });
+
+    return { works, materials, other, total: works + materials + other };
+}
+
+function renderProjectInfo(project, expensesMap = {}, extraOps = []) {
     const container = document.getElementById('proj-subtab-info');
     if (!container) return;
 
@@ -287,6 +310,11 @@ function renderProjectInfo(project, expensesMap = {}) {
 
     const plan = calcPlan(currentSectionsCache);
     const fact = calcFact(expensesMap);
+    const extra = calcExtraSpend(extraOps);
+
+    const hasExtra = extra.total > 0;
+    const factTotalWithExtra = fact.total + extra.total;
+    const balanceTotalWithExtra = plan.total - factTotalWithExtra;
 
     const balanceWorks = plan.works - fact.works;
     const balanceMaterials = plan.materials - fact.materials;
@@ -295,6 +323,11 @@ function renderProjectInfo(project, expensesMap = {}) {
     const isOverWorks = fact.works > plan.works;
     const isOverMaterials = fact.materials > plan.materials;
     const isOverTotal = fact.total > plan.total;
+
+    // Перерасход «по смете» считается строго по факту против плана сметы.
+    // Доп. расходы живут отдельной строкой, но если вместе с ними объект вышел
+    // в минус, писать «✔ В норме» нельзя — показываем отдельное предупреждение.
+    const isOverWithExtra = hasExtra && balanceTotalWithExtra < 0;
 
     const colorFactWorks = isOverWorks ? 'text-red-600' : 'text-emerald-700';
     const colorFactMaterials = isOverMaterials ? 'text-red-600' : 'text-emerald-700';
@@ -325,9 +358,14 @@ function renderProjectInfo(project, expensesMap = {}) {
             <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                 <div class="bg-emerald-600 text-white font-bold px-3 py-2 flex justify-between items-center text-sm">
                     <span>📊 Финансы по объекту</span>
-                    ${isOverTotal 
-                        ? `<span class="bg-red-500 px-2 py-0.5 rounded text-[11px]">⚠️ Перерасход</span>` 
-                        : (hasSections ? `<span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">✔ В норме</span>` : `<span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">Сметы нет</span>`)}
+                    <span class="flex items-center gap-2">
+                        ${hasExtra ? `<span class="bg-amber-500 px-2 py-0.5 rounded text-[11px]">⚠ Доп. расходы: ${formatMoney(extra.total)}</span>` : ''}
+                        ${isOverTotal 
+                            ? `<span class="bg-red-500 px-2 py-0.5 rounded text-[11px]">⚠️ Перерасход</span>` 
+                            : (isOverWithExtra
+                                ? `<span class="bg-amber-600 px-2 py-0.5 rounded text-[11px]">⚠️ Смета ушла в минус из-за доп. расходов</span>`
+                                : (hasSections ? `<span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">✔ В норме</span>` : `<span class="bg-emerald-700 px-2 py-0.5 rounded text-[11px]">Сметы нет</span>`))}
+                    </span>
                 </div>
                 <table class="w-full text-xs">
                     <thead class="bg-gray-100 text-gray-600 uppercase text-[10px]">
@@ -351,12 +389,26 @@ function renderProjectInfo(project, expensesMap = {}) {
                             <td class="p-2 text-right font-semibold ${colorFactMaterials}">${formatMoney(fact.materials)}</td>
                             <td class="p-2 text-right font-bold ${colorBalanceMaterials}">${formatMoney(Math.abs(balanceMaterials))}</td>
                         </tr>
+                        ${hasExtra ? `
+                        <tr class="bg-amber-50">
+                            <td class="p-2 text-amber-800">⚠ Доп. расходы <span class="text-[9px] uppercase text-amber-700">(вне сметы)</span></td>
+                            <td class="p-2 text-right text-gray-400">—</td>
+                            <td class="p-2 text-right font-semibold text-amber-800">${formatMoney(extra.total)}</td>
+                            <td class="p-2 text-right text-gray-400">—</td>
+                        </tr>` : ''}
                         <tr class="bg-emerald-50">
-                            <td class="p-2 font-bold text-[#166534]">💰 ИТОГО</td>
+                            <td class="p-2 font-bold text-[#166534]">💰 ИТОГО по смете</td>
                             <td class="p-2 text-right font-bold text-[#166534]">${formatMoney(plan.total)}</td>
                             <td class="p-2 text-right font-bold ${colorFactTotal}">${formatMoney(fact.total)}</td>
                             <td class="p-2 text-right font-bold ${colorBalanceTotal}">${formatMoney(Math.abs(balanceTotal))}</td>
                         </tr>
+                        ${hasExtra ? `
+                        <tr class="bg-amber-100">
+                            <td class="p-2 font-bold text-amber-900">🧾 Всего с доп. расходами</td>
+                            <td class="p-2 text-right font-bold text-amber-900">${formatMoney(plan.total)}</td>
+                            <td class="p-2 text-right font-bold text-amber-900">${formatMoney(factTotalWithExtra)}</td>
+                            <td class="p-2 text-right font-bold ${balanceTotalWithExtra >= 0 ? 'text-emerald-700' : 'text-red-600'}">${formatMoney(Math.abs(balanceTotalWithExtra))}</td>
+                        </tr>` : ''}
                     </tbody>
                 </table>
             </div>
@@ -368,21 +420,35 @@ function renderProjectInfo(project, expensesMap = {}) {
 // ПОДВКЛАДКИ
 // =====================================================================
 
+// Базовые классы кнопок подвкладок. «Доп. расходы» — янтарные: это траты
+// вне сметы, их нельзя визуально путать с разделами сметы.
+const SUBTAB_BUTTON_BASE = "px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow";
+const SUBTAB_BUTTON_EXTRA  = "px-3.5 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs font-semibold transition shadow";
+const SUBTAB_BUTTON_ACTIVE = "px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow";
+const SUBTAB_BUTTON_ACTIVE_EXTRA = "px-3.5 py-2 bg-amber-500 text-white border border-amber-600 rounded-lg text-xs font-semibold transition shadow";
+
+const PROJECT_SUBTABS = [
+    { id: 'info',     base: SUBTAB_BUTTON_BASE },
+    { id: 'planfact', base: SUBTAB_BUTTON_BASE },
+    { id: 'extra',    base: SUBTAB_BUTTON_EXTRA, active: SUBTAB_BUTTON_ACTIVE_EXTRA },
+    { id: 'files',    base: SUBTAB_BUTTON_BASE },
+    { id: 'schedule', base: SUBTAB_BUTTON_BASE }
+];
+
 export function switchProjectSubTab(subId) {
-    ['info', 'planfact', 'files', 'schedule'].forEach(s => {
-        const el = document.getElementById(`proj-subtab-${s}`);
-        const btn = document.getElementById(`subbtn-${s}`);
+    PROJECT_SUBTABS.forEach(({ id, base }) => {
+        const el = document.getElementById(`proj-subtab-${id}`);
+        const btn = document.getElementById(`subbtn-${id}`);
         if (el) el.classList.add('hidden');
-        if (btn) {
-            btn.className = "px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow";
-        }
+        if (btn) btn.className = base;
     });
 
     const targetEl = document.getElementById(`proj-subtab-${subId}`);
     const targetBtn = document.getElementById(`subbtn-${subId}`);
     if (targetEl) targetEl.classList.remove('hidden');
     if (targetBtn) {
-        targetBtn.className = "px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow";
+        const tab = PROJECT_SUBTABS.find(item => item.id === subId);
+        targetBtn.className = tab?.active || SUBTAB_BUTTON_ACTIVE;
     }
 
     // Триггер для графика              ← НОВЫЙ БЛОК
@@ -400,6 +466,13 @@ export function switchProjectSubTab(subId) {
     if (subId === 'files') {
         const project = getCurrentProject();
         if (project) renderEstimateUI(project);
+    }
+
+    // Триггер «Доп. расходы»: подвкладка грузится лениво, при первом входе
+    // (см. js/modules/extra-costs.js → renderExtraCostsUI).
+    if (subId === 'extra') {
+        const project = getCurrentProject();
+        if (project) setTimeout(() => renderExtraCostsUI(project), 50);
     }
 }
 

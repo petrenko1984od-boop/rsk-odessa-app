@@ -12,11 +12,12 @@
 import { db } from '../database.js';
 import {
     log, toast, formatMoney, formatDate, escapeHtml,
-    parseNumber, roundMoney
+    parseNumber, roundMoney, isExtraSectionName
 } from '../utils.js';
 import { can, getEmployee, requirePermission } from '../permissions.js';
 import { getCurrentUser } from '../auth.js';
 import { CONFIG } from '../config.js';
+import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
 // ФОРМАТИРОВАНИЕ БАЛАНСА
@@ -105,13 +106,17 @@ export async function loadOperations(employeeId, limit = 50) {
 //   1. cash_operations (расходы из кабинета + заявки, оплаченные сотрудником)
 //   2. order_items (заявки с оплатой фирмой — closed + archived)
 //
-// Возвращает map: { [section_id]: [operations] }
+// Возвращает map: { [section_id]: [operations] } по разделам СМЕТЫ
+// и отдельный массив extraOps — траты, привязанные к служебному разделу
+// «Доп. расходы» (вне сметы). Их нельзя подмешивать в план-факт: там раздел
+// считается «как в смете», а незапланированные траты видны на подвкладке
+// «📦 Доп. расходы» карточки объекта (js/modules/extra-costs.js).
 //
 // ⚠️ .in фильтр не работает — грузим всё, фильтруем в JS.
 // =====================================================================
 
 export async function loadExpensesForProject(projectId) {
-    if (!projectId) return { map: {}, data: [], error: null };
+    if (!projectId) return { map: {}, data: [], extraOps: [], error: null };
 
     const allItems = [];
 
@@ -123,13 +128,16 @@ export async function loadExpensesForProject(projectId) {
 
     if (secError) {
         log.error('Ошибка загрузки разделов:', secError.message);
-        return { map: {}, data: [], error: secError };
+        return { map: {}, data: [], extraOps: [], error: secError };
     }
 
     const projectSectionIds = (allSections || []).map(s => s.id);
+    const extraSectionIds = (allSections || [])
+        .filter(s => isExtraSectionName(s.name))
+        .map(s => s.id);
 
     if (projectSectionIds.length === 0) {
-        return { map: {}, data: [], error: null };
+        return { map: {}, data: [], extraOps: [], error: null };
     }
 
     // ----- 2. Загружаем расходы ТОЛЬКО по разделам этого объекта -----
@@ -250,19 +258,27 @@ export async function loadExpensesForProject(projectId) {
         });
     }
 
-    // ----- 4. Группируем по section_id -----
+    // ----- 4. Группируем: разделы сметы — в map, «Доп. расходы» — в extraOps -----
     const map = {};
-    projectSectionIds.forEach(id => { map[id] = []; });
+    (allSections || [])
+        .filter(section => !isExtraSectionName(section.name))
+        .forEach(section => { map[section.id] = []; });
+
+    const extraOps = [];
 
     allItems.forEach(item => {
         if (!item.section_id) return;
+        if (extraSectionIds.includes(item.section_id)) {
+            extraOps.push(item);
+            return;
+        }
         if (!map[item.section_id]) map[item.section_id] = [];
         map[item.section_id].push(item);
     });
 
-    log.db(`Загружено для объекта #${projectId}: ${allItems.length} записей факта`);
+    log.db(`Загружено для объекта #${projectId}: ${allItems.length} записей факта (вне сметы: ${extraOps.length})`);
 
-    return { map, data: allItems, error: null };
+    return { map, data: allItems, extraOps, error: null };
 }
 
 // =====================================================================
@@ -1114,28 +1130,17 @@ async function loadProjectsForSelect() {
         data.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
 }
 
+/**
+ * Селект «Раздел» в форме расхода (авансовый отчёт).
+ * Список: разделы сметы + служебный раздел «Доп. расходы» (вне сметы).
+ * Служебный раздел создаётся автоматически, поэтому выбрать всегда есть что:
+ * сотрудник фиксирует незапланированную покупку, а не бросает отчёт.
+ */
 export async function loadSectionsForExpense() {
     const projectId = parseInt(document.getElementById('cash-expense-project')?.value, 10);
     const sectionSelect = document.getElementById('cash-expense-section');
-    if (!sectionSelect) return;
 
-    if (!projectId) {
-        sectionSelect.innerHTML = '<option value="">Сначала выбери объект</option>';
-        return;
-    }
-
-    const { data, error } = await db.select('sections', {
-        filters: { project_id: projectId },
-        orderBy: { column: 'id', asc: true }
-    });
-
-    if (error || !data || data.length === 0) {
-        sectionSelect.innerHTML = '<option value="">Нет разделов (загрузи смету)</option>';
-        return;
-    }
-
-    sectionSelect.innerHTML = '<option value="">— Выбери раздел —</option>' +
-        data.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+    await fillSectionsSelect(sectionSelect, projectId);
 }
 
 // =====================================================================

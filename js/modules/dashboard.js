@@ -3,7 +3,7 @@
 // =====================================================================
 
 import { db } from '../database.js';
-import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal, roundMoney } from '../utils.js';
+import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal, roundMoney, isExtraSectionName } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 
 let materialOverrunRowsCache = [];
@@ -206,6 +206,11 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
 
     const sectionPlanMap = new Map();
     (sections || []).forEach(section => {
+        // Служебный раздел «Доп. расходы» в рейтинг перерасхода по разделам сметы
+        // не берём: у него план 0, и он всегда «давал» бы 100% перерасхода.
+        // Его траты видно в карточке объекта на подвкладке «📦 Доп. расходы».
+        if (isExtraSectionName(section.name)) return;
+
         sectionPlanMap.set(String(section.id), {
             sectionId: section.id,
             projectId: section.project_id,

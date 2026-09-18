@@ -192,6 +192,10 @@
                     <div class="flex flex-wrap gap-2 border-b pb-4">
                         <button onclick="switchProjectSubTab('info')" id="subbtn-info" class="px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow">📌 Общая информация</button>
                         <button onclick="switchProjectSubTab('planfact')" id="subbtn-planfact" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📊 План-факт</button>
+                        <!-- «Доп. расходы» — траты, которых нет в смете (раздел «Доп. расходы»).
+                             Кнопка намеренно янтарная: её нельзя спутать с разделами сметы.
+                             Активный/неактивный стиль задаёт switchProjectSubTab() в js/modules/projects.js. -->
+                        <button onclick="switchProjectSubTab('extra')" id="subbtn-extra" class="px-3.5 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs font-semibold transition shadow">📦 Доп. расходы</button>
                         <button onclick="switchProjectSubTab('files')" id="subbtn-files" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📁 Файлы</button>
                         <button onclick="switchProjectSubTab('schedule')" id="subbtn-schedule" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📅 График</button>
                     </div>
@@ -202,6 +206,12 @@
                          (js/modules/estimate.js). Поэтому блок сметы здесь держать нельзя —
                          он затирался сразу после открытия карточки объекта. Блок сметы — на вкладке «Файлы». -->
                     <div id="proj-subtab-planfact" class="hidden space-y-4"></div>
+
+                    <!-- ДОП. РАСХОДЫ (вне сметы): контейнер наполняет renderExtraCostsUI()
+                         (js/modules/extra-costs.js). Здесь всё, что сотрудники привязали к
+                         служебному разделу «Доп. расходы»: расходы подотчёта, заказы материалов
+                         и финансовые запросы. В план-факт эти суммы не попадают. -->
+                    <div id="proj-subtab-extra" class="hidden space-y-4"></div>
 
                     <div id="proj-subtab-files" class="hidden space-y-4">
                         <!-- СМЕТА: контейнер наполняет renderEstimateUI() (js/modules/estimate.js).
@@ -697,11 +707,14 @@
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы: *</label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел: *</label>
                         <select id="new-order-section" required
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">Сначала выбери объект</option>
                         </select>
+                        <p class="mt-1 text-[10px] text-gray-400">
+                            Нет подходящего раздела сметы — выбери «⚠ Доп. расходы» в группе «Вне сметы».
+                        </p>
                     </div>
                 </div>
                 <div>
@@ -808,11 +821,14 @@
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы: *</label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел: *</label>
                         <select id="new-cashreq-section" required
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">Сначала выбери объект</option>
                         </select>
+                        <p class="mt-1 text-[10px] text-gray-400">
+                            Работы нет в смете — выбери «⚠ Доп. расходы» в группе «Вне сметы».
+                        </p>
                     </div>
                 </div>
                 <div class="border-t border-b py-3 space-y-3">
@@ -872,11 +888,14 @@
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел сметы:</label>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Раздел:</label>
                         <select id="cash-expense-section"
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">Сначала выбери объект</option>
                         </select>
+                        <p class="mt-1 text-[10px] text-gray-400">
+                            Материала нет в смете — выбери «⚠ Доп. расходы» в группе «Вне сметы».
+                        </p>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Категория: *</label>
