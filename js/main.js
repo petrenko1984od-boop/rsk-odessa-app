@@ -5,7 +5,10 @@
 import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
-import { loadPermissions, canSeeTab, getEmployee, can } from './permissions.js';
+import {
+    loadPermissions, canSeeTab, canSeeHeaderButton, getNavLabel, getStartTab,
+    getEmployee, can
+} from './permissions.js';
 
 // Модули разделов
 import {
@@ -166,32 +169,28 @@ window.switchTab = switchTab;
 // =====================================================================
 
 function applyPermissionsToUI() {
-    // Сотрудники
-    const employeesBtn = document.getElementById('btn-employees');
-    if (employeesBtn) {
-        employeesBtn.style.display = canSeeTab('employees') ? '' : 'none';
-    }
+    // Кнопки-разделы в шапке: id элемента → id вкладки
+    const TAB_BUTTONS_MAP = [
+        ['btn-tasks',         'tasks'],
+        ['btn-projects',      'projects'],
+        ['btn-employees',     'employees'],
+        ['btn-orders',        'orders'],
+        ['btn-cash-requests', 'cash-requests'],
+        ['btn-registry',      'registry']
+    ];
 
-    // Снабжение — только Админ + Снабженец
-    const ordersBtn = document.getElementById('btn-orders');
-    if (ordersBtn) {
-        ordersBtn.style.display = canSeeTab('orders') ? '' : 'none';
-    }
+    TAB_BUTTONS_MAP.forEach(([btnId, tabId]) => {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
 
-    // Реестр
-    const registryBtn = document.getElementById('btn-registry');
-    if (registryBtn) {
-        registryBtn.style.display = canSeeTab('registry') ? '' : 'none';
-    }
+        const allowed = canSeeTab(tabId);
+        btn.classList.toggle('hidden', !allowed);
+        btn.style.display = allowed ? '' : 'none';
 
-    // Финансы — только тем, кто обрабатывает заявки
-    // (TAB_REQUIREMENTS['cash-requests'] = 'cash_view_all')
-    const cashReqBtn = document.getElementById('btn-cash-requests');
-    if (cashReqBtn) {
-        const allowed = canSeeTab('cash-requests');
-        cashReqBtn.classList.toggle('hidden', !allowed);
-        cashReqBtn.style.display = allowed ? '' : 'none';
-    }
+        // У роли может быть своё название раздела (снабженец: «Снабжение» → «Рабочий экран»)
+        const label = getNavLabel(tabId);
+        if (label) btn.textContent = label;
+    });
 
     // Кнопка «Финансовые запросы» в шапке — только привязанным сотрудникам
     const newCashReqBtn = document.getElementById('btn-new-cash-request');
@@ -203,7 +202,8 @@ function applyPermissionsToUI() {
     // кнопка остаётся видимой до первого открытия вкладки «Снабжение».
     const newOrderBtn = document.getElementById('btn-new-order');
     if (newOrderBtn) {
-        newOrderBtn.style.display = can('create_order') ? '' : 'none';
+        const allowed = can('create_order') && canSeeHeaderButton('btn-new-order');
+        newOrderBtn.style.display = allowed ? '' : 'none';
     }
 }
 
@@ -524,12 +524,19 @@ async function startApp(user) {
 
     const dashboard = document.getElementById('dashboard-content');
     const directorWelcome = document.getElementById('director-welcome');
+    if (dashboard) dashboard.classList.add('hidden');
+
+    const startTab = getStartTab();
+
     if (shouldShowEmployeeDashboard()) {
-        if (dashboard) dashboard.classList.add('hidden');
+        // Сотрудник с личным дашбордом — сразу к своим задачам
         if (directorWelcome) directorWelcome.classList.add('hidden');
         switchTab('tasks');
+    } else if (startTab) {
+        // Роль с урезанным набором разделов (снабженец) — сразу на свой рабочий экран
+        if (directorWelcome) directorWelcome.classList.add('hidden');
+        switchTab(startTab);
     } else {
-        if (dashboard) dashboard.classList.add('hidden');
         if (directorWelcome) directorWelcome.classList.remove('hidden');
         switchTab('welcome');
     }

@@ -20,7 +20,7 @@ import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatMoney, parseNumber, roundMoney
 } from '../utils.js';
-import { can, getEmployee } from '../permissions.js';
+import { can, getEmployee, canSeeTab } from '../permissions.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -321,13 +321,14 @@ export function getCashRequestStatusInfo(status) {
 // КНОПКА НАВИГАЦИИ («Финансы»)
 // =====================================================================
 // Счётчики на кнопках навигации убраны — функция только показывает/скрывает
-// саму кнопку по правам (canProcessCashRequest()).
+// саму кнопку. Видимость решает canSeeTab(): право cash_view_all
+// (TAB_REQUIREMENTS) плюс урезанный интерфейс роли (ROLE_UI в permissions.js).
 
 export function updateCashRequestsNavButton() {
     const btn = document.getElementById('btn-cash-requests');
     if (!btn) return;
 
-    if (canProcessCashRequest()) {
+    if (canSeeTab('cash-requests')) {
         btn.classList.remove('hidden');
         btn.style.display = '';
     } else {

@@ -142,6 +142,26 @@ const TAB_REQUIREMENTS = {
 };
 
 // =====================================================================
+// УРЕЗАННЫЙ ИНТЕРФЕЙС ПО РОЛЯМ
+// =====================================================================
+// У некоторых ролей рабочее место — один экран, и остальные разделы только
+// мешают. Здесь перечислено, что такая роль НЕ видит, как называется её
+// раздел и куда она попадает после входа. Права (`ROLE_PERMISSIONS`) при этом
+// не меняются — речь только о видимости разделов и кнопок.
+const ROLE_UI = {
+    'Снабженец': {
+        // Остаётся: «Рабочий экран» (Снабжение) + «Реестр» + кнопка «Финансовые запросы»
+        hiddenTabs:    ['tasks', 'projects', 'employees', 'cash-requests'],
+        // «Заказ материалов» в шапке — дубль: заказ создаётся из «Рабочего экрана»
+        hiddenButtons: ['btn-new-order'],
+        // Для снабженца «Снабжение» и есть его рабочий экран
+        navLabels:     { orders: '📋 Рабочий экран' },
+        // После входа — сразу на рабочий экран, а не на «Добро пожаловать»
+        startTab:      'orders'
+    }
+};
+
+// =====================================================================
 // ЗАГРУЗКА ПРАВ
 // =====================================================================
 
@@ -193,11 +213,45 @@ export function isLinked() {
 
 /**
  * Проверяет, может ли текущий пользователь ВИДЕТЬ вкладку.
+ * Сначала учитывается урезанный интерфейс роли (ROLE_UI), потом права.
  */
 export function canSeeTab(tabId) {
+    const ui = ROLE_UI[currentRole];
+    const hiddenTabs = (ui && ui.hiddenTabs) || [];
+    if (hiddenTabs.includes(tabId)) return false;
+
     const required = TAB_REQUIREMENTS[tabId];
     if (!required) return true;
     return can(required);
+}
+
+/**
+ * Проверяет, видна ли роль кнопка-действие в шапке (по id элемента).
+ * Кнопки, перечисленные в ROLE_UI.hiddenButtons, скрыты у своей роли.
+ */
+export function canSeeHeaderButton(buttonId) {
+    const ui = ROLE_UI[currentRole];
+    const hiddenButtons = (ui && ui.hiddenButtons) || [];
+    return !hiddenButtons.includes(buttonId);
+}
+
+/**
+ * Своё название раздела для роли (например, снабженец видит «Снабжение»
+ * как «📋 Рабочий экран»). Возвращает null, если название стандартное.
+ */
+export function getNavLabel(tabId) {
+    const ui = ROLE_UI[currentRole];
+    if (!ui || !ui.navLabels) return null;
+    return ui.navLabels[tabId] || null;
+}
+
+/**
+ * Вкладка, которую роль открывает сразу после входа.
+ * Возвращает null — значит показываем «Добро пожаловать».
+ */
+export function getStartTab() {
+    const ui = ROLE_UI[currentRole];
+    return (ui && ui.startTab) || null;
 }
 
 /**
@@ -221,6 +275,9 @@ export function getAllPermissions() {
 window.Permissions = {
     can,
     canSeeTab,
+    canSeeHeaderButton,
+    getNavLabel,
+    getStartTab,
     getRole,
     isAdmin,
     getAllPermissions

@@ -21,7 +21,7 @@ import {
     formatDate, formatMoney, roundMoney
 } from '../utils.js';
 import {
-    can, requirePermission, getEmployee, isAdmin
+    can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton
 } from '../permissions.js';
 
 // =====================================================================
@@ -158,10 +158,12 @@ export function renderOrders() {
 
     const filtered = getFilteredOrders();
 
-    // Скрываем кнопку «Заказ материалов» в шапке
+    // Скрываем кнопку «Заказ материалов» в шапке (у снабженца её заменяет
+    // «➕ Создать заявку» внутри «Рабочего экрана», см. ROLE_UI в permissions.js)
     const newOrderBtn = document.getElementById('btn-new-order');
     if (newOrderBtn) {
-        newOrderBtn.style.display = canCreateOrder() ? '' : 'none';
+        const allowed = canCreateOrder() && canSeeHeaderButton('btn-new-order');
+        newOrderBtn.style.display = allowed ? '' : 'none';
     }
 
     // Скрываем кнопку создания внутри вкладки
