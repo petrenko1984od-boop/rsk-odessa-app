@@ -10,11 +10,16 @@
 //
 // Решение: в каждом объекте есть служебный раздел «Доп. расходы»
 // (CONFIG.EXTRA_SECTION.NAME, создаётся автоматически — js/modules/sections.js).
-// Сотрудник выбирает его в форме заказа материалов, финансового запроса
-// или в авансовом отчёте, и всё это собирается здесь:
+// Сотрудник выбирает его в форме заказа материалов или в авансовом отчёте,
+// и всё это собирается здесь:
 //   * расходы кассы/подотчёта (cash_operations, category: works/materials/delivery/other);
-//   * заказы материалов с оплатой фирмой (закрытые/архив) — как в план-факте;
-//   * финансовые запросы на работы.
+//   * заказы материалов с оплатой фирмой (закрытые/архив) — как в план-факте.
+//
+// ⚠️ Показываем ровно то, что попадает в реестр расходов: позиции закрытых заявок
+// материалов и траты из авансового отчёта/кассы. Финансовых запросов (cash_requests)
+// здесь НЕТ намеренно: выданные в подотчёт деньги — ещё не трата (она появится строкой
+// после авансового отчёта), и в «Итого вне сметы» такие суммы никогда не входили.
+// Таблица «💰 Финансовые запросы» удалена, чтобы подвкладка не смешивала реестр с заявками.
 //
 // Как это выглядит: два списка — «🛠 Работы» и «📦 Материалы» (+ «📋 Прочее»,
 // если такие траты есть) и отдельно заявки, которые ещё в работе. Строка списка —
@@ -40,7 +45,6 @@ import {
 } from '../utils.js';
 import { canSeeTab } from '../permissions.js';
 import { getCategoryLabel, loadExpensesForProject } from './cash.js';
-import { getCashRequestStatusInfo } from './cash-requests.js';
 import { loadSectionsWithExtra } from './sections.js';
 
 const EXTRA_SECTION_NAME = CONFIG.EXTRA_SECTION?.NAME || 'Доп. расходы';
@@ -114,36 +118,31 @@ function byOperationDateDesc(a, b) {
  * `operations` — записи вне сметы (они же строки списков «Работы»/«Материалы»):
  * расходы кассы/подотчёта + позиции закрытых заявок с оплатой фирмой.
  * `orders` — заявки раздела (в таблицу «в работе» идут только незакрытые),
- * `orderItems` — их позиции для окна подробностей, `requests` — финансовые запросы.
+ * `orderItems` — их позиции для окна подробностей.
+ * Финансовые запросы не грузим вообще: подвкладка показывает только реестр (см. шапку файла).
  *
  * @param {Object} project
- * @returns {Promise<{ extraSection, operations, orders, orderItems, requests, error }>}
+ * @returns {Promise<{ extraSection, operations, orders, orderItems, error }>}
  */
 async function loadExtraCostsData(project) {
     const { extraSection, estimateSections, error: sectionError } = await loadSectionsWithExtra(project.id);
 
     if (!extraSection) {
-        return { extraSection: null, estimateSections: [], operations: [], orders: [], orderItems: [], requests: [], error: sectionError };
+        return { extraSection: null, estimateSections: [], operations: [], orders: [], orderItems: [], error: sectionError };
     }
 
-    const [expensesResult, ordersResult, requestsResult] = await Promise.all([
+    const [expensesResult, ordersResult] = await Promise.all([
         loadExpensesForProject(project.id),
         db.select('orders', {
-            filters: { section_id: extraSection.id },
-            orderBy: { column: 'created_at', asc: false }
-        }),
-        db.select('cash_requests', {
             filters: { section_id: extraSection.id },
             orderBy: { column: 'created_at', asc: false }
         })
     ]);
 
     if (ordersResult.error) log.warn('Доп. расходы: не удалось загрузить заявки —', ordersResult.error.message);
-    if (requestsResult.error) log.warn('Доп. расходы: не удалось загрузить финансовые запросы —', requestsResult.error.message);
 
     const operations = (expensesResult.extraOps || []).slice().sort(byOperationDateDesc);
     const orders = ordersResult.data || [];
-    const requests = requestsResult.data || [];
 
     // Позиции заявок этого раздела — их показывает окно подробностей: и по заявке
     // в работе (в extraOps она не попадает), и целиком по закрытой заявке.
@@ -157,11 +156,10 @@ async function loadExtraCostsData(project) {
         orderItems = items || [];
     }
 
-    // Имена сотрудников — одним запросом на все три списка
+    // Имена сотрудников — одним запросом на оба списка
     const employeeIds = [...new Set([
         ...operations.map(op => op.employee_id),
-        ...orders.map(order => order.created_by_employee_id),
-        ...requests.map(request => request.employee_id)
+        ...orders.map(order => order.created_by_employee_id)
     ].filter(Boolean))];
 
     const employeeMap = {};
@@ -174,7 +172,6 @@ async function loadExtraCostsData(project) {
     }
 
     orders.forEach(order => { order._employee = employeeMap[order.created_by_employee_id] || null; });
-    requests.forEach(request => { request._employee = employeeMap[request.employee_id] || null; });
 
     return {
         extraSection,
@@ -185,7 +182,6 @@ async function loadExtraCostsData(project) {
         })),
         orders,
         orderItems,
-        requests,
         error: null
     };
 }
@@ -350,8 +346,13 @@ function renderExtraKindBlock(kind, operations) {
 }
 
 // =====================================================================
-// РЕНДЕР: ЗАЯВКИ В РАБОТЕ И ФИНАНСОВЫЕ ЗАПРОСЫ
+// РЕНДЕР: ЗАЯВКИ ВНЕ СМЕТЫ В РАБОТЕ
 // =====================================================================
+// 💰 Блока «Финансовые запросы» на подвкладке нет намеренно: выданные в подотчёт деньги —
+// это ещё не трата, а подвкладка показывает только реестр (закрытые заявки материалов и
+// расходы из авансового отчёта/кассы). Список самих запросов живёт в разделе «💰 Финансы»,
+// а потраченная сумма появится здесь строкой в «Работах» / «Материалах» после отчёта.
+// Здесь же важно не показать заявку дважды: закрытые разложены по строкам списков выше.
 
 /**
  * Только НЕзакрытые заявки раздела: закрытые уже разложены строками по блокам
@@ -405,55 +406,6 @@ function renderExtraOrdersBlock(orders) {
     `;
 }
 
-function renderExtraRequestsBlock(requests) {
-    if (!requests || requests.length === 0) return '';
-
-    const rows = requests.map(request => {
-        const status = getCashRequestStatusInfo(request.status);
-
-        return `
-            <tr class="cursor-pointer hover:bg-amber-50/60" onclick="window.openCashRequestDetail(${request.id})">
-                <td class="p-2 font-semibold text-[#166534] whitespace-nowrap">${escapeHtml(request.request_number || '—')}</td>
-                <td class="p-2 whitespace-nowrap text-gray-600">${formatDate(request.created_at)}</td>
-                <td class="p-2 text-gray-700">${escapeHtml(request._employee?.name || '—')}</td>
-                <td class="p-2"><span class="rounded px-2 py-0.5 text-[10px] font-bold ${status.bg} ${status.color}">${escapeHtml(status.label)}</span></td>
-                <td class="p-2 whitespace-nowrap text-right font-bold text-gray-800">${formatMoney(request.total_sum || 0)}</td>
-            </tr>
-        `;
-    }).join('');
-
-    const total = requests.reduce((sum, request) => sum + (Number(request.total_sum) || 0), 0);
-
-    return `
-        <div class="space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-                <h4 class="text-xs font-bold uppercase tracking-wider text-gray-700">
-                    💰 Финансовые запросы <span class="text-gray-400">(${requests.length})</span>
-                </h4>
-                <span class="text-xs font-bold text-gray-700">${formatMoney(total)}</span>
-            </div>
-            <p class="text-[11px] text-gray-500">
-                Это запросы денег сотрудникам: в «Итого вне сметы» их суммы не входят —
-                траты попадут туда после авансового отчёта (списки «Работы» и «Материалы»).
-            </p>
-            <div class="overflow-x-auto rounded-xl border bg-white">
-                <table class="w-full min-w-[520px] text-xs">
-                    <thead class="bg-gray-100 text-[10px] uppercase text-gray-600">
-                        <tr>
-                            <th class="p-2 text-left">Номер</th>
-                            <th class="p-2 text-left">Создан</th>
-                            <th class="p-2 text-left">Сотрудник</th>
-                            <th class="p-2 text-left">Статус</th>
-                            <th class="p-2 text-right">Сумма</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y">${rows}</tbody>
-                </table>
-            </div>
-        </div>
-    `;
-}
-
 // =====================================================================
 // ОСНОВНОЙ РЕНДЕР ПОДВКЛАДКИ «📦 ДОП. РАСХОДЫ»
 // =====================================================================
@@ -477,7 +429,7 @@ export async function renderExtraCostsUI(project) {
 
     container.innerHTML = '<div class="app-loading app-loading-card text-sm text-gray-500"><span>Загрузка доп. расходов...</span></div>';
 
-    const { extraSection, estimateSections, operations, orders, orderItems, requests, error } = await loadExtraCostsData(project);
+    const { extraSection, estimateSections, operations, orders, orderItems, error } = await loadExtraCostsData(project);
 
     if (!extraSection || error) {
         container.innerHTML = `
@@ -518,10 +470,11 @@ export async function renderExtraCostsUI(project) {
             </div>
             <div class="space-y-3 p-4">
                 <p class="text-xs text-gray-500">
-                    Здесь собираются работы и материалы, которых нет в смете: закрытые заявки материалов и расходы
-                    из подотчёта/кассы, в которых выбран раздел «${sectionName}». Они разложены по спискам
+                    Здесь только то, что уже прошло по реестру: позиции закрытых заявок материалов и расходы
+                    из авансового отчёта/кассы, в которых выбран раздел «${sectionName}». Они разложены по спискам
                     «🛠 Работы» и «📦 Материалы» — клик по строке открывает подробности. Заявки, которые ещё
                     в работе, показаны отдельным списком и в итог пока не входят.
+                    Финансовых запросов тут нет: выданные в подотчёт деньги — ещё не трата.
                     В «📊 План-факт» эти суммы не входят — там план строго по смете.
                 </p>
                 ${renderExtraSummary(totals, planTotal)}
@@ -532,7 +485,7 @@ export async function renderExtraCostsUI(project) {
     const emptyHtml = `
         <div class="rounded-xl border bg-gray-50 p-6 text-center text-xs text-gray-500">
             Пока пусто.
-            <br>Чтобы записать незапланированный расход, при оформлении заказа материалов, финансового запроса
+            <br>Чтобы записать незапланированный расход, при оформлении заказа материалов
             или в авансовом отчёте выбери объект, а в поле «Раздел» — группу
             <b class="text-amber-700">⚠ Вне сметы → ${sectionName}</b>.
         </div>
@@ -553,10 +506,10 @@ export async function renderExtraCostsUI(project) {
     // списков выше, иначе одна заявка показывалась бы дважды.
     const openOrders = orders.filter(order => order.status === 'new' || order.status === 'in_progress');
 
-    const hasAnything = operations.length > 0 || openOrders.length > 0 || requests.length > 0;
+    const hasAnything = operations.length > 0 || openOrders.length > 0;
 
     const blocksHtml = hasAnything
-        ? [...operationsBlocks, renderExtraOrdersBlock(openOrders), renderExtraRequestsBlock(requests)].filter(Boolean).join('')
+        ? [...operationsBlocks, renderExtraOrdersBlock(openOrders)].filter(Boolean).join('')
         : emptyHtml;
 
     container.innerHTML = `
