@@ -20,7 +20,7 @@ import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatMoney, parseNumber, roundMoney
 } from '../utils.js';
-import { can, getEmployee, canSeeTab } from '../permissions.js';
+import { can, getEmployee, canSeeTab, canSeeHeaderButton } from '../permissions.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -53,12 +53,25 @@ function canSeeCashRequest(req) {
     return req.employee_id === emp.id;
 }
 
+/**
+ * Видна ли кнопка создания своей заявки на подотчёт (по id элемента).
+ * Урезанный интерфейс роли может её спрятать: директор только согласует
+ * и выдаёт деньги, свои заявки он не оформляет (ROLE_UI в permissions.js).
+ */
+function canSeeCreateCashRequestButton(buttonId) {
+    return can('cash_expense_self') && canSeeHeaderButton(buttonId);
+}
+
 // =====================================================================
 // ЗАГРУЗКА
 // =====================================================================
 
 export async function loadCashRequests() {
     log.info('Загрузка заявок финансов...');
+
+    // Кнопку создания обновляем до запроса — иначе при ошибке загрузки
+    // она осталась бы видимой у роли, которой её не видно
+    updateCreateCashRequestButton();
 
     const { data, error } = await db.select('cash_requests', {
         select: `
@@ -144,6 +157,9 @@ export function switchCashRequestsTab(filter) {
 // =====================================================================
 
 export function renderCashRequests() {
+    // Кнопка создания — часть шапки раздела, обновляем при каждом рендере
+    updateCreateCashRequestButton();
+
     const container = document.getElementById('cash-requests-container');
     if (!container) return;
 
@@ -154,7 +170,9 @@ export function renderCashRequests() {
             <div class="bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-300 p-8 text-center space-y-2">
                 <div class="text-5xl">💰</div>
                 <h3 class="font-bold text-gray-700">Заявок нет</h3>
-                <p class="text-sm text-gray-500">Нажми «➕ Создать заявку», чтобы оформить новую</p>
+                <p class="text-sm text-gray-500">${canSeeCreateCashRequestButton('create-cash-request-btn')
+                    ? 'Нажми «➕ Создать заявку», чтобы оформить новую'
+                    : 'Здесь появятся заявки сотрудников на подотчёт'}</p>
             </div>
         `;
         return;
@@ -335,6 +353,20 @@ export function updateCashRequestsNavButton() {
         btn.classList.add('hidden');
         btn.style.display = 'none';
     }
+}
+
+/**
+ * Кнопка «➕ Создать заявку» внутри раздела «💰 Финансы».
+ * Её может спрятать урезанный интерфейс роли (ROLE_UI.hiddenButtons):
+ * директор заявок не оформляет — он их согласует и выдаёт деньги.
+ */
+export function updateCreateCashRequestButton() {
+    const btn = document.getElementById('create-cash-request-btn');
+    if (!btn) return;
+
+    const allowed = canSeeCreateCashRequestButton('create-cash-request-btn');
+    btn.classList.toggle('hidden', !allowed);
+    btn.style.display = allowed ? '' : 'none';
 }
 // =====================================================================
 // ФОРМА СОЗДАНИЯ ЗАЯВКИ

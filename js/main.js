@@ -193,9 +193,11 @@ function applyPermissionsToUI() {
     });
 
     // Кнопка «Финансовые запросы» в шапке — только привязанным сотрудникам
+    // и только если роль её не прячет (ROLE_UI, напр. директор)
     const newCashReqBtn = document.getElementById('btn-new-cash-request');
     if (newCashReqBtn) {
-        newCashReqBtn.style.display = can('cash_expense_self') ? '' : 'none';
+        const allowed = can('cash_expense_self') && canSeeHeaderButton('btn-new-cash-request');
+        newCashReqBtn.style.display = allowed ? '' : 'none';
     }
 
     // Кнопка «Заказ материалов» в шапке. Дублируем логику orders.js — иначе
