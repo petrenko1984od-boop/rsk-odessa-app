@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RSK Odessa — презентация приложения для руководства</title>
+<meta name="description" content="Презентация системы управления строительством RSK Odessa: функционал, роли и права доступа.">
+<style>
+/* =====================================================================
+   RSK ODESSA — ПРЕЗЕНТАЦИЯ (самодостаточный файл, без внешних библиотек)
+   Навигация: ← → PgUp PgDn Space Home End · F — полный экран
+              M — оглавление · Esc — закрыть · свайп на телефоне
+   Печать: Ctrl+P → «Сохранить как PDF», каждый слайд = страница A4 landscape
+   ===================================================================== */
+:root{
+    --green:#15803d;
+    --green-dark:#166534;
+    --green-deep:#0f3d26;
+    --green-accent:#22c55e;
+    --ink:#0f172a;
+    --muted:#5b6b7c;
+    --line:#e3e8ee;
+    --amber:#b45309;
+    --red:#b91c1c;
+    --paper:#ffffff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{
+    display:flex;align-items:center;justify-content:center;
+    background:#082014;
+    font-family:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+}
+
+/* ----- Сцена 16:9: масштабируется под любой экран и проектор ----- */
+.stage{
+    position:relative;
+    width:min(100vw, 177.78vh);
+    height:min(56.25vw, 100vh);
+    /* 1em = 1/38 высоты сцены: весь макет в em, поэтому он не «ломается» */
+    font-size:min(2.6vh, 1.46vw);
+    overflow:hidden;
+    background:var(--paper);
+    box-shadow:0 0 4em rgba(0,0,0,.55);
+}
+
+.slide{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;
+    padding:1.5em 1.9em 1.1em;
+    background:var(--paper);
+    opacity:0;visibility:hidden;transform:translateY(.5em);
+    transition:opacity .28s ease, transform .28s ease, visibility .28s;
+}
+.slide.active{opacity:1;visibility:visible;transform:none}
+
+/* ----- Тёмные слайды: титул и разделители ----- */
+.slide.dark{
+    background:linear-gradient(135deg,#0b3323 0%,#15803d 62%,#22c55e 100%);
+    color:#fff;
+}
+.slide.dark .head h2,.slide.dark .card h3{color:#fff}
+.slide.dark .kicker{color:#bbf7d0}
+.slide.dark .card{
+    background:rgba(255,255,255,.10);
+    border:.06em solid rgba(255,255,255,.25);
+    color:#f0fdf4;
+}
+.slide.dark .foot{color:rgba(255,255,255,.65);border-color:rgba(255,255,255,.2)}
+
+/* ----- Шапка слайда ----- */
+.head{margin-bottom:.85em;flex:0 0 auto}
+.kicker{
+    display:inline-block;font-size:.5em;font-weight:700;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--green);margin-bottom:.35em;
+}
+.head h2{
+    margin:0;font-size:1.62em;line-height:1.12;font-weight:800;color:var(--green-dark);
+    letter-spacing:-.01em;
+}
+.head p{margin:.35em 0 0;font-size:.62em;color:var(--muted);line-height:1.4}
+
+/* ----- Тело слайда ----- */
+.body{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:center;gap:.7em}
+.body.top{justify-content:flex-start}
+.foot{
+    flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;
+    font-size:.45em;color:#8d9aa8;border-top:.05em solid var(--line);
+    padding-top:.6em;margin-top:.5em;
+}
+.slide.dark .foot{border-top-color:rgba(255,255,255,.2)}
+
+/* ----- Титульный слайд ----- */
+.title-wrap{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:.9em}
+.logo-plate{background:rgba(255,255,255,.96);border-radius:.7em;padding:.55em 1.1em;box-shadow:0 .3em 1em rgba(0,0,0,.25)}
+.logo-plate img{height:3.1em;display:block}
+.title-wrap h1{margin:0;font-size:2.9em;line-height:1.05;font-weight:900;letter-spacing:-.02em}
+.title-wrap .sub{margin:0;font-size:.86em;font-weight:600;color:#dcfce7;max-width:34em;line-height:1.45}
+.title-meta{display:flex;gap:.5em;flex-wrap:wrap;justify-content:center;margin-top:.3em}
+.title-meta span{
+    font-size:.5em;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    background:rgba(255,255,255,.16);border:.05em solid rgba(255,255,255,.35);
+    border-radius:2em;padding:.45em .9em;
+}
+
+/* ----- Сетки и карточки ----- */
+.grid{display:grid;gap:.7em}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.card{
+    background:#f8fafc;border:.06em solid var(--line);border-left:.22em solid var(--green);
+    border-radius:.45em;padding:.7em .85em;
+}
+.card h3{margin:0 0 .25em;font-size:.66em;font-weight:800;color:var(--green-dark);line-height:1.25}
+.card p{margin:0;font-size:.56em;line-height:1.45;color:#334155}
+.card.amber{border-left-color:#f59e0b;background:#fffbeb}
+.card.amber h3{color:var(--amber)}
+.card.blue{border-left-color:#2563eb;background:#eff6ff}
+.card.blue h3{color:#1d4ed8}
+.card.plain{border-left-color:#cbd5e1;background:#fff}
+
+/* ----- Крупные цифры ----- */
+.kpi{text-align:center;padding:.75em .4em;background:#f1f7f3;border:.06em solid #d7e7dc;border-radius:.5em}
+.kpi b{display:block;font-size:1.5em;font-weight:900;color:var(--green);line-height:1}
+.kpi span{display:block;font-size:.5em;font-weight:600;color:#3f5a4c;margin-top:.4em;line-height:1.3}
+.slide.dark .kpi{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.3)}
+.slide.dark .kpi b{color:#fff}
+.slide.dark .kpi span{color:#dcfce7}
+
+/* ----- Списки ----- */
+ul.bul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.42em}
+ul.bul li{position:relative;padding-left:1.5em;font-size:.62em;line-height:1.45;color:#243447}
+ul.bul li::before{content:'✔';position:absolute;left:0;top:0;color:var(--green);font-weight:900;font-size:.95em}
+ul.bul li b{color:var(--green-dark)}
+ul.cross li::before{content:'✕';color:#cbd5e1}
+ul.arrow li::before{content:'▸';color:var(--green-accent)}
+.slide.dark ul.bul li{color:#e8f5ec}
+.slide.dark ul.bul li b{color:#fff}
+.slide.dark ul.bul li::before{color:#bbf7d0}
+
+/* ----- Цепочка шагов ----- */
+.flow{display:flex;align-items:center;gap:.35em;flex-wrap:wrap}
+.flow .step{
+    flex:1 1 0;min-width:5em;background:#f8fafc;border:.06em solid var(--line);
+    border-radius:.4em;padding:.5em .6em;text-align:center;
+}
+.flow .step b{display:block;font-size:.55em;font-weight:800;color:var(--green-dark)}
+.flow .step span{display:block;font-size:.45em;color:var(--muted);margin-top:.2em;line-height:1.3}
+.flow .arr{font-size:.7em;color:var(--green-accent);font-weight:900}
+
+/* ----- Метки статусов ----- */
+.pills{display:flex;flex-wrap:wrap;gap:.35em}
+.pill{font-size:.5em;font-weight:700;padding:.35em .7em;border-radius:2em;border:.06em solid transparent}
+.pill.red{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.pill.amber{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.pill.green{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.pill.blue{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.pill.gray{background:#e9eef3;color:#455a64;border-color:#d7e0e8}
+
+/* ----- Таблицы ----- */
+table.matrix{width:100%;border-collapse:collapse;font-size:.55em;background:#fff}
+table.matrix th,table.matrix td{border:.055em solid var(--line);padding:.42em .5em;text-align:left;vertical-align:top;line-height:1.3}
+table.matrix thead th{background:#eff6f1;color:var(--green-dark);font-size:.95em;font-weight:800;text-align:center}
+table.matrix thead th:first-child{text-align:left}
+table.matrix td.c{text-align:center;font-weight:900}
+table.matrix td.y{color:var(--green)}
+table.matrix td.n{color:#c3cdd8;font-weight:600}
+table.matrix tbody tr:nth-child(even) td{background:#fafcfb}
+table.matrix td b{color:#12233a}
+
+/* ----- Мелкие детали ----- */
+.two-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.1em;align-items:start}
+.note{font-size:.48em;color:var(--muted);line-height:1.45;font-style:italic}
+.tag{display:inline-block;font-size:.48em;font-weight:700;color:var(--green-dark);background:#e7f3eb;border:.05em solid #cbe3d3;border-radius:.3em;padding:.25em .6em}
+.lead{font-size:.72em;line-height:1.45;color:#243447;margin:0}
+.lead b{color:var(--green-dark)}
+.quote{
+    font-size:.66em;line-height:1.5;color:var(--green-dark);font-weight:600;
+    background:#f1f7f3;border-left:.22em solid var(--green-accent);border-radius:.3em;padding:.6em .8em;
+}
+.icon-lg{font-size:1.35em;line-height:1.1}
+
+/* =====================================================================
+   ИНТЕРФЕЙС ПРЕЗЕНТАЦИИ (прогресс, кнопки, оглавление) — в печать не идёт
+   ===================================================================== */
+.ui{position:fixed;z-index:20;font-size:min(2.6vh,1.46vw)}
+.progress{position:fixed;top:0;left:0;right:0;height:.22em;background:rgba(255,255,255,.18);z-index:30}
+.progress i{display:block;height:100%;width:0;background:var(--green-accent);transition:width .25s ease}
+.controls{right:.6em;bottom:.6em;display:flex;gap:.35em;align-items:center}
+.controls button{
+    font-family:inherit;font-size:.62em;font-weight:700;line-height:1;
+    background:rgba(15,61,38,.82);color:#fff;border:.05em solid rgba(255,255,255,.25);
+    border-radius:.42em;padding:.5em .7em;cursor:pointer;transition:background .2s;
+}
+.controls button:hover{background:var(--green)}
+.counter{left:.7em;bottom:.65em;font-size:.55em;font-weight:700;color:#cfe9d8;letter-spacing:.06em;
+    background:rgba(15,61,38,.7);border-radius:.4em;padding:.45em .7em}
+.hint{left:50%;transform:translateX(-50%);bottom:.65em;font-size:.5em;color:#a9c7b5;
+    background:rgba(15,61,38,.7);border-radius:.4em;padding:.45em .8em;transition:opacity .5s;white-space:nowrap}
+.hint.gone{opacity:0}
+.menu{
+    position:fixed;inset:0;z-index:25;background:rgba(6,26,17,.94);
+    display:none;padding:min(4vh,2.5em) min(6vw,4em);overflow:auto;font-size:min(2.6vh,1.46vw);
+}
+.menu.open{display:block}
+.menu h3{margin:0 0 .8em;font-size:1.1em;color:#fff;font-weight:800}
+.menu ol{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.45em}
+.menu li button{
+    width:100%;text-align:left;font-family:inherit;font-size:.62em;font-weight:600;cursor:pointer;
+    background:rgba(255,255,255,.07);color:#eaf7ef;border:.05em solid rgba(255,255,255,.16);
+    border-radius:.4em;padding:.6em .8em;transition:background .2s;
+}
+.menu li button:hover{background:var(--green)}
+.menu li button i{color:#86efac;font-style:normal;font-weight:800;margin-right:.5em}
+
+/* =====================================================================
+   ПЕЧАТЬ / PDF: каждый слайд — отдельная страница A4 landscape
+   ===================================================================== */
+@page{size:A4 landscape;margin:0}
+@media print{
+    html,body{height:auto;overflow:visible;background:#fff;display:block}
+    .stage{width:100%;height:auto;font-size:9.6pt;box-shadow:none;overflow:visible}
+    .slide{
+        position:relative;inset:auto;opacity:1!important;visibility:visible!important;transform:none!important;
+        width:297mm;height:209mm;page-break-after:always;break-inside:avoid;overflow:hidden;
+    }
+    .ui,.progress,.menu{display:none!important}
+    .slide:last-child{page-break-after:auto}
+    /* Цвета статусов и карточек сохраняем при печати */
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    /* Тёмные слайды в PDF печатаем светлыми: иначе без включённой опции
+       «Печать фона» белый текст уйдёт на белый лист и страница будет пустой. */
+    .slide.dark{background:#fff!important;color:#166534}
+    .slide.dark .title-wrap h1,.slide.dark .head h2,.slide.dark .title-wrap .sub{color:#166534}
+    .slide.dark .kicker{color:#15803d}
+    .slide.dark .card{background:#f8fafc;border-color:#e3e8ee;border-left-color:#15803d;color:#334155}
+    .slide.dark .card h3{color:#166534}
+    .slide.dark .foot{color:#8d9aa8;border-top-color:#e3e8ee}
+    .slide.dark .title-meta span{background:#f1f7f3;border-color:#d7e7dc;color:#166534}
+    .logo-plate{background:#fff;border:.05em solid #e3e8ee;box-shadow:none}
+}
+@media (max-width:820px){
+    .menu ol{grid-template-columns:1fr}
+    .two-col{grid-template-columns:1fr}
+}
+/* Узкий/портретный экран (телефон): сцена не 16:9, поэтому слайд
+   занимает весь экран и прокручивается вертикально. */
+@media screen and (max-aspect-ratio: 5/4){
+    .stage{width:100vw;height:100vh;font-size:3.1vw;box-shadow:none}
+    .slide{padding:1.4em 1.2em;overflow-y:auto}
+    .body{flex:0 0 auto;justify-content:flex-start;overflow:visible}
+    .head h2{font-size:1.35em}
+    .g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .foot{font-size:.42em}
+}
+</style>
+</head>
+<body>
+<div class="progress"><i id="progress-bar"></i></div>
+
+<main class="stage" id="stage">
+    <!-- 1. ТИТУЛ -->
+    <section class="slide dark">
+        <div class="title-wrap">
+            <div class="logo-plate"><img src="./logo.png" alt="RSK Odessa"></div>
+            <h1 data-title="RSK Odessa — управление строительством">RSK&nbsp;Odessa<br>Управление строительством</h1>
+            <p class="sub">Одна система вместо Excel, звонков и бумаги: объекты, смета и график работ, снабжение,
+                финансы и подотчёт, задачи и реестр расходов — в единой базе, доступной с любого устройства.</p>
+            <div class="title-meta">
+                <span>Презентация для руководства</span>
+                <span>Версия 2.1.0</span>
+                <span>6 ролей</span>
+                <span>7 разделов</span>
+            </div>
+        </div>
+        <div class="foot"><span>RSK Odessa · единая система управления строительными объектами</span><span>1</span></div>
+    </section>
+
+    <!-- 2. ОДНИМ ВЗГЛЯДОМ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Коротко о системе</span>
+            <h2 data-title="Одним взглядом: цифры">Одним взглядом</h2>
+            <p>Приложение целиком живёт в браузере: установка не нужна ни на компьютере, ни на телефоне.</p>
+        </div>
+        <div class="body">
+            <div class="grid g4">
+                <div class="kpi"><b>7</b><span>рабочих разделов</span></div>
+                <div class="kpi"><b>6</b><span>ролей с разными правами</span></div>
+                <div class="kpi"><b>33</b><span>отдельных права доступа</span></div>
+                <div class="kpi"><b>5</b><span>подвкладок в карточке объекта</span></div>
+                <div class="kpi"><b>3</b><span>защищённых хранилища файлов</span></div>
+                <div class="kpi"><b>2</b><span>выгрузки в Excel</span></div>
+                <div class="kpi"><b>2</b><span>отчёта в PDF</span></div>
+                <div class="kpi"><b>0</b><span>установок — только браузер</span></div>
+            </div>
+            <p class="note">Цифры — по текущей версии приложения: 7 разделов, 6 должностей, 33 права в матрице доступа,
+                хранилища для смет, фото задач и чеков; выгрузки реестра и авансового отчёта в Excel;
+                смета и график работ — в PDF.</p>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>2</span></div>
+    </section>
+
+    <!-- 3. БЫЛО / СТАЛО -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Зачем это нужно</span>
+            <h2 data-title="Было и стало">Что изменилось на объектах</h2>
+        </div>
+        <div class="body">
+            <div class="two-col">
+                <div>
+                    <p class="tag">БЫЛО: разрозненные файлы и звонки</p>
+                    <ul class="bul cross" style="margin-top:.6em">
+                        <li>Данные по объектам — в папках, Excel и на бумаге у разных людей</li>
+                        <li>Заявки на материалы — по телефону и в мессенджерах: статус узнаётся звонком</li>
+                        <li>Подотчёт считаем вручную: кто взял, сколько потратил, сколько вернул</li>
+                        <li>Покупки вне сметы оседают в чеках и не попадают в общую картину</li>
+                        <li>Смета и график работ живут отдельно друг от друга</li>
+                    </ul>
+                </div>
+                <div>
+                    <p class="tag">СТАЛО: одна база и понятные статусы</p>
+                    <ul class="bul" style="margin-top:.6em">
+                        <li><b>Единая база в облаке</b> — одни и те же данные у всех, кто имеет доступ</li>
+                        <li><b>Заявка с номером и статусом</b> — от «новая» до «закрыта», ничего не теряется</li>
+                        <li><b>Подотчёт в реальном времени</b> — выдача, расходы, возврат и баланс сотрудника</li>
+                        <li><b>План-факт по объекту</b> — смета против факта плюс отдельно «доп. расходы»</li>
+                        <li><b>Сроки под контролем</b> — график работ, задачи и просрочки на одном экране</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>3</span></div>
+    </section>
+
+    <!-- 4. РАЗДЕЛЫ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Карта приложения</span>
+            <h2 data-title="Семь разделов приложения">Семь разделов — весь объект как на ладони</h2>
+            <p>Каждый сотрудник видит только те разделы, которые нужны его роли.</p>
+        </div>
+        <div class="body">
+            <div class="grid g4">
+                <div class="card"><h3>📋 Рабочий экран</h3><p>Сводка дня: объекты, задачи и просрочки,
+                    план против факта, подотчёт и задолженность по заявкам.</p></div>
+                <div class="card"><h3>🏗 Объекты</h3><p>Карточка объекта из пяти подвкладок: информация,
+                    план-факт, доп. расходы, файлы, график работ.</p></div>
+                <div class="card"><h3>📦 Снабжение</h3><p>Заявки на материалы: создание, обработка,
+                    закрытие, оплата фирмой или сотрудником, долги поставщикам.</p></div>
+                <div class="card"><h3>💰 Финансы</h3><p>Финансовые запросы прорабов и подотчёт сотрудников:
+                    согласование, выдача денег, авансовый отчёт.</p></div>
+                <div class="card"><h3>👥 Сотрудники</h3><p>Карточки персонала, должности, привязка
+                    аккаунтов, баланс подотчёта и актуальные задачи человека.</p></div>
+                <div class="card"><h3>🎯 Задачи</h3><p>Постановка задач, исполнители, сроки и приоритеты,
+                    фотоотчёт по выполнению, контроль просрочек.</p></div>
+                <div class="card amber"><h3>📊 Реестр</h3><p>Все закупки и расходы в одной таблице:
+                    фильтры по объекту, разделу, категории, сотруднику и периоду, выгрузка в Excel.</p></div>
+                <div class="card plain"><h3>📁 Файлы объектов</h3><p>Документация, чертежи, фото и договоры
+                    по каждому объекту — файлы до 50 МБ, любой формат.</p></div>
+            </div>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>4</span></div>
+    </section>
+
+    <!-- 5. КАРТОЧКА ОБЪЕКТА -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Объект</span>
+            <h2 data-title="Карточка объекта: пять подвкладок">Карточка объекта: пять подвкладок вместо папки документов</h2>
+        </div>
+        <div class="body">
+            <div class="grid g2">
+                <div class="card"><h3>📌 Общая информация</h3><p>Название и адрес объекта, заказчик,
+                    ответственный прораб, даты начала и окончания, состояние объекта.</p></div>
+                <div class="card"><h3>📊 План-факт</h3><p>План из сметы против факта по закрытым заявкам
+                    и расходам: суммы и проценты по разделам, перерасход виден сразу.</p></div>
+                <div class="card amber"><h3>📦 Доп. расходы</h3><p>Работы и материалы, которых нет в смете:
+                    собраны отдельным янтарным блоком и в план по смете не подмешиваются.</p></div>
+                <div class="card"><h3>📁 Файлы</h3><p>Рабочая смета объекта и вся документация: чертежи,
+                    фотографии, договоры, акты. Скачивание и удаление — по правам роли.</p></div>
+                <div class="card blue" style="grid-column:1 / -1"><h3>📅 График работ</h3><p>Диаграмма Ганта по
+                    разделам сметы: плановая полоса всегда зелёная, фактическая — синяя в срок и красная при
+                    опоздании. Масштаб — день, неделя или месяц. Выполненные разделы закрываются с датой,
+                    диаграмма выгружается в PDF.</p></div>
+            </div>
+            <p class="note">Плановые суммы разделов видны всем, кому виден объект; сам файл сметы — только трём ролям
+                (Администратор, Главный инженер, Инженер ПТО).</p>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>5</span></div>
+    </section>
+
+    <!-- 6. СМЕТА -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Смета</span>
+            <h2 data-title="Смета: из Excel — в живой план">Смета: из Excel — в живой план объекта</h2>
+            <p>Знакомая таблица сметы остаётся источником плана, но перестаёт быть «файлом в папке».</p>
+        </div>
+        <div class="body">
+            <div class="flow">
+                <div class="step"><b>📤 Загрузка .xlsx</b><span>привычный файл сметы</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>🧩 Разделы и суммы</b><span>создаются автоматически</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>📊 План-факт</b><span>план по смете, факт по расходам</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>📅 График</b><span>разделы со сроками</span></div>
+            </div>
+            <ul class="bul">
+                <li><b>Один загруженный файл даёт весь каркас объекта</b>: разделы, работы, материалы и плановые суммы.</li>
+                <li><b>Повторная загрузка не стирает работу бригад</b> — обновляются только план-суммы,
+                    даты графика и закрытые разделы сохраняются.</li>
+                <li><b>Исчезнувшие из файла разделы убираются</b>, а служебный «Доп. расходы» вне сметы не затрагивается.</li>
+                <li><b>Файл сметы — рабочий документ ПТО</b>: его видят только Администратор, Главный инженер
+                    и Инженер ПТО (плановые суммы разделов при этом доступны всем, кому виден объект).</li>
+                <li><b>Выгрузка в PDF</b> — смета или график в виде, который удобно отправить заказчику.</li>
+            </ul>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>6</span></div>
+    </section>
+
+    <!-- 7. СНАБЖЕНИЕ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">📦 Снабжение</span>
+            <h2 data-title="Заявки на материалы">Заявки на материалы: от прораба до реестра</h2>
+            <p>Заявка больше не живёт в переписке — у неё есть номер, статус, ответственный и сумма.</p>
+        </div>
+        <div class="body">
+            <div class="flow">
+                <div class="step"><b>🧑‍🏭 Прораб создаёт</b><span>объект, раздел сметы, позиции</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>📦 Снабженец ведёт</b><span>цены, поставщик, закупка</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>💳 Оплата</b><span>фирмой или из подотчёта</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>🟢 Закрытие</b><span>факт уходит в учёт</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>📊 Реестр</b><span>план-факт объекта</span></div>
+            </div>
+            <div class="pills">
+                <span class="pill red">🔴 Новая</span>
+                <span class="pill amber">🟡 В работе</span>
+                <span class="pill green">🟢 Закрыта</span>
+                <span class="pill gray">📥 Архив</span>
+                <span class="pill blue">Оплата фирмой</span>
+                <span class="pill gray">Оплата из подотчёта</span>
+            </div>
+            <ul class="bul">
+                <li><b>Номер заявки вида «З-12/26»</b> — на него можно ссылаться в накладных и переписке
+                    с поставщиком.</li>
+                <li><b>Позиции с суммой</b>: наименование, количество, единица измерения, цена, раздел сметы,
+                    приоритет («срочно», «важно», «обычная»).</li>
+                <li><b>Долг поставщику виден отдельно</b>: закрытые, но не оплаченные позиции собраны
+                    в одном блоке — ничего не «забывается к оплате».</li>
+                <li><b>Закрытие заявки сразу отражается в учёте</b>: сумма попадает в план-факт объекта
+                    и в сводный реестр закупок — без двойного счёта.</li>
+                <li><b>Архив — это не удаление</b>: заявка остаётся в реестре и в истории объекта.</li>
+            </ul>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>7</span></div>
+    </section>
+
+    <!-- 8. ФИНАНСЫ И ПОДОТЧЁТ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">💰 Финансы</span>
+            <h2 data-title="Деньги и подотчёт под контролем">Деньги и подотчёт под контролем</h2>
+            <p>Заявки на финансирование и учёт выданных в подотчёт средств — в одном разделе.</p>
+        </div>
+        <div class="body">
+            <div class="flow">
+                <div class="step"><b>🧑‍🏭 Заявка</b><span>прораб просит деньги на работы</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>🟡 Одобрение</b><span>кассир согласует или отклоняет</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>🟢 Выдача</b><span>деньги уходят под отчёт</span></div>
+                <div class="arr">→</div>
+                <div class="step"><b>🧾 Отчёт</b><span>расход, возврат, баланс</span></div>
+            </div>
+            <div class="pills">
+                <span class="pill red">🔴 Ожидает</span>
+                <span class="pill amber">🟡 Одобрено</span>
+                <span class="pill green">🟢 Выдано</span>
+                <span class="pill gray">❌ Отклонено</span>
+                <span class="pill blue">Номер «Ф-05/26»</span>
+            </div>
+            <div class="grid g2">
+                <ul class="bul">
+                    <li><b>Порядок в подотчёте</b>: выдача, расход, возврат и корректировка фиксируются
+                        отдельными операциями, у каждого сотрудника виден текущий баланс.</li>
+                    <li><b>Расход вносится только за себя</b> — чужие операции сотрудник не правит.</li>
+                    <li><b>Фильтры авансового отчёта</b>: объект (включая «без объекта») и период;
+                        в шапке видно «Показано: N из M» с приходом и расходом.</li>
+                </ul>
+                <ul class="bul">
+                    <li><b>Выгрузка в Excel — строго по фильтру</b>: расход разбит по позициям, под таблицей
+                        итоги «приход / расход / баланс», шапка с автофильтром.</li>
+                    <li><b>Кассиры видят все заявки</b> (Администратор, Директор, Главный инженер),
+                        остальные — только свои.</li>
+                    <li><b>Директор заявки не оформляет</b>: его работа — согласование, выдача и контроль,
+                        кнопки создания заявок у него скрыты.</li>
+                </ul>
+            </div>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>8</span></div>
+    </section>
+
+    <!-- 9. ЗАДАЧИ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">🎯 Задачи</span>
+            <h2 data-title="Задачи: кто, что и когда">Задачи: кто, что и когда</h2>
+            <p>Руководитель ставит задачу и видит срок, исполнитель отчитывается фотографией.</p>
+        </div>
+        <div class="body">
+            <div class="pills">
+                <span class="pill amber">🟡 Новая</span>
+                <span class="pill blue">🔵 В работе</span>
+                <span class="pill green">🟢 Выполнена</span>
+                <span class="pill gray">⚫ Отменена</span>
+                <span class="pill red">⚡ Срочно</span>
+                <span class="pill amber">⭐ Важный</span>
+                <span class="pill gray">Обычная</span>
+            </div>
+            <ul class="bul">
+                <li><b>Ставят задачи руководители</b> — Администратор, Директор, Главный инженер, Инженер ПТО,
+                    в том числе прямо из карточки сотрудника кнопкой «➕ Поставить задачу».</li>
+                <li><b>Исполнитель берёт задачу в работу и закрывает её</b> — выполнение подтверждается
+                    фотографией, снимки хранятся в защищённом хранилище.</li>
+                <li><b>Автор может отменить свою задачу</b>, Администратор — любую.</li>
+                <li><b>Просрочки видны сразу</b>: задачи с истёкшим сроком вынесены на «Рабочий экран»
+                    отдельной цифрой, по клику открывается список.</li>
+                <li><b>Каждый видит своё</b>: исполнитель — поставленные ему задачи, руководитель — все,
+                    по которым он автор.</li>
+            </ul>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>9</span></div>
+    </section>
+
+    <!-- 10. РЕЕСТР -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">📊 Реестр</span>
+            <h2 data-title="Реестр: все закупки и расходы в одной таблице">Все закупки и расходы — в одной таблице</h2>
+            <p>Сводный реестр собирает данные сам: ничего не нужно вносить второй раз.</p>
+        </div>
+        <div class="body">
+            <div class="grid g3">
+                <div class="card"><h3>1 · Заявки, оплаченные фирмой</h3><p>Закрытые и архивные заявки на
+                    материалы: суммы берутся из позиций заявки.</p></div>
+                <div class="card"><h3>2 · Расходы сотрудников</h3><p>Траты из авансового отчёта и кассы:
+                    материалы, работы, доставка, прочее.</p></div>
+                <div class="card"><h3>3 · Заявки за счёт подотчёта</h3><p>Учитываются по кассовым операциям —
+                    без двойного счёта с пунктом 2.</p></div>
+            </div>
+            <ul class="bul">
+                <li><b>Фильтры</b>: объект, раздел, категория расхода, сотрудник, «с какой по какую дату» —
+                    итог пересчитывается сразу.</li>
+                <li><b>Выгрузка в Excel</b>: готовая таблица с автофильтром, настоящими датами и денежным
+                    форматом — файл можно сразу отправлять бухгалтерии.</li>
+                <li><b>Архивные заявки остаются в реестре</b> — архив не означает удаление, история расходов
+                    не рвётся.</li>
+            </ul>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>10</span></div>
+    </section>
+
+    <!-- 11. РАБОЧИЙ ЭКРАН -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">📋 Рабочий экран</span>
+            <h2 data-title="Рабочий экран: цифры вместо переспрашиваний">Рабочий экран: цифры вместо переспрашиваний</h2>
+            <p>Первый экран после входа показывает состояние дел и открывает нужный список одним кликом.</p>
+        </div>
+        <div class="body">
+            <div class="two-col">
+                <div>
+                    <p class="tag">РУКОВОДИТЕЛЬ И ПРОРАБ</p>
+                    <ul class="bul" style="margin-top:.6em">
+                        <li><b>В работе</b> — сколько задач новых и сколько в процессе.</li>
+                        <li><b>Просрочено</b> — задачи с нарушенным сроком; цифра подсвечена красным.</li>
+                        <li><b>Выполнено за 30 дней</b> — реальная производительность участка.</li>
+                        <li><b>План против факта</b> по объектам: план из сметы и факт по расходам.</li>
+                        <li><b>Задолженность</b>: у прораба — свой подотчёт, у руководителя — по всем сотрудникам.</li>
+                    </ul>
+                </div>
+                <div>
+                    <p class="tag">БЛОК КОНТРОЛЯ ДЕНЕГ</p>
+                    <ul class="bul" style="margin-top:.6em">
+                        <li><b>Общий баланс подотчёта</b> по всем сотрудникам.</li>
+                        <li><b>Сотрудники с отрицательным балансом</b> — кто должен отчитаться за деньги.</li>
+                        <li><b>Сотрудники с большим остатком</b> — у кого зависли подотчётные суммы.</li>
+                        <li><b>Задолженность по закрытым заявкам</b> и число неоплаченных позиций.</li>
+                        <li><b>Список должников по подотчёту</b> — по клику открывается карточка сотрудника.</li>
+                    </ul>
+                </div>
+            </div>
+            <p class="note">Прораб видит только свой участок: свои объекты, свои задачи и свой подотчёт.
+                Руководители — картину по всей компании.</p>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>11</span></div>
+    </section>
+
+    <!-- 12. ФАЙЛЫ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">📁 Файлы и документы</span>
+            <h2 data-title="Файлы и документы объекта">Документы объекта больше не теряются</h2>
+            <p>Вся проектная и рабочая документация лежит рядом с объектом, а не на чьём-то компьютере.</p>
+        </div>
+        <div class="body">
+            <div class="grid g3">
+                <div class="card"><h3>📁 Документация объекта</h3><p>Чертежи, договоры, акты, фотографии —
+                    любой формат, файл до 50 МБ, загрузка прямо из карточки объекта.</p></div>
+                <div class="card"><h3>📸 Фотоотчёты и чеки</h3><p>Снимки по задачам и фото чеков к расходам
+                    хранятся в отдельных защищённых хранилищах, а не в переписке.</p></div>
+                <div class="card"><h3>🔒 Доступ по правам</h3><p>Загрузка и удаление — только у ролей
+                    с соответствующим правом; ссылка на файл выдаётся на время и не «живёт» вечно.</p></div>
+            </div>
+            <div class="grid g3">
+                <div class="kpi"><b>PDF</b><span>смета и график работ — в один клик</span></div>
+                <div class="kpi"><b>XLSX</b><span>реестр расходов и авансовый отчёт</span></div>
+                <div class="kpi"><b>50 МБ</b><span>максимальный размер одного файла</span></div>
+            </div>
+            <p class="quote">Итог: у каждого объекта — своя папка документов, доступная тем, кому положено,
+                с любого устройства и без «пришли мне файл на почту».</p>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>12</span></div>
+    </section>
+
+    <!-- 13. РОЛИ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Роли</span>
+            <h2 data-title="Шесть ролей — шесть рабочих мест">Шесть ролей — шесть рабочих мест</h2>
+            <p>Должность сотрудника определяет его роль: доступ выдаётся автоматически при входе в систему.</p>
+        </div>
+        <div class="body">
+            <table class="matrix">
+                <thead>
+                    <tr><th style="width:16%">Роль</th><th style="width:22%">Зона ответственности</th><th>Что может в системе</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><b>👑 Администратор</b></td>
+                        <td>Полный доступ и настройка</td>
+                        <td>Сотрудники и привязка аккаунтов, объекты и сметы, документация, любые задачи,
+                            заявки на материалы, финансы и подотчёт, реестр, удаление записей.</td>
+                    </tr>
+                    <tr>
+                        <td><b>📈 Директор</b></td>
+                        <td>Контроль и деньги</td>
+                        <td>Все объекты и разделы на просмотр, согласование и выдача финансовых заявок,
+                            подотчёт всех сотрудников, дашборд. Заявки сам не оформляет — у него скрыты кнопки создания.</td>
+                    </tr>
+                    <tr>
+                        <td><b>🦺 Главный инженер</b></td>
+                        <td>Производство и смета</td>
+                        <td>Объекты, график работ, смета и документация, задачи и исполнители, заявки на материалы,
+                            финансы, реестр, дашборд.</td>
+                    </tr>
+                    <tr>
+                        <td><b>📐 Инженер ПТО</b></td>
+                        <td>Смета и график</td>
+                        <td>Смета и документация объекта, график работ, постановка задач, заявки на материалы,
+                            реестр, дашборд. Раздел «Снабжение» ему не нужен и скрыт.</td>
+                    </tr>
+                    <tr>
+                        <td><b>📦 Снабженец</b></td>
+                        <td>Закупки</td>
+                        <td>Одно окно заявок на материалы: обработка, цены, оплата и закрытие; реестр закупок
+                            и финансовые запросы. Остальные разделы скрыты, чтобы не мешать работе.</td>
+                    </tr>
+                    <tr>
+                        <td><b>🧑‍🏭 Прораб</b></td>
+                        <td>Свой объект</td>
+                        <td>Свои объекты, заявки на материалы, задачи с фотоотчётом, свой подотчёт и авансовый отчёт,
+                            закрытие выполненных разделов графика, дашборд. Без реестра и «Снабжения».</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>13</span></div>
+    </section>
+
+    <!-- 14. МАТРИЦА ДОСТУПА -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Права доступа</span>
+            <h2 data-title="Матрица доступа по ролям">Матрица доступа по ролям</h2>
+        </div>
+        <div class="body top">
+            <table class="matrix">
+                <thead>
+                    <tr><th style="width:33%">Возможность</th><th>👑 Админ.</th><th>📈 Директор</th>
+                        <th>🦺 Гл. инженер</th><th>📐 Инж. ПТО</th><th>📦 Снабженец</th><th>🧑‍🏭 Прораб</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><b>Объекты компании</b></td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y" style="font-size:.85em">свои</td></tr>
+                    <tr><td>Просмотр списка сотрудников</td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td></tr>
+                    <tr><td>Добавление, блокировка и удаление сотрудников</td>
+                        <td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+                    <tr><td>Постановка задач</td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td></tr>
+                    <tr><td>Создание заявок на материалы</td>
+                        <td class="c y">✓</td><td class="c n">—</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+                    <tr><td>Обработка заявок на материалы (цены, закрытие)</td>
+                        <td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c y">✓</td><td class="c n">—</td></tr>
+                    <tr><td>Финансовые заявки: согласование и выдача денег</td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+                    <tr><td>Свой подотчёт: расход и возврат</td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td></tr>
+                    <tr><td>Балансы подотчёта всех сотрудников</td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td></tr>
+                    <tr><td>Смета объекта (рабочий файл)</td>
+                        <td class="c y">✓</td><td class="c n">—</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td></tr>
+                    <tr><td>График работ: планирование дат</td>
+                        <td class="c y">✓</td><td class="c n">—</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td></tr>
+                    <tr><td>Отметить раздел выполненным</td>
+                        <td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c n">—</td><td class="c y" style="font-size:.85em">свои</td></tr>
+                    <tr><td>Документация объекта: загрузка и удаление</td>
+                        <td class="c y">✓</td><td class="c n">—</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c n">—</td></tr>
+                    <tr><td>Реестр закупок и расходов</td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td></tr>
+                    <tr><td>Рабочий экран (личный дашборд)</td>
+                        <td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c y">✓</td><td class="c n">—</td><td class="c y">✓</td></tr>
+                </tbody>
+            </table>
+            <p class="note">✓ — доступ есть · — — доступа нет · «свои» — только по своим объектам и по своему подотчёту.
+                В матрице 33 отдельных права, и все они закреплены в одном файле настроек — права меняются централизованно.</p>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>14</span></div>
+    </section>
+
+    <!-- 15. ОСОБЫЕ РАБОЧИЕ МЕСТА -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Настройка интерфейса</span>
+            <h2 data-title="Интерфейс под каждую роль">Интерфейс подстраивается под роль</h2>
+            <p>Приложение не только запрещает лишнее, но и не показывает его — человек видит только свою работу.</p>
+        </div>
+        <div class="body">
+            <div class="grid g3">
+                <div class="card"><h3>📦 Снабженец — одно окно</h3><p>После входа сразу открываются заявки
+                    на материалы. Доступны только «Рабочий экран», реестр и кнопка финансовых запросов;
+                    вкладки объектов, сотрудников, задач и финансов скрыты.</p></div>
+                <div class="card"><h3>📈 Директор — контроль без бумаг</h3><p>Видит все разделы, включая
+                    «Снабжение», но не оформляет заявки: кнопки создания у него скрыты. Его работа —
+                    согласовать, выдать деньги и держать картину перед глазами.</p></div>
+                <div class="card"><h3>🧑‍🏭 Прораб — только свой участок</h3><p>Свои объекты, свои задачи,
+                    свой подотчёт, закрытие выполненных разделов графика. Чужие объекты и общий реестр
+                    он не видит.</p></div>
+            </div>
+            <p class="quote">🔐 Рабочий файл сметы доступен только трём ролям — Администратору, Главному инженеру
+                и Инженеру ПТО. Остальным ролям блок «Смета объекта» не показывается вместе с заголовком,
+                при этом плановые суммы разделов остаются видны в план-факте, графике и «Доп. расходах».</p>
+            <p class="note">Доступ выдаётся по должности сотрудника: меняется должность в карточке — меняется набор
+                разделов и кнопок. Сотрудник без привязанного аккаунта получает доступ «по минимуму».</p>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>15</span></div>
+    </section>
+
+    <!-- 16. БЕЗОПАСНОСТЬ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Безопасность</span>
+            <h2 data-title="Доступ и защита данных">Доступ и защита данных</h2>
+        </div>
+        <div class="body">
+            <div class="grid g2">
+                <ul class="bul">
+                    <li><b>Вход по логину и паролю</b> с облачной аутентификацией; аккаунт привязывается
+                        к карточке сотрудника, а роль берётся из его должности.</li>
+                    <li><b>Интерфейс показывает только разрешённое</b>: недоступные разделы и кнопки не отображаются,
+                        а не «прячутся» после нажатия.</li>
+                    <li><b>Двойная проверка на критичных действиях</b>: работа с файлом сметы закрыта правом
+                        на уровне самой функции — вызвать её в обход интерфейса (из консоли браузера) нельзя.</li>
+                </ul>
+                <ul class="bul">
+                    <li><b>Удаление сметы — только Администратор</b>: загрузка и просмотр — у трёх ролей,
+                        удаление — у одной.</li>
+                    <li><b>Защита данных на стороне базы</b>: политики доступа (RLS) в Postgres и приватные
+                        хранилища файлов; ссылка на файл выдаётся временная, а не постоянная.</li>
+                    <li><b>Журнал событий</b>: отказы в доступе и значимые операции фиксируются — видно,
+                        кто и что пытался сделать.</li>
+                </ul>
+            </div>
+            <p class="quote">Порядок администрирования: при изменении прав роли правки вносятся и в настройки
+                приложения, и в политики базы данных — тогда ограничение действует на всех уровнях,
+                а не только в интерфейсе.</p>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>16</span></div>
+    </section>
+
+    <!-- 17. ЭФФЕКТ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Результат для компании</span>
+            <h2 data-title="Что это даёт компании">Что это даёт компании</h2>
+        </div>
+        <div class="body">
+            <div class="grid g3">
+                <div class="card"><h3>💰 Контроль денег</h3><p>Подотчёт каждого сотрудника, долги поставщикам
+                    и задолженность по закрытым заявкам — в цифрах на одном экране, а не в пересчётах вручную.</p></div>
+                <div class="card"><h3>📉 Перерасход виден сразу</h3><p>План-факт по каждому объекту показывает
+                    отклонение от сметы в момент закрытия заявки, а не в конце стройки.</p></div>
+                <div class="card"><h3>⏱ Меньше рутины</h3><p>Заявки не пересказываются голосом: статус виден
+                    в системе. Отчёты для бухгалтерии выгружаются в Excel и PDF в один клик.</p></div>
+                <div class="card"><h3>🧾 Прозрачность</h3><p>Кто поставил задачу, кто её закрыл, кто согласовал
+                    и выдал деньги — история сохраняется по каждому объекту.</p></div>
+                <div class="card"><h3>🛡 Дисциплина сроков</h3><p>Задачи со сроками, просрочки отдельной цифрой,
+                    фотоотчёт по выполнению — работа бригад видна, а не обсуждается.</p></div>
+                <div class="card"><h3>📱 Доступность</h3><p>Телефон, планшет или компьютер — данные одни и те же.
+                    Установка и обучение не требуются: понятный интерфейс на русском языке.</p></div>
+            </div>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>17</span></div>
+    </section>
+
+    <!-- 18. КАК УСТРОЕНО И ЧТО ДАЛЬШЕ -->
+    <section class="slide">
+        <div class="head">
+            <span class="kicker">Технологии и развитие</span>
+            <h2 data-title="Как устроено и что дальше">Как устроено и что дальше</h2>
+        </div>
+        <div class="body">
+            <div class="two-col">
+                <div>
+                    <p class="tag">УСТРОЙСТВО</p>
+                    <ul class="bul" style="margin-top:.6em">
+                        <li><b>Работает в браузере</b> — открывается по ссылке, установка на устройства не нужна.</li>
+                        <li><b>Облачная база данных и хранилища файлов</b>: данные не привязаны к одному
+                            компьютеру, одновременная работа с нескольких устройств.</li>
+                        <li><b>Обновление централизованное</b>: все сотрудники всегда в одной версии системы —
+                            не нужно «собирать обновление» на местах.</li>
+                        <li><b>Экономия трафика</b>: разделы подгружаются по мере открытия, поэтому система
+                            остаётся быстрой и на объекте со слабым интернетом.</li>
+                    </ul>
+                </div>
+                <div>
+                    <p class="tag">ПЛАНЫ РАЗВИТИЯ</p>
+                    <ul class="arrow bul" style="margin-top:.6em">
+                        <li>Перевести оформление на локальные файлы стилей — ускорить загрузку и упростить
+                            работу без внешних CDN.</li>
+                        <li>Добавить офлайн-режим: просмотр данных и черновики при пропадании связи.</li>
+                        <li>Автоматические проверки (тесты) перед выпуском изменений.</li>
+                        <li>Регламентная сверка прав ролей и политик доступа базы данных при любом
+                            изменении матрицы доступа.</li>
+                        <li>Развитие отчётов для руководства: сводка по всем объектам за период.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="foot"><span>RSK Odessa v2.1.0 · управление строительством</span><span>18</span></div>
+    </section>
+
+    <!-- 19. ФИНАЛ -->
+    <section class="slide dark">
+        <div class="title-wrap">
+            <div class="logo-plate"><img src="./logo.png" alt="RSK Odessa"></div>
+            <h1 data-title="Спасибо за внимание">Спасибо за внимание</h1>
+            <p class="sub">Система уже работает: объекты, заявки, подотчёт и графики ведутся в ней каждый день.
+                Развиваем её дальше по замечаниям с объектов — предложения и приоритеты принимаются от руководителей
+                направлений.</p>
+            <div class="title-meta">
+                <span>RSK Odessa v2.1.0</span>
+                <span>6 ролей · 33 права</span>
+                <span>Вход: логин и пароль сотрудника</span>
+            </div>
+        </div>
+        <div class="foot"><span>Изменения в правах и ролях — через Администратора системы</span><span>19</span></div>
+    </section>
+
+</main>
+
+<div class="counter ui" id="counter">1 / 1</div>
+<div class="hint ui" id="hint">← → листать · M — оглавление · F — во весь экран</div>
+<div class="controls ui">
+    <button type="button" data-nav="prev" title="Назад (←)">‹</button>
+    <button type="button" data-nav="next" title="Вперёд (→)">›</button>
+    <button type="button" data-nav="menu" title="Оглавление (M)">☰ Содержание</button>
+    <button type="button" data-nav="fs" title="Во весь экран (F)">⛶</button>
+</div>
+<div class="menu ui" id="menu" role="dialog" aria-label="Содержание презентации">
+    <h3>📑 Содержание презентации</h3>
+    <ol id="menu-list"></ol>
+</div>
+
+<script>
+(function () {
+    'use strict';
+
+    var stage   = document.getElementById('stage');
+    var slides  = Array.prototype.slice.call(stage.querySelectorAll('.slide'));
+    var bar     = document.getElementById('progress-bar');
+    var counter = document.getElementById('counter');
+    var menu    = document.getElementById('menu');
+    var list    = document.getElementById('menu-list');
+    var hint    = document.getElementById('hint');
+    var index   = 0;
+
+    if (!slides.length) return;
+
+    // ----- Оглавление: заголовки берём из самих слайдов -----
+    slides.forEach(function (slide, n) {
+        var heading = slide.querySelector('[data-title], h2, h1');
+        var title = (heading && heading.getAttribute('data-title')) ||
+                    (heading && heading.textContent.trim()) || ('Слайд ' + (n + 1));
+        var li = document.createElement('li');
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.innerHTML = '<i>' + (n + 1) + '</i>' + title;
+        btn.addEventListener('click', function () { go(n); closeMenu(); });
+        li.appendChild(btn);
+        list.appendChild(li);
+    });
+
+    function syncChrome() {
+        bar.style.width = (((index + 1) / slides.length) * 100) + '%';
+        counter.textContent = (index + 1) + ' / ' + slides.length;
+        // На file:// replaceState с URL может быть запрещён — просто пропускаем
+        try {
+            if (window.history && history.replaceState) {
+                history.replaceState(null, '', '#s' + (index + 1));
+            }
+        } catch (e) { /* ссылка в адресной строке не обновится — не критично */ }
+    }
+
+    function go(n) {
+        var target = Math.max(0, Math.min(slides.length - 1, n));
+        if (target !== index || !slides[index].classList.contains('active')) {
+            slides[index].classList.remove('active');
+            index = target;
+            slides[index].classList.add('active');
+        }
+        syncChrome();
+    }
+
+    function next() { go(index + 1); }
+    function prev() { go(index - 1); }
+    function openMenu() { menu.classList.add('open'); }
+    function closeMenu() { menu.classList.remove('open'); }
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+        } else if (document.exitFullscreen) {
+            document.exitFullscreen();
+        }
+    }
+
+    document.addEventListener('keydown', function (e) {
+        var k = e.key;
+        if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown' || k === ' ' || k === 'Enter') {
+            e.preventDefault(); next();
+        } else if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp' || k === 'Backspace') {
+            e.preventDefault(); prev();
+        } else if (k === 'Home') { e.preventDefault(); go(0); }
+        else if (k === 'End') { e.preventDefault(); go(slides.length - 1); }
+        else if (k === 'm' || k === 'M' || k === 'ь') { menu.classList.contains('open') ? closeMenu() : openMenu(); }
+        else if (k === 'f' || k === 'F' || k === 'а') { toggleFullscreen(); }
+        else if (k === 'Escape') { closeMenu(); }
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-nav]'), function (el) {
+        el.addEventListener('click', function () {
+            var action = el.getAttribute('data-nav');
+            if (action === 'next') next();
+            else if (action === 'prev') prev();
+            else if (action === 'menu') menu.classList.contains('open') ? closeMenu() : openMenu();
+            else if (action === 'fs') toggleFullscreen();
+        });
+    });
+
+    menu.addEventListener('click', function (e) { if (e.target === menu) closeMenu(); });
+    stage.addEventListener('click', function (e) {
+        if (e.target.closest('a')) return;
+        next();
+    });
+
+    // Свайпы на телефоне/планшете
+    var touchX = null;
+    stage.addEventListener('touchstart', function (e) { touchX = e.changedTouches[0].clientX; }, { passive: true });
+    stage.addEventListener('touchend', function (e) {
+        if (touchX === null) return;
+        var dx = e.changedTouches[0].clientX - touchX;
+        if (Math.abs(dx) > 45) { dx < 0 ? next() : prev(); }
+        touchX = null;
+    }, { passive: true });
+
+    setTimeout(function () { hint.classList.add('gone'); }, 7000);
+    slides[0].classList.add('active');
+    go(Math.max(0, (parseInt((location.hash || '').replace('#s', ''), 10) || 1) - 1));
+})();
+</script>
+</body>
+</html>

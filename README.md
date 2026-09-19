@@ -39,6 +39,8 @@ js/auth.js            вход/выход, привязка сотрудника
 js/modules/*.js       разделы: employees, projects, estimate, gantt, orders, cash,
                       cash-requests, registry, tasks, files, dashboard
 database/schema.sql   реконструкция схемы БД по коду (см. предупреждение в файле)
+Презентация.html      презентация для руководства: функциональность, роли, матрица прав
+                      (открывается в браузере, ← → листают, M — оглавление, Ctrl+P → PDF)
 ```
 
 Правило проекта: модули **не обращаются к Supabase напрямую** — только через `js/database.js`.
