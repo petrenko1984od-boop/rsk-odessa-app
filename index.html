@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RSK Odessa — Управление строительством</title>
     <link rel="icon" type="image/png" href="./logo.png">
+
+    <!-- PWA: приложение можно установить на рабочий стол телефона и ПК.
+         Манифест — имя/иконки/цвета, sw.js — офлайн-кэш, js/pwa.js — установка и обновление.
+         Инструкция: README → «Установка приложения (PWA)». -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#15803d">
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="RSK Odessa">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -1070,6 +1082,56 @@
                     <button type="button" onclick="hideModal('close-section-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ============ PWA: установка приложения и обновление версии ============
+         Карточки показывает js/pwa.js: установку — по событию браузера
+         beforeinstallprompt, обновление — когда service worker скачал новую
+         версию. Обе живут внизу справа, не мешают работе и закрываются. -->
+    <div id="pwa-install-banner"
+         class="hidden fixed bottom-4 right-4 left-4 sm:left-auto sm:w-96 bg-white rounded-xl shadow-2xl border border-gray-200 p-4 z-[95]">
+        <div class="flex items-start gap-3">
+            <img src="./icons/icon-192.png" alt="" class="h-12 w-12 rounded-xl shadow-sm shrink-0">
+            <div class="min-w-0 flex-1">
+                <p id="pwa-install-title" class="text-sm font-bold text-gray-800">Установить RSK Odessa?</p>
+                <p id="pwa-install-text" class="text-xs text-gray-500 mt-1">
+                    Приложение откроется в отдельном окне, а значок появится на рабочем столе.
+                </p>
+            </div>
+            <button type="button" onclick="pwaDismissInstall(true)" title="Больше не предлагать"
+                    class="text-gray-400 hover:text-gray-600 font-bold text-lg leading-none shrink-0">✕</button>
+        </div>
+        <div class="flex gap-2 mt-3">
+            <button type="button" id="pwa-install-btn" onclick="pwaInstall()"
+                    class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2 rounded-lg text-sm transition">
+                📲 Установить
+            </button>
+            <button type="button" onclick="pwaDismissInstall(false)"
+                    class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg text-sm transition">
+                Позже
+            </button>
+        </div>
+    </div>
+
+    <div id="pwa-update-banner"
+         class="hidden fixed bottom-4 right-4 left-4 sm:left-auto sm:w-80 bg-[#166534] text-white rounded-xl shadow-2xl p-4 z-[96]">
+        <div class="flex items-start gap-3">
+            <span class="text-xl leading-none">🔄</span>
+            <div class="min-w-0 flex-1">
+                <p class="text-sm font-bold">Доступна новая версия</p>
+                <p class="text-xs text-white/80 mt-1">Обновите страницу, чтобы работать в актуальной версии приложения.</p>
+            </div>
+        </div>
+        <div class="flex gap-2 mt-3">
+            <button type="button" onclick="pwaApplyUpdate()"
+                    class="flex-1 bg-white hover:bg-gray-100 text-[#166534] font-semibold py-2 rounded-lg text-sm transition">
+                Обновить
+            </button>
+            <button type="button" onclick="pwaHideUpdate()"
+                    class="px-3 bg-[#15803d] hover:bg-[#14532d] text-white font-semibold py-2 rounded-lg text-sm transition">
+                Позже
+            </button>
         </div>
     </div>
 

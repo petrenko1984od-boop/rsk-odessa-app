@@ -5,6 +5,7 @@
 import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
+import { initPWA } from './pwa.js';   // установка приложения и обновление версии
 import {
     loadPermissions, canSeeTab, canSeeHeaderButton, getNavLabel, getStartTab,
     getEmployee, can
@@ -673,6 +674,7 @@ function boot() {
     log.info(`Загрузка ${CONFIG.APP.NAME} v${CONFIG.APP.VERSION}`);
     bindForms();
     initOfflineBanner();
+    initPWA();   // service worker + предложение установить приложение (PWA)
 
     initLoginScreen({
         onSuccess: (user) => {
