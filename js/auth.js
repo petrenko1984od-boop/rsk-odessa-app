@@ -39,150 +39,29 @@ export async function signIn(email, password) {
 }
 
 /**
- * Адрес, куда Supabase вернёт сотрудника после клика по ссылке из письма.
- * При открытии с file:// origin === 'null', и такой адрес Supabase отклоняет,
- * поэтому передаём его только для http(s).
- */
-function getAuthRedirectUrl() {
-    return /^https?:$/.test(window.location.protocol) ? window.location.origin : undefined;
-}
-
-/**
- * Переводит стандартные английские ошибки Supabase Auth на понятный русский.
- * Показывать «Email not confirmed» сотруднику бессмысленно — он не знает,
- * что это за подтверждение и где его искать.
- */
-export function describeAuthError(message = '') {
-    const msg = String(message);
-
-    if (/email not confirmed/i.test(msg)) {
-        return 'Email не подтверждён. Откройте письмо от Supabase и нажмите ссылку подтверждения, ' +
-               'либо попросите администратора подтвердить аккаунт (Users → … → Confirm email).';
-    }
-    if (/invalid login credentials/i.test(msg)) {
-        return 'Неверный email или пароль.';
-    }
-    if (/user already registered|already been registered/i.test(msg)) {
-        return 'Такой email уже зарегистрирован — войдите или попросите администратора сбросить пароль.';
-    }
-    if (/email rate limit exceeded|over_email_send_rate_limit/i.test(msg)) {
-        return 'Слишком много писем подряд. Подождите несколько минут и попробуйте снова.';
-    }
-    if (/password should be at least/i.test(msg)) {
-        return 'Пароль слишком короткий — минимум 6 символов.';
-    }
-    if (/failed to fetch|networkerror|network error/i.test(msg)) {
-        return 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.';
-    }
-
-    return msg;
-}
-
-/**
  * Регистрация нового пользователя (email + пароль).
  * После регистрации пользователь попадает в систему,
  * но без привязки к сотруднику — доступа к данным не будет.
  *
- * Возвращает `needsConfirmation: true`, если в проекте включена опция
- * Confirm email (Authentication → Sign In / Providers → Email): пользователь
- * создан, сессии нет, и войти он сможет только после клика по ссылке из письма.
+ * Писем приложение не отправляет и подтверждения по ссылке не требует:
+ * в Supabase должна быть ВЫКЛЮЧЕНА опция Confirm email
+ * (Authentication → Sign In / Providers → Email) — тогда пароль действует сразу.
  */
 export async function signUp(email, password) {
     log.auth(`Попытка регистрации: ${email}`);
 
-    const redirectTo = getAuthRedirectUrl();
-
     const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
-        password,
-        ...(redirectTo ? { options: { emailRedirectTo: redirectTo } } : {})
+        password
     });
 
     if (error) {
         log.error('Ошибка регистрации:', error.message);
-        return { user: null, needsConfirmation: false, error };
+        return { user: null, error };
     }
 
-    // session === null → подтверждение email включено: сначала письмо, потом вход
-    const needsConfirmation = !data.session;
-
-    log.auth(
-        needsConfirmation
-            ? `✉️ Требуется подтверждение email: ${data.user?.email || email}`
-            : `✅ Регистрация успешна: ${data.user?.email || '(без email)'}`
-    );
-
-    return { user: data.user, needsConfirmation, error: null };
-}
-
-/**
- * Повторная отправка письма-подтверждения (кнопка «✉️ Отправить письмо-подтверждение ещё раз»).
- * Нужна, когда письмо не дошло: у встроенной почты Supabase жёсткие лимиты,
- * и без своего SMTP адреса вне организации проекта часто не получают письма.
- */
-export async function resendConfirmation(email) {
-    log.auth(`Повторная отправка подтверждения: ${email}`);
-
-    const redirectTo = getAuthRedirectUrl();
-
-    const { error } = await supabase.auth.resend({
-        type: 'signup',
-        email: email.trim(),
-        ...(redirectTo ? { options: { emailRedirectTo: redirectTo } } : {})
-    });
-
-    if (error) {
-        log.error('Ошибка повторной отправки письма:', error.message);
-        return { success: false, error };
-    }
-
-    log.auth('✅ Письмо-подтверждение отправлено повторно');
-    return { success: true, error: null };
-}
-
-/**
- * Разбирает «хвост» адреса, который Supabase добавляет после клика по ссылке из письма:
- *   #access_token=…&type=signup      — подтверждение прошло;
- *   #error=access_denied&error_code=otp_expired — ссылка устарела.
- *
- * Сессию приложение по этим токенам не поднимает (`detectSessionInUrl: false`),
- * поэтому хвост просто убираем из адресной строки и показываем сотруднику подсказку.
- */
-export function readAuthRedirectNotice() {
-    const hash = window.location.hash.replace(/^#/, '');
-    if (!hash) return null;
-
-    let params;
-    try {
-        params = new URLSearchParams(hash);
-    } catch {
-        return null;
-    }
-
-    const hasToken = params.has('access_token');
-    const errorDescription = params.get('error_description') || '';
-    const errorCode = params.get('error_code') || '';
-
-    if (!hasToken && !errorDescription && !errorCode) return null;
-
-    // Хвост больше не нужен — в адресной строке оставляем чистый путь
-    history.replaceState(null, '', window.location.pathname + window.location.search);
-
-    if (hasToken) {
-        return { type: 'ok', message: '✅ Email подтверждён. Войдите с паролем.' };
-    }
-    if (/expired|invalid/i.test(errorCode) || /expired|invalid/i.test(errorDescription)) {
-        return {
-            type: 'error',
-            message: 'Ссылка подтверждения устарела или уже использована — ' +
-                     'нажмите «Отправить письмо-подтверждение ещё раз».'
-        };
-    }
-
-    return {
-        type: 'error',
-        message: `Ссылка подтверждения не сработала: ${errorDescription || errorCode}`
-    };
+    log.auth('✅ Регистрация успешна:', data.user?.email || '(без email)');
+    return { user: data.user, error: null };
 }
 
 /**
@@ -434,11 +313,6 @@ export function switchAuthTab(tab) {
 
     if (errEl) errEl.classList.add('hidden');
 
-    // Подсказки и кнопка повторной отправки письма относятся к конкретной
-    // вкладке, поэтому при переключении их убираем (кто вызвал — тот и вернёт).
-    document.getElementById('auth-note')?.classList.add('hidden');
-    document.getElementById('resend-confirm-btn')?.classList.add('hidden');
-
     if (tab === 'login') {
         tabLogin.className = 'flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow';
         tabRegister.className = 'flex-1 py-2 text-sm font-semibold rounded-md transition text-gray-600 hover:text-gray-800';
@@ -472,48 +346,10 @@ export function initLoginScreen(options = {}) {
     const loginForm = document.getElementById('login-form');
     const registerForm = document.getElementById('register-form');
     const errorEl = document.getElementById('login-error');
-    const noteEl = document.getElementById('auth-note');
-    const resendBtn = document.getElementById('resend-confirm-btn');
-
-    // Email последней попытки: по нему кнопка «отправить письмо ещё раз»
-    // работает, даже если сотрудник уже переключился на вкладку регистрации.
-    let lastAttemptedEmail = '';
 
     if (!authScreen || !loginForm || !registerForm) {
         log.error('Не найдены элементы экрана логина');
         return;
-    }
-
-    /** Красная строка ошибки под формой. */
-    function showError(message) {
-        if (!errorEl) return;
-        errorEl.textContent = message;
-        errorEl.classList.remove('hidden');
-    }
-
-    /**
-     * Поясняющая строка под формой.
-     * kind: 'error' — красная, 'ok' — зелёная, иначе — янтарная.
-     */
-    function showNote(message, kind = 'info') {
-        if (!noteEl) return;
-        const color = kind === 'error' ? 'text-red-500'
-            : kind === 'ok' ? 'text-green-700'
-            : 'text-amber-700';
-        noteEl.className = `text-xs mt-3 text-center ${color}`;
-        noteEl.textContent = message;
-    }
-
-    function hideResendButton() {
-        if (resendBtn) resendBtn.classList.add('hidden');
-    }
-
-    // ----- Результат клика по ссылке из письма-подтверждения -----
-    const redirectNotice = readAuthRedirectNotice();
-    if (redirectNotice) {
-        switchAuthTab('login');   // она прячет подсказки, поэтому сообщение — после неё
-        if (redirectNotice.type === 'error') showError(redirectNotice.message);
-        else showNote(redirectNotice.message, 'ok');
     }
 
     // ----- Проверка сессии при загрузке -----
@@ -554,24 +390,12 @@ export function initLoginScreen(options = {}) {
         const { user, error } = await signIn(email, password);
 
         if (error) {
-            lastAttemptedEmail = email;
-            showError(describeAuthError(error.message));
-
-            // Причина «Email not confirmed» — почти всегда недошедшее письмо,
-            // поэтому сразу предлагаем отправить его повторно.
-            if (/email not confirmed/i.test(error.message)) {
-                if (resendBtn) resendBtn.classList.remove('hidden');
-            } else {
-                hideResendButton();
-            }
-
+            errorEl.textContent = 'Ошибка: ' + error.message;
+            errorEl.classList.remove('hidden');
             btn.disabled = false;
             btn.textContent = 'Войти';
             return;
         }
-
-        lastAttemptedEmail = '';
-        hideResendButton();
 
         const access = await checkEmployeeAccess();
 
@@ -615,35 +439,14 @@ export function initLoginScreen(options = {}) {
         btn.disabled = true;
         btn.textContent = 'Регистрируем...';
 
-        const { user, needsConfirmation, error } = await signUp(email, password);
+        const { user, error } = await signUp(email, password);
 
         btn.disabled = false;
         btn.textContent = 'Зарегистрироваться';
 
         if (error) {
-            showError(describeAuthError(error.message));
-            return;
-        }
-
-        // Confirm email включён: сессии нет, вход возможен только после письма.
-        // Раньше приложение пыталось войти сразу и показывало «Email not confirmed».
-        if (needsConfirmation) {
-            lastAttemptedEmail = email;
-
-            switchAuthTab('login');   // прячет подсказки — показываем их после переключения
-            if (resendBtn) resendBtn.classList.remove('hidden');
-
-            const loginEmail = document.getElementById('login-email');
-            const loginPassword = document.getElementById('login-password');
-            if (loginEmail) loginEmail.value = email;
-            if (loginPassword) loginPassword.value = '';
-
-            showNote(
-                `✉️ Аккаунт ${email} создан. Подтверждение email включено, поэтому сначала откройте ` +
-                'письмо и нажмите ссылку подтверждения, затем войдите с паролем. ' +
-                'Письма нет — проверьте «Спам» и нажмите «Отправить письмо-подтверждение ещё раз».'
-            );
-            toast('Подтвердите email по ссылке из письма', 'info');
+            errorEl.textContent = 'Ошибка: ' + error.message;
+            errorEl.classList.remove('hidden');
             return;
         }
 
@@ -651,7 +454,8 @@ export function initLoginScreen(options = {}) {
         const loginResult = await signIn(email, password);
 
         if (loginResult.error) {
-            showError('Регистрация прошла, но вход не удался: ' + describeAuthError(loginResult.error.message));
+            errorEl.textContent = 'Регистрация прошла, но вход не удался: ' + loginResult.error.message;
+            errorEl.classList.remove('hidden');
             return;
         }
 
@@ -668,35 +472,6 @@ export function initLoginScreen(options = {}) {
         toast('Регистрация успешна! Добро пожаловать!', 'success');
         if (onSuccess) onSuccess(loginResult.user);
     });
-
-    // ----- Повторная отправка письма-подтверждения -----
-    if (resendBtn) {
-        resendBtn.addEventListener('click', async () => {
-            const typed = document.getElementById('login-email')?.value || '';
-            const email = typed.trim() || lastAttemptedEmail;
-
-            if (!email) {
-                showError('Сначала укажите email в форме — он нужен для повторной отправки.');
-                return;
-            }
-
-            lastAttemptedEmail = email;
-            resendBtn.disabled = true;
-            resendBtn.textContent = 'Отправляем...';
-
-            const { error } = await resendConfirmation(email);
-
-            resendBtn.disabled = false;
-            resendBtn.textContent = '✉️ Отправить письмо-подтверждение ещё раз';
-
-            if (error) {
-                showError(describeAuthError(error.message));
-                return;
-            }
-
-            showNote(`✉️ Письмо отправлено на ${email}. Проверьте входящие и папку «Спам».`, 'ok');
-        });
-    }
 
     // ----- Слежение за изменениями сессии -----
     onAuthChange((event, session) => {
