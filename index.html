@@ -326,15 +326,25 @@
             <section id="tab-cash-requests" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
                     <div>
-                        <h2 class="text-lg font-bold text-gray-800">💰 Финансы</h2>
-                        <p class="text-xs text-gray-500">Заявки на подотчёт для выполнения работ</p>
+                        <h2 class="text-lg font-bold text-gray-800" id="cashreq-tab-title">💰 Финансы</h2>
+                        <p class="text-xs text-gray-500" id="cashreq-tab-subtitle">Заявки на подотчёт для выполнения работ</p>
                     </div>
-                    <button onclick="openNewCashRequestForm()" id="create-cash-request-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
+                    <div class="flex flex-wrap gap-2">
+                        <!-- Пополнение подотчёта финансиста: директор/кассиры (право cash_issue).
+                             Кнопку показывает main.js (applyPermissionsToUI), поэтому по умолчанию скрыта. -->
+                        <button onclick="openTopUpBalanceModal()" id="btn-topup-financier"
+                                class="hidden bg-white hover:bg-emerald-50 text-[#15803d] border border-[#15803d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition">💼 Пополнить баланс финансиста</button>
+                        <button onclick="openNewCashRequestForm()" id="create-cash-request-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
+                    </div>
                 </div>
+
+                <!-- Рабочий стол финансиста: подотчёт и сумма к выдаче (остальным ролям скрыт) -->
+                <div id="financier-balance-panel" class="hidden space-y-3"></div>
 
                 <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
                     <button onclick="switchCashRequestsTab('active')" id="cashreq-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
                     <button onclick="switchCashRequestsTab('pending')" id="cashreq-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Ожидают</button>
+                    <button onclick="switchCashRequestsTab('revision')" id="cashreq-filter-revision" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">✏️ На доработке</button>
                     <button onclick="switchCashRequestsTab('approved')" id="cashreq-filter-approved" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Одобрены</button>
                     <button onclick="switchCashRequestsTab('issued')" id="cashreq-filter-issued" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выданы</button>
                     <button onclick="switchCashRequestsTab('rejected')" id="cashreq-filter-rejected" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">❌ Отклонены</button>
@@ -825,10 +835,12 @@
     <div id="new-cashreq-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800">💰 Новый финансовый запрос</h3>
+                <h3 class="text-lg font-bold text-gray-800" id="new-cashreq-modal-title">💰 Новый финансовый запрос</h3>
                 <button onclick="hideModal('new-cashreq-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="new-cashreq-form" class="space-y-4">
+                <!-- Доработка: сюда попадает причина, по которой директор вернул заявку -->
+                <p id="new-cashreq-revision-hint" class="hidden text-xs font-semibold text-orange-800 bg-orange-50 border border-orange-200 rounded-lg p-2.5"></p>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Объект: *</label>
@@ -884,6 +896,43 @@
             </div>
             <div id="cash-request-detail-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="cash-request-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
+        </div>
+    </div>
+
+    <!-- ПОПОЛНЕНИЕ ПОДОТЧЁТА ФИНАНСИСТА (директор передал деньги) -->
+    <div id="topup-balance-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800">💼 Пополнить баланс финансиста</h3>
+                <button onclick="hideModal('topup-balance-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <p class="text-xs text-gray-500 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
+                💡 Сумма зачисляется на подотчёт финансиста и ни к какому объекту не привязывается.
+                Из этого подотчёта он выдаёт деньги по одобренным заявкам.
+            </p>
+            <form id="topup-balance-form" class="space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Финансист: *</label>
+                    <select id="topup-balance-employee" required
+                            class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <option value="">— Выбери финансиста —</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Сумма, грн: *</label>
+                    <input type="number" step="0.01" min="0.01" id="topup-balance-amount" required placeholder="Например: 50000"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Комментарий:</label>
+                    <input type="text" id="topup-balance-comment" placeholder="Например: Передал наличными"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💼 Пополнить</button>
+                    <button type="button" onclick="hideModal('topup-balance-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                </div>
+            </form>
         </div>
     </div>
 

@@ -5,6 +5,10 @@
 import { db } from '../database.js';
 import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal, roundMoney, isExtraSectionName } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
+// Заявки на финансирование: прораб видит их на своём рабочем экране рядом
+// с задачами. loadCashRequests() наполняет кэш модуля, из которого берём
+// свои заявки — карточки открываются тем же окном openCashRequestDetail().
+import { loadCashRequests, getCashRequestsCache } from './cash-requests.js';
 
 let materialOverrunRowsCache = [];
 
@@ -115,6 +119,96 @@ function renderForemanTasks(tasks, projects) {
             </section>
         `;
     }).join('');
+}
+
+// =====================================================================
+// МОИ ЗАЯВКИ НА ФИНАНСИРОВАНИЕ (рабочий экран прораба и ПТО)
+// =====================================================================
+// Заявка, которую директор вернул на доработку, появляется здесь вместе
+// с причиной — прораб правит её и отправляет снова. Одобренные заявки тоже
+// видны: сотрудник знает, что деньги уже на пути к нему.
+
+const CASH_REQUEST_BADGES = {
+    'revision': { label: '✏️ Требует доработки', cls: 'bg-orange-100 text-orange-800', border: 'border-orange-300' },
+    'approved': { label: '🟡 Одобрено — ожидает выдачи', cls: 'bg-yellow-100 text-yellow-800', border: 'border-yellow-300' },
+    'pending':  { label: '⏳ На согласовании у директора', cls: 'bg-red-100 text-red-700', border: 'border-gray-200' },
+    'issued':   { label: '🟢 Выдано', cls: 'bg-green-100 text-green-700', border: 'border-emerald-200' }
+};
+
+/** Порядок вывода: сначала то, что требует внимания сотрудника. */
+const CASH_REQUEST_ORDER = ['revision', 'approved', 'pending', 'issued'];
+
+function renderMyCashRequests(requests) {
+    const mine = (requests || []).filter(Boolean);
+
+    const groups = CASH_REQUEST_ORDER.map(status => ({
+        status,
+        // Выданные показываем только последние — это история, а не работа
+        items: mine.filter(req => req.status === status).slice(0, status === 'issued' ? 5 : 20)
+    })).filter(group => group.items.length > 0);
+
+    const activeCount = mine.filter(req => ['revision', 'approved', 'pending'].includes(req.status)).length;
+
+    const cards = groups.flatMap(group => group.items.map(req => {
+        const badge = CASH_REQUEST_BADGES[group.status];
+        const projectName = req.project?.name || '—';
+        const approverName = req.approver?.name || '';
+
+        const hint = req.status === 'revision'
+            ? (req.rejection_reason
+                ? `<p class="mt-2 rounded-lg border border-orange-200 bg-orange-50 p-2 text-[11px] font-semibold text-orange-800">✏️ Причина доработки: ${escapeHtml(req.rejection_reason)}</p>`
+                : '<p class="mt-2 text-[11px] text-gray-500">✏️ Директор вернул заявку — исправьте её и отправьте снова.</p>')
+            : req.status === 'approved'
+                ? `<p class="mt-2 text-[11px] text-gray-500">💰 Одобрил${approverName ? ' ' + escapeHtml(approverName) : ''} — деньги выдаёт финансист.</p>`
+                : req.status === 'issued'
+                    ? '<p class="mt-2 text-[11px] text-gray-500">Деньги зачислены в ваш подотчёт (см. «Авансовый отчёт»).</p>'
+                    : '<p class="mt-2 text-[11px] text-gray-500">Ждёт решения директора.</p>';
+
+        const editBtn = req.status === 'revision'
+            ? `<div class="mt-2 flex justify-end">
+                    <button type="button" onclick="window.openCashRequestEdit(${req.id})"
+                            class="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-600">
+                        ✏️ Исправить и отправить
+                    </button>
+               </div>`
+            : '';
+
+        return `
+            <div class="rounded-lg border ${badge.border} p-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" onclick="window.openCashRequestDetail(${req.id})"
+                                class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(req.request_number)}</button>
+                        <span class="rounded px-1.5 py-0.5 text-[10px] font-bold ${badge.cls}">${badge.label}</span>
+                    </div>
+                    <span class="text-sm font-bold text-[#166534]">${formatMoney(req.total_sum)}</span>
+                </div>
+                <p class="mt-1 text-[11px] text-gray-500">🏗 ${escapeHtml(projectName)}${req.section?.name ? ' · ' + escapeHtml(req.section.name) : ''}${req.created_at ? ' · 📅 ' + formatDate(req.created_at) : ''}</p>
+                ${hint}
+                ${editBtn}
+            </div>
+        `;
+    })).join('');
+
+    const createBtn = can('cash_expense_self')
+        ? `<button type="button" onclick="window.openNewCashRequestForm()"
+                   class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">➕ Создать заявку</button>`
+        : '';
+
+    return `
+        <section class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+                <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold text-gray-800">💰 Мои заявки на финансирование</h3>
+                    <span class="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-800">${activeCount}</span>
+                </div>
+                ${createBtn}
+            </div>
+            <div class="mt-2 space-y-2">
+                ${cards || '<p class="py-3 text-sm text-gray-500">Заявок на финансирование нет. Нажмите «➕ Создать заявку», если нужны деньги на работы.</p>'}
+            </div>
+        </section>
+    `;
 }
 
 function renderEmployeeBalances(balances, employees) {
@@ -484,11 +578,15 @@ export async function loadDashboard() {
                     filters: { assignee_employee_id: employee.id },
                     orderBy: { column: 'created_at', asc: false }
                 }),
-                db.select('projects', { select: 'id, name, foreman_id', filters: { foreman_id: employee.id } })
+                db.select('projects', { select: 'id, name, foreman_id', filters: { foreman_id: employee.id } }),
+                // Заявки на финансирование наполняют кэш модуля cash-requests:
+                // из него же открываются карточки заявок (openCashRequestDetail)
+                loadCashRequests()
             ]);
 
             const projectIds = new Set((projectsResult.data || []).map(project => project.id));
             const foremanTasks = (tasksResult.data || []).filter(task => projectIds.has(task.project_id));
+            const myCashRequests = getCashRequestsCache().filter(req => req.employee_id === employee.id);
 
             container.innerHTML = `
                 <div class="w-full min-w-0 space-y-4">
@@ -500,6 +598,7 @@ export async function loadDashboard() {
                         </div>
                         <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
                     </div>
+                    ${renderMyCashRequests(myCashRequests)}
                     <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
                         ${renderForemanTasks(foremanTasks, projectsResult.data || [])}
                     </div>
@@ -571,7 +670,9 @@ export async function loadDashboard() {
         db.select('tasks', { select: 'id, title, project_id, status, deadline, created_at' }),
         db.select('orders', { select: 'id, project_id, request_number, status, created_at' }),
         db.select('cash_operations', { select: 'id, employee_id, project_id, operation_type, amount, operation_date, created_at', orderBy: { column: 'created_at', asc: false }, limit: 20 }),
-        db.select('employees', { select: 'id, name, position' })
+        db.select('employees', { select: 'id, name, position' }),
+        // Свои заявки на финансирование — блок на рабочем экране (кэш модуля)
+        loadCashRequests()
     ]);
 
     const allProjects = projectsResult.data || [];
@@ -616,6 +717,8 @@ export async function loadDashboard() {
                 ${renderMetric('💰', 'Задолженность', formatMoney(debt), isForeman ? 'Ваш подотчёт' : 'По подотчётам сотрудников', debt > 0 ? 'amber' : 'emerald')}
                 ${renderMetric('⏰', 'Просроченные задачи', overdueTasks.length, `Всего задач: ${tasks.length}`, overdueTasks.length ? 'red' : 'emerald')}
             </div>
+
+            ${renderMyCashRequests(getCashRequestsCache().filter(req => req.employee_id === employee.id))}
 
             <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
                 <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-1">

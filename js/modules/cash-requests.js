@@ -1,18 +1,27 @@
 // =====================================================================
 // МОДУЛЬ: ЗАЯВКИ ФИНАНСОВ (на выполнение работ)
 // =====================================================================
-// Прораб создаёт заявку → кассир одобряет → выдаёт деньги.
+// Прораб создаёт заявку → директор согласует → финансист выдаёт деньги.
 //
 // Статусы:
-//   pending   — 🔴 Ожидает
-//   approved  — 🟡 Одобрено
-//   rejected  — ❌ Отклонено
-//   issued    — 🟢 Выдано
+//   pending   — 🔴 Ожидает        (ждёт решения директора)
+//   approved  — 🟡 Одобрено       (директор согласовал, ждёт выдачи)
+//   revision  — ✏️ На доработке    (директор вернул автору с причиной)
+//   rejected  — ❌ Отклонено       (директор отказал, причина обязательна)
+//   issued    — 🟢 Выдано         (деньги выданы, подотчёт получателя пополнен)
+//
+// Причина возврата и причина отказа хранятся в одной колонке
+// rejection_reason: смысл однозначен по статусу заявки, а новой колонки
+// и миграции базы не требуется. При повторной отправке причина стирается.
 //
 // Права:
-//   - Создание: ВСЕ
-//   - Просмотр: кассиры — все; остальные — только свои
-//   - Обработка: кассиры (Админ/Директор/Гл. инженер)
+//   - Создание: ВСЕ (у кого есть cash_expense_self)
+//   - Просмотр: кассиры — все; финансист — одобренные и выданные;
+//               остальные — только свои
+//   - Согласование (одобрить / на доработку / отклонить): process_cash_request
+//     (Админ, Директор, Гл. инженер)
+//   - Выдача «Выдано»: issue_cash_request (Финансист) либо process_cash_request
+//     (кассиры). У финансиста сумма списывается с ЕГО подотчёта.
 // =====================================================================
 
 import { db } from '../database.js';
@@ -20,7 +29,8 @@ import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatMoney, parseNumber, roundMoney
 } from '../utils.js';
-import { can, getEmployee, canSeeTab, canSeeHeaderButton } from '../permissions.js';
+import { can, getEmployee, getRole, canSeeTab, canSeeHeaderButton } from '../permissions.js';
+import { loadBalance, formatBalance } from './cash.js';
 import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
@@ -28,30 +38,61 @@ import { fillSectionsSelect } from './sections.js';
 // =====================================================================
 
 let cashRequestsCache = [];
-let currentFilter = 'active';   // 'active' | 'pending' | 'approved' | 'issued' | 'rejected' | 'all'
+let currentFilter = 'active';   // 'active' | 'pending' | 'revision' | 'approved' | 'issued' | 'rejected' | 'all'
 let currentRequestId = null;
+// id заявки, которую автор дорабатывает в форме (null — создаётся новая)
+let editingRequestId = null;
 
 // =====================================================================
 // ПРАВА
 // =====================================================================
 
 /**
- * Может ли текущий пользователь обрабатывать заявки (одобрять/выдавать)?
+ * Может ли текущий пользователь СОГЛАСОВЫВАТЬ заявки
+ * (одобрить / вернуть на доработку / отклонить)?
  */
 function canProcessCashRequest() {
     return can('process_cash_request');
 }
 
 /**
+ * Может ли текущий пользователь выдавать деньги по одобренной заявке.
+ * Финансист — по праву issue_cash_request, кассиры — как и раньше,
+ * по process_cash_request (они согласуют и выдают сами).
+ */
+function canIssueCashRequest() {
+    return can('issue_cash_request') || can('process_cash_request');
+}
+
+/** Финансист платит из своего подотчёта, остальные выдают деньги фирмы. */
+function isFinancier() {
+    return getRole() === 'Финансист';
+}
+
+/**
  * Видит ли текущий пользователь эту заявку?
- * Кассиры — все. Остальные — только свои.
+ * Кассиры — все. Финансист — только одобренные и выданные (его рабочий стол).
+ * Остальные — только свои.
  */
 function canSeeCashRequest(req) {
     const emp = getEmployee();
     if (!emp) return false;
 
+    if (isFinancier()) {
+        return req.status === 'approved' || req.status === 'issued';
+    }
+
     if (canProcessCashRequest()) return true;
     return req.employee_id === emp.id;
+}
+
+/**
+ * Может ли текущий пользователь доработать эту заявку
+ * (она его и директор вернул её с причиной)?
+ */
+function canEditCashRequest(req) {
+    const emp = getEmployee();
+    return !!emp && req.employee_id === emp.id && req.status === 'revision';
 }
 
 /**
@@ -115,6 +156,78 @@ export async function loadCashRequests() {
     log.info(`Загружено заявок финансов: ${cashRequestsCache.length}`);
     renderCashRequests();
     updateCashRequestsNavButton();
+    await renderFinancierPanel();
+}
+
+/**
+ * Заявки, видимые текущему пользователю (кэш модуля).
+ * Нужен дашборду прораба: там карточки открываются тем же окном
+ * openCashRequestDetail(), которое ищет заявку в этом кэше.
+ */
+export function getCashRequestsCache() {
+    return cashRequestsCache;
+}
+
+/**
+ * Перерисовывает рабочий экран, если он открыт. Прораб создаёт и дорабатывает
+ * заявки прямо с дашборда, поэтому после сохранения блок «Мои заявки на
+ * финансирование» не должен показывать старый статус.
+ * Дашборд не трогаем, когда открыт другой раздел (иначе лишний запрос).
+ */
+async function refreshDashboardIfVisible() {
+    if (window.AppState?.currentTab !== 'tasks') return;
+    if (typeof window.loadDashboard !== 'function') return;
+
+    try {
+        await window.loadDashboard();
+    } catch (err) {
+        log.warn('Не удалось обновить рабочий экран:', err?.message || err);
+    }
+}
+
+/**
+ * Панель «Рабочий стол финансиста»: его подотчёт и сколько денег нужно
+ * выдать по одобренным заявкам. У остальных ролей блок скрыт.
+ */
+async function renderFinancierPanel() {
+    const panel = document.getElementById('financier-balance-panel');
+    if (!panel) return;
+
+    if (!isFinancier()) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+
+    // У финансиста раздел заявок — это его рабочий стол, поэтому заголовок свой
+    const title = document.getElementById('cashreq-tab-title');
+    const subtitle = document.getElementById('cashreq-tab-subtitle');
+    if (title) title.textContent = '💼 Рабочий стол финансиста';
+    if (subtitle) subtitle.textContent = 'Одобренные директором заявки: выдать деньги и отметить «Выдано»';
+
+    const emp = getEmployee();
+    const { balance } = emp ? await loadBalance(emp.id) : { balance: 0 };
+    const formatted = formatBalance(balance);
+
+    const approved = cashRequestsCache.filter(r => r.status === 'approved');
+    const toIssue = roundMoney(approved.reduce((sum, r) => sum + (Number(r.total_sum) || 0), 0));
+
+    panel.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+            <div>
+                <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">💰 Мой подотчёт</p>
+                <p class="${formatted.color} text-2xl font-bold">${formatted.icon} ${formatted.text}</p>
+                <p class="mt-1 text-[11px] text-gray-500">Пополняет директор: кнопка «💼 Пополнить баланс финансиста» в этом разделе.</p>
+            </div>
+            <div class="text-right">
+                <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">🟡 К выдаче</p>
+                <p class="text-2xl font-bold text-gray-800">${formatMoney(toIssue)}</p>
+                <p class="mt-1 text-[11px] text-gray-500">Одобренных заявок: ${approved.length}</p>
+            </div>
+        </div>
+    `;
+
+    panel.classList.remove('hidden');
 }
 
 // =====================================================================
@@ -125,9 +238,9 @@ function getFilteredCashRequests() {
     if (currentFilter === 'all') return cashRequestsCache;
 
     if (currentFilter === 'active') {
-        // Активные: pending + approved
-        return cashRequestsCache.filter(r => 
-            r.status === 'pending' || r.status === 'approved'
+        // Активные: ждут решения директора, вернулись на доработку, одобрены
+        return cashRequestsCache.filter(r =>
+            r.status === 'pending' || r.status === 'revision' || r.status === 'approved'
         );
     }
 
@@ -137,7 +250,7 @@ function getFilteredCashRequests() {
 export function switchCashRequestsTab(filter) {
     currentFilter = filter;
 
-    const filters = ['active', 'pending', 'approved', 'issued', 'rejected', 'all'];
+    const filters = ['active', 'pending', 'revision', 'approved', 'issued', 'rejected', 'all'];
     filters.forEach(f => {
         const btn = document.getElementById(`cashreq-filter-${f}`);
         if (!btn) return;
@@ -280,7 +393,7 @@ export async function openCashRequestDetail(id) {
             ${req.comment ? `<p><strong>📝 Комментарий:</strong> ${escapeHtml(req.comment)}</p>` : ''}
             ${approverName ? `<p><strong>✅ Обработал:</strong> ${escapeHtml(approverName)}</p>` : ''}
             ${req.approved_at ? `<p><strong>📅 Обработано:</strong> ${formatDate(req.approved_at)}</p>` : ''}
-            ${req.rejection_reason ? `<p><strong>❌ Причина отклонения:</strong> ${escapeHtml(req.rejection_reason)}</p>` : ''}
+            ${req.rejection_reason ? `<p><strong>${req.status === 'revision' ? '✏️ Причина доработки' : '❌ Причина отклонения'}:</strong> ${escapeHtml(req.rejection_reason)}</p>` : ''}
         </div>
 
         <div class="space-y-2 pt-2">
@@ -300,22 +413,29 @@ function renderCashRequestActions(req) {
     if (!actionsContainer) return;
 
     let buttonsHtml = '';
-    const isCashier = canProcessCashRequest();
 
-    // Кассир: одобрить/отклонить (статус pending)
-    if (req.status === 'pending' && isCashier) {
+    // Директор (кассир): три решения по заявке, которая ждёт согласования
+    if (req.status === 'pending' && canProcessCashRequest()) {
         buttonsHtml += `<button onclick="window.approveCashRequest(${req.id})" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✅ Одобрить</button>`;
+        buttonsHtml += `<button onclick="window.requestRevisionCashRequest(${req.id})" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✏️ На доработку</button>`;
         buttonsHtml += `<button onclick="window.rejectCashRequest(${req.id})" class="bg-red-500 hover:bg-red-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">❌ Отклонить</button>`;
     }
 
-    // Кассир: выдать (статус approved)
-    if (req.status === 'approved' && isCashier) {
-        buttonsHtml += `<button onclick="window.issueCashRequest(${req.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">💵 Выдать</button>`;
+    // Выдача денег по одобренной заявке. Финансист платит со своего
+    // подотчёта, поэтому у него кнопка называется «Выдано».
+    if (req.status === 'approved' && canIssueCashRequest()) {
+        const issueLabel = isFinancier() ? '💵 Выдано' : '💵 Выдать';
+        buttonsHtml += `<button onclick="window.issueCashRequest(${req.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${issueLabel}</button>`;
     }
 
-    // Автор: удалить (только свои новые pending)
+    // Автор: доработать заявку, которую директор вернул с причиной
+    if (canEditCashRequest(req)) {
+        buttonsHtml += `<button onclick="window.openCashRequestEdit(${req.id})" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✏️ Исправить и отправить</button>`;
+    }
+
+    // Автор: удалить заявку, которую директор ещё не обработал
     const emp = getEmployee();
-    if (req.status === 'pending' && emp && req.employee_id === emp.id) {
+    if (emp && req.employee_id === emp.id && (req.status === 'pending' || req.status === 'revision')) {
         buttonsHtml += `<button onclick="window.deleteCashRequest(${req.id})" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
     }
 
@@ -328,10 +448,11 @@ function renderCashRequestActions(req) {
 
 export function getCashRequestStatusInfo(status) {
     const map = {
-        'pending':  { label: '🔴 Ожидает',   bg: 'bg-red-100',    color: 'text-red-700',    border: 'border-red-400' },
-        'approved': { label: '🟡 Одобрено',  bg: 'bg-yellow-100', color: 'text-yellow-800', border: 'border-yellow-400' },
-        'issued':   { label: '🟢 Выдано',    bg: 'bg-green-100',  color: 'text-green-700',  border: 'border-[#15803d]' },
-        'rejected': { label: '❌ Отклонено', bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-400' }
+        'pending':  { label: '🔴 Ожидает',      bg: 'bg-red-100',    color: 'text-red-700',    border: 'border-red-400' },
+        'revision': { label: '✏️ На доработке', bg: 'bg-orange-100', color: 'text-orange-800', border: 'border-orange-400' },
+        'approved': { label: '🟡 Одобрено',     bg: 'bg-yellow-100', color: 'text-yellow-800', border: 'border-yellow-400' },
+        'issued':   { label: '🟢 Выдано',       bg: 'bg-green-100',  color: 'text-green-700',  border: 'border-[#15803d]' },
+        'rejected': { label: '❌ Отклонено',    bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-400' }
     };
     return map[status] || { label: status, bg: 'bg-gray-100', color: 'text-gray-700', border: 'border-gray-300' };
 }
@@ -374,14 +495,34 @@ export function updateCreateCashRequestButton() {
 // =====================================================================
 
 /**
- * Открывает форму создания заявки финансов.
+ * Открывает форму заявки финансов.
+ * @param {number|null} requestId — id заявки, которую автор дорабатывает
+ *   (статус «На доработке»). Без аргумента — создание новой заявки.
  */
-export async function openNewCashRequestForm() {
+export async function openNewCashRequestForm(requestId = null) {
     const emp = getEmployee();
     if (!emp) {
         toast('Ваш аккаунт не привязан к сотруднику', 'warning');
         return;
     }
+
+    // Доработка: только своя заявка и только возвращённая директором
+    let editing = null;
+    if (requestId) {
+        editing = cashRequestsCache.find(r => r.id === requestId) || null;
+
+        if (!editing) {
+            toast('Заявка не найдена', 'error');
+            return;
+        }
+        if (!canEditCashRequest(editing)) {
+            toast('Доработать можно только свою заявку в статусе «На доработке»', 'error');
+            return;
+        }
+    }
+
+    editingRequestId = editing ? editing.id : null;
+    setCashRequestFormMode(editing);
 
     // Сбрасываем форму
     document.getElementById('new-cashreq-project').value = '';
@@ -390,14 +531,66 @@ export async function openNewCashRequestForm() {
 
     const itemsContainer = document.getElementById('new-cashreq-items');
     itemsContainer.innerHTML = '';
-    addCashRequestItemRow();
 
     // Загружаем объекты (все — любой может создать заявку)
     await loadProjectsForCashRequest();
 
+    if (editing) {
+        // Подставляем то, что уже было в заявке: автор правит, а не вводит заново
+        document.getElementById('new-cashreq-project').value = String(editing.project_id || '');
+        await loadSectionsForCashRequest();
+        document.getElementById('new-cashreq-section').value = String(editing.section_id || '');
+        document.getElementById('new-cashreq-comment').value = editing.comment || '';
+
+        const items = (editing._items || []).slice().sort((a, b) => (a.id || 0) - (b.id || 0));
+        if (items.length > 0) items.forEach(item => addCashRequestItemRow(item));
+        else addCashRequestItemRow();
+    } else {
+        addCashRequestItemRow();
+    }
+
     recalcCashRequestTotal();
 
     showModal('new-cashreq-modal');
+}
+
+/**
+ * «✏️ Исправить и отправить»: закрывает карточку заявки и открывает форму
+ * доработки. Используется и с дашборда прораба, и из карточки заявки.
+ */
+export function openCashRequestEdit(id) {
+    hideModal('cash-request-detail-modal');
+    return openNewCashRequestForm(id);
+}
+
+/**
+ * Переключает окно заявки между «новой» и «доработкой»: заголовок, подпись
+ * кнопки сохранения и напоминание о причине возврата.
+ */
+function setCashRequestFormMode(editing) {
+    const title = document.getElementById('new-cashreq-modal-title');
+    const submit = document.getElementById('new-cashreq-form')?.querySelector('button[type="submit"]');
+    const hint = document.getElementById('new-cashreq-revision-hint');
+
+    if (title) {
+        title.textContent = editing
+            ? `✏️ Доработка заявки ${editing.request_number}`
+            : '💰 Новый финансовый запрос';
+    }
+
+    if (submit) {
+        submit.textContent = editing ? '💾 Сохранить и отправить' : '💾 Создать заявку';
+    }
+
+    if (hint) {
+        if (editing && editing.rejection_reason) {
+            hint.textContent = 'Причина возврата от директора: ' + editing.rejection_reason;
+            hint.classList.remove('hidden');
+        } else {
+            hint.textContent = '';
+            hint.classList.add('hidden');
+        }
+    }
 }
 
 /**
@@ -442,8 +635,10 @@ export async function loadSectionsForCashRequest() {
 
 /**
  * Добавляет строку позиции (работы) в форму.
+ * @param {Object|null} item — позиция для доработки заявки: подставляем
+ *   прежние значения, чтобы автор правил, а не вводил всё заново.
  */
-export function addCashRequestItemRow() {
+export function addCashRequestItemRow(item = null) {
     const container = document.getElementById('new-cashreq-items');
     if (!container) return;
 
@@ -489,6 +684,34 @@ export function addCashRequestItemRow() {
     `;
 
     container.appendChild(row);
+
+    // Доработка: подставляем то, что было в заявке
+    if (item) {
+        const nameInput = row.querySelector('.cashreq-item-name');
+        const qtyInput = row.querySelector('.cashreq-item-qty');
+        const unitSelect = row.querySelector('.cashreq-item-unit');
+        const priceInput = row.querySelector('.cashreq-item-price');
+        const sumEl = row.querySelector('.cashreq-item-sum');
+
+        if (nameInput) nameInput.value = item.name || '';
+        if (qtyInput) qtyInput.value = item.qty ?? '';
+        if (priceInput) priceInput.value = item.unit_price ?? '';
+
+        // Единица измерения могла быть в заявке не из списка — тогда добавим её
+        if (unitSelect && item.unit) {
+            unitSelect.value = item.unit;
+            if (unitSelect.value !== item.unit) {
+                const option = document.createElement('option');
+                option.value = item.unit;
+                option.textContent = item.unit;
+                unitSelect.appendChild(option);
+                unitSelect.value = item.unit;
+            }
+        }
+
+        if (sumEl) sumEl.textContent = formatMoney(item.total_price);
+    }
+
     recalcCashRequestTotal();
 }
 
@@ -553,64 +776,62 @@ export async function saveNewCashRequest(event) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Сохраняем...';
 
+    // Кнопку возвращаем в исходный вид в finally. Раньше после успешного
+    // сохранения она оставалась «Сохраняем...» и выключенной, поэтому
+    // следующая попытка молча не отправлялась — форма выглядела зависшей.
+    try {
+        const saved = await createCashRequest(form, emp);
+        if (saved) {
+            await loadCashRequests();   // список обновляем после закрытия окна
+            await refreshDashboardIfVisible();
+        }
+
+    } catch (err) {
+        log.error('Исключение при сохранении заявки финансов:', err);
+        toast('Не удалось сохранить заявку: ' + (err?.message || 'неизвестная ошибка'), 'error');
+
+    } finally {
+        submitBtn.disabled = false;
+        // Подпись зависит от режима окна: создание новой заявки или доработка
+        submitBtn.textContent = editingRequestId ? '💾 Сохранить и отправить' : '💾 Создать заявку';
+    }
+}
+
+/**
+ * Собирает и сохраняет заявку финансов от имени сотрудника emp: создаёт
+ * новую или дорабатывает возвращённую (editingRequestId).
+ * Возвращает true, если заявка сохранена. Кнопку не трогает — это дело
+ * saveNewCashRequest, иначе при сбое она осталась бы выключенной.
+ */
+async function createCashRequest(form, emp) {
     const projectId = parseInt(document.getElementById('new-cashreq-project').value, 10);
     const sectionId = parseInt(document.getElementById('new-cashreq-section').value, 10);
     const comment = document.getElementById('new-cashreq-comment').value.trim();
 
     if (!projectId) {
         toast('Выбери объект', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
     if (!sectionId) {
         toast('Выбери раздел сметы', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
 
-    // Собираем позиции
-    const rows = document.querySelectorAll('.cashreq-item-row');
-    const items = [];
-    let totalSum = 0;
+    const collected = collectCashRequestItems();
+    if (!collected) return false;   // тост уже показан
 
-    for (const row of rows) {
-        const name = row.querySelector('.cashreq-item-name')?.value.trim();
-        const qty = parseNumber(row.querySelector('.cashreq-item-qty')?.value);
-        const unit = row.querySelector('.cashreq-item-unit')?.value || 'м²';
-        const unitPrice = parseNumber(row.querySelector('.cashreq-item-price')?.value);
+    const { items, totalSum } = collected;
 
-        if (!name) {
-            toast('Заполни вид работ во всех позициях', 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = '💾 Создать заявку';
-            return;
-        }
-        if (qty <= 0 || unitPrice <= 0) {
-            toast('Объём и цена должны быть больше нуля', 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = '💾 Создать заявку';
-            return;
-        }
-
-        const totalPrice = roundMoney(qty * unitPrice);
-        totalSum = roundMoney(totalSum + totalPrice);
-
-        items.push({
-            name,
-            qty,
-            unit,
-            unit_price: unitPrice,
-            total_price: totalPrice
+    // Доработка: заявка уже есть — обновляем её и снова отправляем директору
+    if (editingRequestId) {
+        return await updateCashRequest({
+            requestId: editingRequestId,
+            projectId,
+            sectionId,
+            comment,
+            items,
+            totalSum
         });
-    }
-
-    if (items.length === 0) {
-        toast('Добавь хотя бы одну позицию', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
     }
 
     // Номер заявки генерируем от МАКСИМУМА за год, а не от COUNT(*):
@@ -646,12 +867,19 @@ export async function saveNewCashRequest(event) {
     if (reqError) {
         log.error('Ошибка создания заявки:', reqError.message);
         toast('Не удалось создать заявку: ' + reqError.message, 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
 
-    const requestId = reqData.id;
+    // База может не вернуть созданную строку — например, если прокси отдал
+    // ответ без тела. Без проверки здесь был бы TypeError, а кнопка молча
+    // оставалась бы «Сохраняем...» и следующая попытка не отправлялась.
+    const requestId = reqData ? reqData.id : null;
+
+    if (!requestId) {
+        log.error('База не вернула созданную заявку (пустой ответ на INSERT)');
+        toast('Заявка не сохранилась: база не вернула запись. Повторите попытку.', 'error');
+        return false;
+    }
 
     // Создаём позиции
     const itemsPayload = items.map(it => ({
@@ -675,8 +903,117 @@ export async function saveNewCashRequest(event) {
 
     hideModal('new-cashreq-modal');
     form.reset();
+    editingRequestId = null;
+    setCashRequestFormMode(null);
 
-    await loadCashRequests();
+    return true;
+}
+
+/**
+ * Собирает позиции из формы заявки.
+ * @returns {{items: Array, totalSum: number}|null}
+ *   null — данные неполные, пользователю уже показан тост.
+ */
+function collectCashRequestItems() {
+    const rows = document.querySelectorAll('.cashreq-item-row');
+    const items = [];
+    let totalSum = 0;
+
+    for (const row of rows) {
+        const name = row.querySelector('.cashreq-item-name')?.value.trim();
+        const qty = parseNumber(row.querySelector('.cashreq-item-qty')?.value);
+        const unit = row.querySelector('.cashreq-item-unit')?.value || 'м²';
+        const unitPrice = parseNumber(row.querySelector('.cashreq-item-price')?.value);
+
+        if (!name) {
+            toast('Заполни вид работ во всех позициях', 'error');
+            return null;
+        }
+        if (qty <= 0 || unitPrice <= 0) {
+            toast('Объём и цена должны быть больше нуля', 'error');
+            return null;
+        }
+
+        const totalPrice = roundMoney(qty * unitPrice);
+        totalSum = roundMoney(totalSum + totalPrice);
+
+        items.push({
+            name,
+            qty,
+            unit,
+            unit_price: unitPrice,
+            total_price: totalPrice
+        });
+    }
+
+    if (items.length === 0) {
+        toast('Добавь хотя бы одну позицию', 'error');
+        return null;
+    }
+
+    return { items, totalSum };
+}
+
+/**
+ * Доработка возвращённой заявки: позиции перезаписываются, сумма и раздел
+ * обновляются, заявка снова уходит директору (status 'pending'), а причина
+ * возврата стирается — она относилась к прошлому кругу.
+ * Номер заявки не меняется: это та же заявка, а не новая.
+ */
+async function updateCashRequest({ requestId, projectId, sectionId, comment, items, totalSum }) {
+    const requestNumber = cashRequestsCache.find(r => r.id === requestId)?.request_number || `#${requestId}`;
+
+    // 1. Позиции: старые удаляем, новые вставляем (id позиций нигде не хранятся)
+    const { error: removeError } = await db.remove('cash_request_items', { request_id: requestId });
+    if (removeError) {
+        log.error('Ошибка удаления старых позиций заявки:', removeError.message);
+        toast('Не удалось обновить позиции: ' + removeError.message, 'error');
+        return false;
+    }
+
+    const { error: itemsError } = await db.insertMany('cash_request_items', items.map(it => ({
+        request_id: requestId,
+        name: it.name,
+        unit: it.unit,
+        qty: it.qty,
+        unit_price: it.unit_price,
+        total_price: it.total_price
+    })));
+
+    if (itemsError) {
+        log.error('Ошибка сохранения позиций заявки:', itemsError.message);
+        toast('Позиции не сохранились: ' + itemsError.message, 'error');
+        return false;
+    }
+
+    // 2. Сама заявка: снова «Ожидает», решение директора сброшено
+    const { error: updateError } = await db.update('cash_requests', {
+        project_id: projectId,
+        section_id: sectionId,
+        comment: comment || null,
+        total_sum: totalSum,
+        status: 'pending',
+        approved_by_employee_id: null,
+        approved_at: null,
+        rejection_reason: null
+    }, { id: requestId });
+
+    if (updateError) {
+        log.error('Ошибка обновления заявки:', updateError.message);
+        toast('Не удалось отправить заявку повторно: ' + updateError.message, 'error');
+        return false;
+    }
+
+    log.info('✏️ Заявка доработана и отправлена повторно:', requestNumber);
+    toast(`Заявка ${requestNumber} отправлена директору повторно`, 'success');
+
+    editingRequestId = null;
+    const form = document.getElementById('new-cashreq-form');
+    if (form) form.reset();
+    setCashRequestFormMode(null);
+    hideModal('new-cashreq-modal');
+
+    return true;
 }
 
 /**
@@ -719,6 +1056,8 @@ async function generateCashRequestNumber() {
 
 /**
  * Одобрить заявку (status: pending → approved).
+ * Причина возврата/отказа от прошлого круга стирается: заявка уходит дальше
+ * чистой.
  */
 export async function approveCashRequest(id) {
     if (!canProcessCashRequest()) {
@@ -746,7 +1085,8 @@ export async function approveCashRequest(id) {
     const { error } = await db.update('cash_requests', {
         status: 'approved',
         approved_by_employee_id: emp.id,
-        approved_at: new Date().toISOString()
+        approved_at: new Date().toISOString(),
+        rejection_reason: null
     }, { id });
 
     if (error) {
@@ -754,7 +1094,61 @@ export async function approveCashRequest(id) {
         return;
     }
 
-    toast(`Заявка ${req.request_number} одобрена`, 'success');
+    toast(`Заявка ${req.request_number} одобрена — ушла на выдачу`, 'success');
+    hideModal('cash-request-detail-modal');
+    await loadCashRequests();
+}
+
+/**
+ * Вернуть заявку автору на доработку (status: pending → revision).
+ * Причина обязательна: без неё прораб не знает, что исправлять.
+ * Хранится в rejection_reason — статус заявки однозначно говорит,
+ * возврат это или отказ (см. шапку модуля).
+ */
+export async function requestRevisionCashRequest(id) {
+    if (!canProcessCashRequest()) {
+        toast('Нет прав на обработку заявки', 'error');
+        return;
+    }
+
+    const req = cashRequestsCache.find(r => r.id === id);
+    if (!req) {
+        toast('Заявка не найдена', 'error');
+        return;
+    }
+
+    if (req.status !== 'pending') {
+        toast('Заявка уже обработана', 'warning');
+        return;
+    }
+
+    const emp = getEmployee();
+    if (!emp) {
+        toast('Ваш аккаунт не привязан', 'error');
+        return;
+    }
+
+    const reason = prompt(`Что нужно доработать в заявке ${req.request_number}?`);
+    if (reason === null) return;   // директор отменил
+
+    if (!reason.trim()) {
+        toast('Опишите причину доработки — без неё заявку не вернуть', 'warning');
+        return;
+    }
+
+    const { error } = await db.update('cash_requests', {
+        status: 'revision',
+        approved_by_employee_id: emp.id,
+        approved_at: new Date().toISOString(),
+        rejection_reason: reason.trim()
+    }, { id });
+
+    if (error) {
+        toast('Ошибка: ' + error.message, 'error');
+        return;
+    }
+
+    toast(`Заявка ${req.request_number} возвращена на доработку`, 'warning');
     hideModal('cash-request-detail-modal');
     await loadCashRequests();
 }
@@ -779,6 +1173,11 @@ export async function rejectCashRequest(id) {
     const reason = prompt(`Причина отклонения заявки ${req.request_number}:`);
     if (reason === null) return; // отменил
 
+    if (!reason.trim()) {
+        toast('Опишите причину отказа — без неё заявку не отклонить', 'warning');
+        return;
+    }
+
     const emp = getEmployee();
     if (!emp) {
         toast('Ваш аккаунт не привязан', 'error');
@@ -789,7 +1188,7 @@ export async function rejectCashRequest(id) {
         status: 'rejected',
         approved_by_employee_id: emp.id,
         approved_at: new Date().toISOString(),
-        rejection_reason: reason || null
+        rejection_reason: reason.trim()
     }, { id });
 
     if (error) {
@@ -804,10 +1203,16 @@ export async function rejectCashRequest(id) {
 
 /**
  * Выдать заявку (status: approved → issued).
- * Создаёт cash_operation типа 'issue' → увеличивает баланс сотрудника.
+ *
+ * Получателю создаётся операция 'issue' → его подотчёт увеличивается.
+ * Если деньги выдаёт ФИНАНСИСТ, та же сумма списывается с ЕГО подотчёта:
+ * представление employee_cash_balance понимает только issue / expense /
+ * return, а 'expense' здесь не годится — такая строка попала бы в «Реестр»
+ * как реальная трата, хотя выданный подотчёт тратой ещё не является
+ * (трата появится после авансового отчёта получателя).
  */
 export async function issueCashRequest(id) {
-    if (!canProcessCashRequest()) {
+    if (!canIssueCashRequest()) {
         toast('Нет прав на выдачу', 'error');
         return;
     }
@@ -835,17 +1240,33 @@ export async function issueCashRequest(id) {
         return;
     }
 
-    if (!confirm(`Выдать ${formatMoney(totalSum)} сотруднику «${req.employee?.name || '—'}»?\n\nЭто увеличит его подотчёт.`)) {
+    const recipientName = req.employee?.name || '—';
+    const operationDate = new Date().toISOString().split('T')[0];
+
+    // Финансист платит со своего подотчёта — перед выдачей показываем остаток
+    const paysFromOwnBalance = isFinancier();
+
+    if (paysFromOwnBalance) {
+        const { balance } = await loadBalance(emp.id);
+        const rest = Number(balance) || 0;
+        const balanceHint = rest < totalSum
+            ? `\n\n⚠️ На вашем подотчёте ${formatMoney(rest)} — баланс станет отрицательным (долг).`
+            : `\n\nОстаток вашего подотчёта: ${formatMoney(rest)}.`;
+
+        if (!confirm(`Выдать ${formatMoney(totalSum)} сотруднику «${recipientName}»?${balanceHint}\n\nСумма спишется с вашего подотчёта.`)) {
+            return;
+        }
+    } else if (!confirm(`Выдать ${formatMoney(totalSum)} сотруднику «${recipientName}»?\n\nЭто увеличит его подотчёт.`)) {
         return;
     }
 
-    // Создаём cash_operation типа 'issue'
+    // 1. Приход получателю: подотчёт сотрудника растёт (как было и раньше)
     const { data: operationData, error: opError } = await db.insert('cash_operations', {
         employee_id: req.employee_id,
         operation_type: 'issue',
         amount: totalSum,
         description: `Заявка ${req.request_number} — ${req.section?.name || 'работы'}`,
-        operation_date: new Date().toISOString().split('T')[0]
+        operation_date: operationDate
     });
 
     if (opError) {
@@ -854,10 +1275,27 @@ export async function issueCashRequest(id) {
         return;
     }
 
-    // Обновляем заявку
+    // 2. Финансист: списание с ЕГО подотчёта (деньги ушли получателю)
+    if (paysFromOwnBalance) {
+        const { error: debitError } = await db.insert('cash_operations', {
+            employee_id: emp.id,
+            operation_type: 'return',
+            amount: totalSum,
+            description: `Выдача по заявке ${req.request_number} — ${recipientName}`,
+            operation_date: operationDate
+        });
+
+        if (debitError) {
+            log.error('Ошибка списания с подотчёта финансиста:', debitError.message);
+            toast('Получателю записано, но с вашего подотчёта сумма не списалась', 'warning');
+        }
+    }
+
+    // 3. Заявка → «Выдано». База может не вернуть строку операции — тогда
+    // issued_operation_id останется пустым, а статус всё равно поменяем.
     const { error: reqError } = await db.update('cash_requests', {
         status: 'issued',
-        issued_operation_id: operationData.id
+        issued_operation_id: operationData?.id || null
     }, { id });
 
     if (reqError) {
@@ -871,9 +1309,8 @@ export async function issueCashRequest(id) {
     hideModal('cash-request-detail-modal');
     await loadCashRequests();
 
-    // Обновляем баланс в профиле (если это текущий пользователь)
-    const current = getEmployee();
-    if (current && current.id === req.employee_id && window.renderProfileBalance) {
+    // Обновляем баланс в профиле: у получателя он вырос, у финансиста упал
+    if (window.renderProfileBalance) {
         await window.renderProfileBalance();
     }
 }
@@ -891,8 +1328,10 @@ export async function deleteCashRequest(id) {
         return;
     }
 
-    if (req.status !== 'pending') {
-        toast('Можно удалять только заявки в статусе «Ожидает»', 'warning');
+    // Удалить можно только то, что директор ещё не обработал: «Ожидает»
+    // или вернул на доработку. По одобренным и выданным уже идут деньги.
+    if (req.status !== 'pending' && req.status !== 'revision') {
+        toast('Удалить можно только заявку «Ожидает» или «На доработке»', 'warning');
         return;
     }
 
@@ -912,6 +1351,7 @@ export async function deleteCashRequest(id) {
     toast('Заявка удалена', 'success');
     hideModal('cash-request-detail-modal');
     await loadCashRequests();
+    await refreshDashboardIfVisible();
 }
 // =====================================================================
 // ГЛОБАЛЬНЫЕ ФУНКЦИИ
@@ -920,11 +1360,13 @@ export async function deleteCashRequest(id) {
 window.openCashRequestDetail = openCashRequestDetail;
 window.switchCashRequestsTab = switchCashRequestsTab;
 window.openNewCashRequestForm = openNewCashRequestForm;
+window.openCashRequestEdit = openCashRequestEdit;
 window.loadSectionsForCashRequest = loadSectionsForCashRequest;
 window.addCashRequestItemRow = addCashRequestItemRow;
 window.removeCashRequestItemRow = removeCashRequestItemRow;
 window.recalcCashRequestTotal = recalcCashRequestTotal;
 window.approveCashRequest = approveCashRequest;
+window.requestRevisionCashRequest = requestRevisionCashRequest;
 window.rejectCashRequest = rejectCashRequest;
 window.issueCashRequest = issueCashRequest;
 window.deleteCashRequest = deleteCashRequest;

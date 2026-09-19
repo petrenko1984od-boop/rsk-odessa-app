@@ -28,7 +28,8 @@ import {
 import {
     renderProfileBalance,
     saveExpense,
-    saveReturn
+    saveReturn,
+    saveTopUpBalance
 } from './modules/cash.js';
 
 import {
@@ -58,8 +59,10 @@ import {
     recalcCashRequestTotal,
     saveNewCashRequest,
     approveCashRequest,
+    requestRevisionCashRequest,
     rejectCashRequest,
     issueCashRequest,
+    openCashRequestEdit,
     deleteCashRequest
 } from './modules/cash-requests.js';
 
@@ -208,6 +211,16 @@ function applyPermissionsToUI() {
         const allowed = can('create_order') && canSeeHeaderButton('btn-new-order');
         newOrderBtn.style.display = allowed ? '' : 'none';
     }
+
+    // «💼 Пополнить баланс финансиста» — директор и другие кассиры (cash_issue).
+    // Кнопка живёт в разделе «💰 Финансы», поэтому и показываем её здесь же:
+    // прораб/финансист её не видят.
+    const topUpBtn = document.getElementById('btn-topup-financier');
+    if (topUpBtn) {
+        const allowed = can('cash_issue');
+        topUpBtn.classList.toggle('hidden', !allowed);
+        topUpBtn.style.display = allowed ? '' : 'none';
+    }
 }
 
 // =====================================================================
@@ -349,10 +362,11 @@ export async function switchMyRequestsTab(tab) {
         (sections || []).forEach(s => { secMap[s.id] = s.name; });
 
         const statusLabels = {
-            'pending':  { text: '🔴 Ожидает',   cls: 'bg-red-100 text-red-700' },
-            'approved': { text: '🟡 Одобрено',  cls: 'bg-yellow-100 text-yellow-800' },
-            'issued':   { text: '🟢 Выдано',    cls: 'bg-green-100 text-green-700' },
-            'rejected': { text: '❌ Отклонено', cls: 'bg-gray-200 text-gray-600' }
+            'pending':  { text: '🔴 Ожидает',      cls: 'bg-red-100 text-red-700' },
+            'revision': { text: '✏️ На доработке', cls: 'bg-orange-100 text-orange-800' },
+            'approved': { text: '🟡 Одобрено',     cls: 'bg-yellow-100 text-yellow-800' },
+            'issued':   { text: '🟢 Выдано',       cls: 'bg-green-100 text-green-700' },
+            'rejected': { text: '❌ Отклонено',    cls: 'bg-gray-200 text-gray-600' }
         };
 
         container.innerHTML = requests.map(r => {
@@ -580,6 +594,9 @@ function bindForms() {
 
     const returnForm = document.getElementById('cash-return-form');
     if (returnForm) returnForm.addEventListener('submit', saveReturn);
+
+    const topUpForm = document.getElementById('topup-balance-form');
+    if (topUpForm) topUpForm.addEventListener('submit', saveTopUpBalance);
 
     // Заявки на материалы
     const newOrderForm = document.getElementById('new-order-form');

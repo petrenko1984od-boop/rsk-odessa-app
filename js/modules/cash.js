@@ -407,6 +407,104 @@ export async function addReturn(employeeId, amount, comment = '') {
     });
 }
 
+// =====================================================================
+// ПОПОЛНЕНИЕ БАЛАНСА ФИНАНСИСТА
+// =====================================================================
+// Директор передаёт финансисту деньги — они ложатся ему в подотчёт операцией
+// 'issue' БЕЗ привязки к объекту (см. addIssue). Из этого подотчёта финансист
+// выдаёт суммы по заявкам, одобренным директором (js/modules/cash-requests.js).
+
+/** Открывает окно «💼 Пополнить баланс финансиста» (право cash_issue). */
+export async function openTopUpBalanceModal() {
+    if (!requirePermission('cash_issue')) return;
+
+    const select = document.getElementById('topup-balance-employee');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">Загрузка...</option>';
+
+    const { data, error } = await db.select('employees', {
+        select: 'id, name, position, status',
+        filters: { position: 'Финансист' },
+        orderBy: { column: 'name', asc: true }
+    });
+
+    if (error) {
+        select.innerHTML = '<option value="">Ошибка загрузки</option>';
+        toast('Не удалось загрузить список финансистов', 'error');
+        return;
+    }
+
+    // Должность «Финансист» есть в справочнике (CONFIG.POSITIONS), но самого
+    // сотрудника с такой должностью в базе может ещё не быть.
+    const financiers = (data || []).filter(emp => !emp.status || emp.status === 'active');
+
+    if (financiers.length === 0) {
+        select.innerHTML = '<option value="">— нет активных финансистов —</option>';
+        toast('Сотрудника с должностью «Финансист» нет. Добавьте его в разделе «Сотрудники».', 'warning');
+    } else {
+        select.innerHTML = '<option value="">— Выбери финансиста —</option>' +
+            financiers.map(emp => `<option value="${emp.id}">${escapeHtml(emp.name)}</option>`).join('');
+
+        // Финансист обычно один — подставляем его сразу
+        if (financiers.length === 1) select.value = String(financiers[0].id);
+    }
+
+    document.getElementById('topup-balance-amount').value = '';
+    document.getElementById('topup-balance-comment').value = '';
+
+    showModal('topup-balance-modal');
+}
+
+/**
+ * Пополнение подотчёта финансиста: одна операция 'issue'.
+ * Кнопку возвращаем в рабочее состояние в finally — иначе после первой
+ * попытки форма молча не отправлялась бы (та же ловушка, что была в заявках).
+ */
+export async function saveTopUpBalance(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    const employeeId = parseInt(document.getElementById('topup-balance-employee')?.value, 10);
+    const amount = parseNumber(document.getElementById('topup-balance-amount')?.value);
+    const comment = document.getElementById('topup-balance-comment')?.value.trim();
+
+    if (!employeeId) {
+        toast('Выбери финансиста', 'error');
+        return;
+    }
+    if (!amount || amount <= 0) {
+        toast('Сумма должна быть больше нуля', 'error');
+        return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Сохраняем...';
+
+    try {
+        const { success, error } = await addIssue(employeeId, amount, comment || 'Пополнение подотчёта финансиста');
+
+        if (!success) {
+            if (error) toast('Не удалось пополнить баланс: ' + error.message, 'error');
+            return;
+        }
+
+        toast(`Подотчёт финансиста пополнен на ${formatMoney(amount)}`, 'success');
+        hideModal('topup-balance-modal');
+        form.reset();
+
+    } catch (err) {
+        log.error('Исключение при пополнении подотчёта финансиста:', err);
+        toast('Не удалось пополнить баланс: ' + (err?.message || 'неизвестная ошибка'), 'error');
+
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '💼 Пополнить';
+    }
+}
+
 async function createOperation(payload) {
     const { user } = await getCurrentUser();
 
@@ -1312,3 +1410,4 @@ window.recalcExpenseTotal = recalcExpenseTotal;
 window.loadSectionsForExpense = loadSectionsForExpense;
 window.myOpenExpense = myOpenExpense;
 window.myOpenReturn = myOpenReturn;
+window.openTopUpBalanceModal = openTopUpBalanceModal;

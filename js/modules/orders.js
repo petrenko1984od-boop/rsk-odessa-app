@@ -21,7 +21,7 @@ import {
     formatDate, formatMoney, roundMoney
 } from '../utils.js';
 import {
-    can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton
+    can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
 } from '../permissions.js';
 import { fillSectionsSelect } from './sections.js';
 
@@ -520,6 +520,28 @@ export async function saveNewOrder(event) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Сохраняем...';
 
+    // Кнопку возвращаем в исходный вид в finally: иначе после успешного
+    // сохранения (или сбоя) она остаётся «Сохраняем...» и выключенной,
+    // поэтому следующая заявка молча не отправляется.
+    try {
+        await createOrder(form);
+
+    } catch (err) {
+        log.error('Исключение при создании заявки:', err);
+        toast('Не удалось создать заявку: ' + (err?.message || 'неизвестная ошибка'), 'error');
+
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '💾 Создать заявку';
+    }
+}
+
+/**
+ * Собирает и сохраняет заявку на материалы.
+ * Кнопку не трогает — это дело saveNewOrder, иначе при сбое она осталась бы
+ * выключенной.
+ */
+async function createOrder(form) {
     const projectId = parseInt(document.getElementById('new-order-project').value, 10);
     const sectionId = parseInt(document.getElementById('new-order-section').value, 10);
     const desiredDate = document.getElementById('new-order-date').value;
@@ -527,21 +549,15 @@ export async function saveNewOrder(event) {
 
     if (!projectId) {
         toast('Выбери объект', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
     if (!sectionId) {
         toast('Выбери раздел сметы', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
     if (!desiredDate) {
         toast('Укажи желаемую дату поставки', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
 
     const rows = document.querySelectorAll('.order-item-row');
@@ -554,15 +570,11 @@ export async function saveNewOrder(event) {
 
         if (!name) {
             toast('Заполни наименование во всех позициях', 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = '💾 Создать заявку';
-            return;
+            return false;
         }
         if (!qty || qty <= 0) {
             toast('Кол-во должно быть больше нуля', 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = '💾 Создать заявку';
-            return;
+            return false;
         }
 
         items.push({ name, qty, unit });
@@ -570,17 +582,13 @@ export async function saveNewOrder(event) {
 
     if (items.length === 0) {
         toast('Добавь хотя бы одну позицию', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
 
     const emp = getEmployee();
     if (!emp) {
         toast('Ваш аккаунт не привязан к сотруднику', 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
 
     const orderPayload = {
@@ -606,9 +614,7 @@ export async function saveNewOrder(event) {
         if (numberError || !nextNumber) {
             log.error('Не удалось получить номер заявки:', numberError?.message || 'нет данных');
             toast('Не удалось получить номер заявки. Попробуйте ещё раз.', 'error');
-            submitBtn.disabled = false;
-            submitBtn.textContent = '💾 Создать заявку';
-            return;
+            return false;
         }
 
         const { data, error } = await db.insert('orders', { ...orderPayload, request_number: nextNumber });
@@ -631,12 +637,18 @@ export async function saveNewOrder(event) {
     if (orderError) {
         log.error('Ошибка создания заявки:', orderError.message);
         toast('Не удалось создать заявку: ' + orderError.message, 'error');
-        submitBtn.disabled = false;
-        submitBtn.textContent = '💾 Создать заявку';
-        return;
+        return false;
     }
 
-    const orderId = orderData.id;
+    // База может не вернуть созданную строку — без проверки здесь был бы
+    // TypeError, а кнопка молча оставалась бы «Сохраняем...».
+    const orderId = orderData ? orderData.id : null;
+
+    if (!orderId) {
+        log.error('База не вернула созданную заявку (пустой ответ на INSERT)');
+        toast('Заявка не сохранилась: база не вернула запись. Повторите попытку.', 'error');
+        return false;
+    }
 
     const itemsPayload = items.map(it => ({
         order_id: orderId,
@@ -660,7 +672,11 @@ export async function saveNewOrder(event) {
     form.reset();
 
     await loadOrders();
-    switchTab('orders');
+
+    // Переключаем на список заявок только у тех, кому он виден: у прораба
+    // вкладка «Снабжение» скрыта (право create_order есть, view_orders_tab —
+    // нет), иначе сразу после сохранения он получал бы отказ в доступе.
+    if (canSeeTab('orders')) switchTab('orders');
 }
 
 // =====================================================================
@@ -945,6 +961,11 @@ export async function closeOrder(event) {
             await window.renderProfileBalance();
         }
     }
+
+    // Кнопку возвращаем в исходный вид: без этого после закрытия заявки она
+    // оставалась «Сохраняем...» и выключенной — вторую заявку закрыть нельзя.
+    submitBtn.disabled = false;
+    submitBtn.textContent = '💾 Закрыть заявку';
 }
 
 // =====================================================================
