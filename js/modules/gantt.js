@@ -86,7 +86,7 @@ export async function renderGantt(project) {
                 <div class="text-4xl">📅</div>
                 <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">График работ</h3>
                 <p class="text-xs text-gray-500">
-                    Загрузите смету на вкладке <b>📁 Файлы</b>, чтобы появились разделы для планирования.
+                    Разделы создаёт загрузка сметы (Администратор / Главный инженер / Инженер ПТО).
                 </p>
             </div>
         `;
@@ -606,7 +606,7 @@ export async function openEditDatesModal() {
     const planSections = (sections || []).filter(section => !isExtraSectionName(section.name));
 
     if (planSections.length === 0) {
-        container.innerHTML = '<p class="text-center text-gray-400 py-3 text-sm">В этом объекте нет разделов. Загрузите смету на вкладке «📁 Файлы».</p>';
+        container.innerHTML = '<p class="text-center text-gray-400 py-3 text-sm">В этом объекте нет разделов. Их создаёт загрузка сметы (Администратор / Главный инженер / Инженер ПТО).</p>';
         return;
     }
 

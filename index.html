@@ -215,9 +215,13 @@
                     <div id="proj-subtab-extra" class="hidden space-y-4"></div>
 
                     <div id="proj-subtab-files" class="hidden space-y-4">
-                        <!-- СМЕТА: контейнер наполняет renderEstimateUI() (js/modules/estimate.js).
-                             Загрузка .xlsx автоматически создаёт разделы и план-суммы работ/материалов. -->
-                        <div class="border-t pt-4 space-y-3">
+                        <!-- СМЕТА — рабочий файл (право manage_estimate): блок видят только
+                             Администратор, Главный инженер и Инженер ПТО, остальным ролям его
+                             прячет renderEstimateUI() (js/modules/estimate.js).
+                             Загрузка .xlsx автоматически создаёт разделы и план-суммы работ/материалов.
+                             Обёртка #estimate-block-wrap нужна, чтобы вместе с содержимым
+                             скрывался и заголовок: в контейнере #estimate-block его нет. -->
+                        <div id="estimate-block-wrap" class="border-t pt-4 space-y-3">
                             <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 Смета объекта</h3>
                             <div id="estimate-block"></div>
                         </div>

@@ -4,6 +4,8 @@
 // Загрузка, парсинг и хранение смет.
 // + Отображение план-факта с фактическими расходами.
 // + UI блока сметы в карточке объекта — вкладка «📁 Файлы», контейнер #estimate-block.
+//   Блок виден только Администратору, Главному инженеру и Инженеру ПТО (manage_estimate):
+//   остальным ролям renderEstimateUI() прячет его вместе с заголовком (#estimate-block-wrap).
 //   ВАЖНО: блок живёт именно на вкладке «Файлы». На вкладке «План-факт» его держать нельзя:
 //   renderSectionsUI() целиком перезаписывает её через innerHTML и стирал блок сметы
 //   (именно поэтому загрузка сметы «пропадала» из интерфейса).
@@ -19,10 +21,10 @@ import {
     log, toast, escapeHtml, formatMoney,
     formatDate, isExtraSectionName
 } from '../utils.js';
-import { requirePermission } from '../permissions.js';
+import { can, requirePermission } from '../permissions.js';
 import { CONFIG } from '../config.js';
 import { getCategoryLabel } from './cash.js';
-import { canManageFiles } from './files.js';
+import { canManageEstimate } from './files.js';
 
 // =====================================================================
 // УТИЛИТА: ОЧИСТКА ИМЕНИ ФАЙЛА
@@ -62,6 +64,12 @@ function sanitizeFileName(originalName) {
 // =====================================================================
 
 export async function uploadEstimate(projectId, file) {
+    // Защита в глубину: функция экспортируется, а не только вызывается из UI-обработчика.
+    if (!canManageEstimate()) {
+        toast('Загружать смету могут Администратор, Главный инженер и Инженер ПТО', 'error');
+        return { success: false };
+    }
+
     if (!projectId) { toast('Объект не выбран', 'error'); return { success: false }; }
     if (!file) { toast('Файл не выбран', 'error'); return { success: false }; }
 
@@ -357,12 +365,25 @@ export async function deleteEstimate(project) {
 
 /**
  * Рендерит блок сметы в контейнере #estimate-block (вкладка «📁 Файлы» карточки объекта).
- * Кнопка «Оригинал» (xlsx) — только для редакторов.
- * Кнопка «🗑 Удалить» — только для редакторов.
+ * Кнопка «📥 Excel» — скачать оригинал сметы (только редакторы сметы).
+ * Кнопка «🗑 Удалить» — только Администратор (deleteEstimate требует edit_project).
  * PDF-скачивание отключено: оставляем только Excel.
+ *
+ * Блок видят только Администратор, Главный инженер и Инженер ПТО (manage_estimate):
+ * остальным ролям прячем всю обёртку #estimate-block-wrap вместе с заголовком
+ * «📊 Смета объекта» — сам заголовок лежит в index.html вне контейнера.
  */
 export function renderEstimateUI(project) {
     const container = document.getElementById('estimate-block');
+    const wrap = document.getElementById('estimate-block-wrap');
+
+    if (!canManageEstimate()) {
+        if (wrap) wrap.classList.add('hidden');
+        if (container) container.innerHTML = '';
+        return;
+    }
+    if (wrap) wrap.classList.remove('hidden');
+
     if (!container) {
         // Регрессия-маркер: контейнер #estimate-block должен быть в index.html
         // на вкладке «📁 Файлы» (вкладку «📊 План-факт» целиком затирает renderSectionsUI).
@@ -371,7 +392,7 @@ export function renderEstimateUI(project) {
     }
 
     const hasEstimate = !!project.estimate_file_path;
-    const canManage = canManageFiles();
+    const canDelete = can('edit_project');   // удалять смету может только Администратор
 
     if (hasEstimate) {
         container.innerHTML = `
@@ -385,14 +406,12 @@ export function renderEstimateUI(project) {
                         </div>
                     </div>
                     <div class="flex gap-2 shrink-0">
-                        ${canManage ? `
-                            <button onclick="window.viewEstimateFile(${project.id})" 
-                                    class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1.5 rounded-lg font-semibold transition"
-                                    title="Скачать Excel">
-                                📥 Excel
-                            </button>
-                        ` : ''}
-                        ${canManage ? `
+                        <button onclick="window.viewEstimateFile(${project.id})"
+                                class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1.5 rounded-lg font-semibold transition"
+                                title="Скачать Excel">
+                            📥 Excel
+                        </button>
+                        ${canDelete ? `
                             <button onclick="window.deleteEstimateUI(${project.id})" 
                                     class="bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1.5 rounded-lg transition"
                                     title="Удалить смету">
@@ -407,26 +426,18 @@ export function renderEstimateUI(project) {
             </div>
         `;
     } else {
-        if (canManage) {
-            container.innerHTML = `
-                <div class="p-4 bg-gray-50 rounded-xl border space-y-3">
-                    <p class="text-xs text-gray-500">
-                        Смета ещё не загружена. Загрузите файл Excel (.xlsx), чтобы автоматически сформировать разделы.
-                    </p>
-                    <div class="flex flex-col sm:flex-row gap-2">
-                        <input type="file" id="estimate-file-input-${project.id}" accept=".xlsx, .xls"
-                               class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-[#15803d] hover:file:bg-emerald-100 cursor-pointer border rounded-lg bg-white">
-                        <button onclick="window.uploadEstimateUI(${project.id})" class="bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow whitespace-nowrap">📤 Загрузить и разобрать</button>
-                    </div>
+        container.innerHTML = `
+            <div class="p-4 bg-gray-50 rounded-xl border space-y-3">
+                <p class="text-xs text-gray-500">
+                    Смета ещё не загружена. Загрузите файл Excel (.xlsx), чтобы автоматически сформировать разделы.
+                </p>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="file" id="estimate-file-input-${project.id}" accept=".xlsx, .xls"
+                           class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-[#15803d] hover:file:bg-emerald-100 cursor-pointer border rounded-lg bg-white">
+                    <button onclick="window.uploadEstimateUI(${project.id})" class="bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow whitespace-nowrap">📤 Загрузить и разобрать</button>
                 </div>
-            `;
-        } else {
-            container.innerHTML = `
-                <div class="p-4 bg-gray-50 rounded-xl border text-center">
-                    <p class="text-xs text-gray-500">Смета ещё не загружена. Загружает Главный инженер / Администратор / Инженер ПТО.</p>
-                </div>
-            `;
-        }
+            </div>
+        `;
     }
 }
 
@@ -445,7 +456,7 @@ export function renderSectionsUI(project, expensesMap = {}, sectionsList = null)
             <div class="p-6 bg-gray-50 rounded-xl border text-center space-y-2">
                 <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📊 План-факт</h3>
                 <p class="text-xs text-gray-500">
-                    Разделы появятся здесь после загрузки файла сметы на вкладке <b>📁 Файлы</b>.
+                    Разделы появятся здесь, когда смету загрузит Администратор / Главный инженер / Инженер ПТО.
                 </p>
             </div>
         `;
@@ -655,6 +666,8 @@ export function toggleSectionDetails(idx) {
 // =====================================================================
 
 export async function uploadEstimateUI(projectId) {
+    if (!requirePermission('manage_estimate')) return;
+
     const input = document.getElementById(`estimate-file-input-${projectId}`);
     if (!input || input.files.length === 0) {
         toast('Выбери файл Excel', 'error');
@@ -682,6 +695,10 @@ export async function uploadEstimateUI(projectId) {
 }
 
 export async function viewEstimateFile(projectId) {
+    // Раньше проверки не было: window.viewEstimateFile(id) из консоли отдавал
+    // подписанную ссылку на xlsx любому авторизованному пользователю.
+    if (!requirePermission('manage_estimate')) return;
+
     const { data: project } = await db.select('projects', {
         filters: { id: projectId },
         single: true
@@ -709,6 +726,8 @@ export async function viewEstimateFile(projectId) {
 }
 
 export async function deleteEstimateUI(projectId) {
+    if (!requirePermission('manage_estimate')) return;
+
     const { data: project } = await db.select('projects', {
         filters: { id: projectId },
         single: true

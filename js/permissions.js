@@ -48,9 +48,10 @@ const ROLE_PERMISSIONS = {
         'assign_task_to_employee',    // поставить задачу из карточки сотрудника
         'view_all_tasks',
         'cancel_any_task',
-        // График работ и файлы
+        // График работ, документация и смета
         'edit_gantt',
-        'manage_files',
+        'manage_files',              // документация по объекту (загрузка/удаление)
+        'manage_estimate',           // файл сметы: виден только тройке ролей ниже
         // Дашборд
         'view_dashboard',
         // Вкладки
@@ -74,6 +75,7 @@ const ROLE_PERMISSIONS = {
         // Вкладки
         'view_orders_tab'            // ← Снабжение: директор смотрит, но заявки не создаёт
         // create_order — НЕТ (директор не создаёт заявки на материалы)
+        // manage_estimate — НЕТ (смета — рабочий файл ПТО, директору блок сметы не показывается)
     ],
     'Главный инженер': [
         'view_employees',
@@ -90,6 +92,7 @@ const ROLE_PERMISSIONS = {
         'assign_task_to_employee',    // поставить задачу из карточки сотрудника
         'edit_gantt',
         'manage_files',
+        'manage_estimate',            // файл сметы (блок на вкладке «📁 Файлы»)
         'view_dashboard'
         // view_orders_tab — НЕТ
     ],
@@ -117,6 +120,7 @@ const ROLE_PERMISSIONS = {
         'become_task_assignee',
         'edit_gantt',
         'manage_files',
+        'manage_estimate',            // файл сметы (блок на вкладке «📁 Файлы»)
         'view_dashboard'
         // view_orders_tab — НЕТ
     ],
@@ -129,7 +133,7 @@ const ROLE_PERMISSIONS = {
         'become_task_assignee',
         'close_section',             // закрытие раздела на своём объекте
         'view_dashboard'
-        // view_registry, view_orders_tab — НЕТ
+        // view_registry, view_orders_tab, manage_estimate — НЕТ
     ]
 };
 
