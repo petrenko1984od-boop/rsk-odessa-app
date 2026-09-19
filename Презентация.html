@@ -222,7 +222,9 @@ table.matrix td b{color:#12233a}
 @page{size:A4 landscape;margin:0}
 @media print{
     html,body{height:auto;overflow:visible;background:#fff;display:block}
-    .stage{width:100%;height:auto;font-size:9.6pt;box-shadow:none;overflow:visible}
+    /* 1em = 1/38 высоты сцены; A4 landscape выше сцены 16:9, поэтому базовый
+       кегль подобран так, чтобы макет в PDF совпадал с экранным слайдом. */
+    .stage{width:100%;height:auto;font-size:12pt;box-shadow:none;overflow:visible}
     .slide{
         position:relative;inset:auto;opacity:1!important;visibility:visible!important;transform:none!important;
         width:297mm;height:209mm;page-break-after:always;break-inside:avoid;overflow:hidden;
