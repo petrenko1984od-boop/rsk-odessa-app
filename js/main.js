@@ -7,8 +7,8 @@ import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
 import { initPWA } from './pwa.js';   // установка приложения и обновление версии
 import {
-    loadPermissions, canSeeTab, canSeeHeaderButton, getNavLabel, getStartTab,
-    getEmployee, can
+    loadPermissions, canSeeTab, canSeeHeaderButton, getNavLabel, getNavOrder,
+    getStartTab, getEmployee, can
 } from './permissions.js';
 
 // Модули разделов
@@ -172,17 +172,42 @@ window.switchTab = switchTab;
 // ПРИМЕНЕНИЕ ПРАВ К UI
 // =====================================================================
 
-function applyPermissionsToUI() {
-    // Кнопки-разделы в шапке: id элемента → id вкладки
-    const TAB_BUTTONS_MAP = [
-        ['btn-tasks',         'tasks'],
-        ['btn-projects',      'projects'],
-        ['btn-employees',     'employees'],
-        ['btn-orders',        'orders'],
-        ['btn-cash-requests', 'cash-requests'],
-        ['btn-registry',      'registry']
-    ];
+// Кнопки-разделы в шапке: id элемента → id вкладки. Порядок здесь — общий
+// (как в разметке). Роль может переставить их у себя: ROLE_UI.navOrder.
+const TAB_BUTTONS_MAP = [
+    ['btn-tasks',         'tasks'],
+    ['btn-projects',      'projects'],
+    ['btn-employees',     'employees'],
+    ['btn-orders',        'orders'],
+    ['btn-cash-requests', 'cash-requests'],
+    ['btn-registry',      'registry']
+];
 
+/**
+ * Переставляет кнопки-разделы в шапке по порядку роли (ROLE_UI.navOrder).
+ * У финансиста «💼 Рабочий стол» должен быть первым: это его рабочее место.
+ * Кнопки-действия («Заказ материалов», «Финансовые запросы») и меню кабинета
+ * не трогаем — разделы вставляются перед первым таким элементом шапки,
+ * поэтому остаются на своих местах и после них.
+ */
+function applyNavOrder(order) {
+    if (!order || order.length === 0) return;
+
+    const container = document.getElementById('btn-tasks')?.parentElement;
+    if (!container) return;
+
+    const navIds = TAB_BUTTONS_MAP.map(([btnId]) => btnId);
+    const anchor = [...container.children].find(el => !navIds.includes(el.id));
+    if (!anchor) return;
+
+    order.forEach(tabId => {
+        const entry = TAB_BUTTONS_MAP.find(([, id]) => id === tabId);
+        const btn = entry ? document.getElementById(entry[0]) : null;
+        if (btn) container.insertBefore(btn, anchor);
+    });
+}
+
+function applyPermissionsToUI() {
     TAB_BUTTONS_MAP.forEach(([btnId, tabId]) => {
         const btn = document.getElementById(btnId);
         if (!btn) return;
@@ -214,13 +239,19 @@ function applyPermissionsToUI() {
 
     // «💼 Пополнить баланс финансиста» — директор и другие кассиры (cash_issue).
     // Кнопка живёт в разделе «💰 Финансы», поэтому и показываем её здесь же:
-    // прораб/финансист её не видят.
+    // прораб/финансист её не видят. Баланс рядом с кнопкой рисует
+    // renderFinancierBalanceHint() при открытии раздела (js/modules/cash.js).
     const topUpBtn = document.getElementById('btn-topup-financier');
     if (topUpBtn) {
         const allowed = can('cash_issue');
         topUpBtn.classList.toggle('hidden', !allowed);
         topUpBtn.style.display = allowed ? '' : 'none';
     }
+
+    // Свой порядок разделов в шапке (финансист: «Рабочий стол» — первым).
+    // Делается после расстановки видимости: переставляем все кнопки раздела,
+    // скрытые у роли просто не видны.
+    applyNavOrder(getNavOrder());
 }
 
 // =====================================================================

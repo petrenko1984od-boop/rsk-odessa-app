@@ -329,7 +329,13 @@
                         <h2 class="text-lg font-bold text-gray-800" id="cashreq-tab-title">💰 Финансы</h2>
                         <p class="text-xs text-gray-500" id="cashreq-tab-subtitle">Заявки на подотчёт для выполнения работ</p>
                     </div>
-                    <div class="flex flex-wrap gap-2">
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <!-- Актуальный баланс финансиста — рядом с кнопкой пополнения: директору
+                             видно, сколько денег у финансиста ПРЯМО СЕЙЧАС, не открывая окно.
+                             Показывается тем же правом, что и кнопка (cash_issue), и заполняется
+                             js/modules/cash.js → renderFinancierBalanceHint(). -->
+                        <span id="financier-balance-hint"
+                              class="hidden items-center text-xs bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg text-gray-700"></span>
                         <!-- Пополнение подотчёта финансиста: директор/кассиры (право cash_issue).
                              Кнопку показывает main.js (applyPermissionsToUI), поэтому по умолчанию скрыта. -->
                         <button onclick="openTopUpBalanceModal()" id="btn-topup-financier"

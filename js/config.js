@@ -35,7 +35,7 @@ export const CONFIG = {
     // ----- ПРИЛОЖЕНИЕ -----
     APP: {
         NAME: 'RSK Odessa',
-        VERSION: '2.2.2',
+        VERSION: '2.2.3',
         DEFAULT_REQUEST_PREFIX: 'З-',
         // true — печатать в консоль все SQL-запросы (log.db) и подробный лог.
         // В продакшене держим false, чтобы не светить данные и не тормозить приложение.

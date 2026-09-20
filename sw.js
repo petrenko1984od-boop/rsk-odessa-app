@@ -21,7 +21,7 @@
 // а сотрудники увидят карточку «Доступна новая версия».
 // =====================================================================
 
-const APP_VERSION = '2.2.2';
+const APP_VERSION = '2.2.3';
 const CACHE_PREFIX = 'rsk-odessa';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}`;
 

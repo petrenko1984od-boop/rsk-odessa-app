@@ -15,6 +15,61 @@ import { supabase } from './config.js';
 import { log, toast } from './utils.js';
 
 // =====================================================================
+// ПОДСКАЗКИ К ОШИБКАМ SUPABASE AUTH
+// =====================================================================
+// Supabase отвечает по-английски, и сотрудник не понимает, что делать:
+// «Invalid login credentials» — это не подсказка, а в «Email not confirmed»
+// вообще нет намёка на то, что дело в настройках проекта.
+//
+// Для самых частых ответов показываем короткое объяснение по-русски, а сам
+// ответ сервера оставляем в скобках. Это важно: администратор по нему видит
+// настоящую причину, то есть тексты ошибок ничего не «прячут».
+//
+// Список намеренно короткий — только то, что реально встречается:
+//   * invalid login credentials — опечатка в email или пароль не тот;
+//   * email not confirmed       — в Supabase включена опция Confirm email,
+//                                 поэтому аккаунт создан, но не подтверждён;
+//   * email rate limit exceeded — у встроенной почты Supabase есть лимит
+//                                 отправки, он исчерпан;
+//   * user already registered   — аккаунт с таким email уже есть.
+const AUTH_ERROR_HINTS = [
+    {
+        match: 'invalid login credentials',
+        hint: 'Неверный email или пароль'
+    },
+    {
+        match: 'email not confirmed',
+        hint: 'Email не подтверждён. Обратитесь к администратору'
+    },
+    {
+        match: 'email rate limit exceeded',
+        hint: 'Сервер временно ограничил отправку писем. Подождите несколько минут и попробуйте снова'
+    },
+    {
+        match: 'user already registered',
+        hint: 'Такой email уже зарегистрирован — войдите на вкладке «Войти»'
+    }
+];
+
+/**
+ * Переводит частые ошибки Supabase Auth на понятный сотруднику язык.
+ * Исходный английский текст сохраняется в скобках; незнакомые ошибки
+ * возвращаются как есть — их разбирает администратор по консоли.
+ *
+ * @param {string} message — error.message от Supabase
+ * @returns {string} текст для показа в форме входа/регистрации
+ */
+export function authErrorMessage(message) {
+    const text = String(message || '').trim();
+    if (!text) return 'Неизвестная ошибка';
+
+    const lower = text.toLowerCase();
+    const found = AUTH_ERROR_HINTS.find((item) => lower.includes(item.match));
+
+    return found ? `${found.hint} (${text})` : text;
+}
+
+// =====================================================================
 // ВХОД / РЕГИСТРАЦИЯ / ВЫХОД
 // =====================================================================
 
@@ -390,7 +445,7 @@ export function initLoginScreen(options = {}) {
         const { user, error } = await signIn(email, password);
 
         if (error) {
-            errorEl.textContent = 'Ошибка: ' + error.message;
+            errorEl.textContent = 'Ошибка: ' + authErrorMessage(error.message);
             errorEl.classList.remove('hidden');
             btn.disabled = false;
             btn.textContent = 'Войти';
@@ -445,7 +500,7 @@ export function initLoginScreen(options = {}) {
         btn.textContent = 'Зарегистрироваться';
 
         if (error) {
-            errorEl.textContent = 'Ошибка: ' + error.message;
+            errorEl.textContent = 'Ошибка: ' + authErrorMessage(error.message);
             errorEl.classList.remove('hidden');
             return;
         }
@@ -454,7 +509,8 @@ export function initLoginScreen(options = {}) {
         const loginResult = await signIn(email, password);
 
         if (loginResult.error) {
-            errorEl.textContent = 'Регистрация прошла, но вход не удался: ' + loginResult.error.message;
+            errorEl.textContent = 'Регистрация прошла, но вход не удался: '
+                + authErrorMessage(loginResult.error.message);
             errorEl.classList.remove('hidden');
             return;
         }

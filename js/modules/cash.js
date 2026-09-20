@@ -413,6 +413,84 @@ export async function addReturn(employeeId, amount, comment = '') {
 // Директор передаёт финансисту деньги — они ложатся ему в подотчёт операцией
 // 'issue' БЕЗ привязки к объекту (см. addIssue). Из этого подотчёта финансист
 // выдаёт суммы по заявкам, одобренным директором (js/modules/cash-requests.js).
+// Рядом с кнопкой пополнения директор видит актуальный баланс финансиста
+// (renderFinancierBalanceHint) — сумму не нужно выяснять отдельно.
+
+/**
+ * Активные сотрудники с должностью «Финансист» — те, чей подотчёт пополняем.
+ * Должность есть в справочнике (CONFIG.POSITIONS), но самого сотрудника с ней
+ * в базе может ещё не быть, поэтому список бывает пустым.
+ */
+async function loadFinanciers() {
+    const { data, error } = await db.select('employees', {
+        select: 'id, name, position, status',
+        filters: { position: 'Финансист' },
+        orderBy: { column: 'name', asc: true }
+    });
+
+    if (error) return { financiers: [], error };
+
+    return {
+        financiers: (data || []).filter(emp => !emp.status || emp.status === 'active'),
+        error: null
+    };
+}
+
+/**
+ * Баланс финансиста рядом с кнопкой «💼 Пополнить баланс финансиста» в разделе
+ * «💰 Финансы». Показывается тем же правом, что и кнопка (cash_issue), поэтому
+ * прораб и сам финансист подсказки не видят.
+ *
+ * Сумма читается из представления employee_cash_balance — того же, что и в
+ * карточке сотрудника, поэтому в шапке не может быть «своего» числа.
+ */
+export async function renderFinancierBalanceHint() {
+    const hint = document.getElementById('financier-balance-hint');
+    if (!hint) return;
+
+    const show = (html) => {
+        hint.innerHTML = html;
+        hint.classList.remove('hidden');
+        hint.style.display = 'inline-flex';
+    };
+
+    const hide = () => {
+        hint.classList.add('hidden');
+        hint.style.display = 'none';
+        hint.innerHTML = '';
+    };
+
+    if (!can('cash_issue')) {
+        hide();
+        return;
+    }
+
+    const { financiers, error } = await loadFinanciers();
+
+    if (error) {
+        log.error('Ошибка загрузки финансистов:', error.message);
+        show('<span>💰 Баланс финансиста: <b class="text-red-700">не удалось загрузить</b></span>');
+        return;
+    }
+
+    if (financiers.length === 0) {
+        show('<span>💰 Финансиста нет в штате</span>');
+        return;
+    }
+
+    const balances = await Promise.all(financiers.map(emp => loadBalance(emp.id)));
+
+    // Финансист обычно один — пишем без имени. Если их несколько, у каждой
+    // суммы подписываем, чья она.
+    show(financiers.map((emp, i) => {
+        const formatted = formatBalance(balances[i].balance);
+        const label = financiers.length === 1
+            ? 'Баланс финансиста'
+            : `Баланс: ${escapeHtml(emp.name)}`;
+
+        return `<span>💰 ${label}: <b class="${formatted.color}">${formatted.icon} ${formatted.text}</b></span>`;
+    }).join('<span class="text-gray-300 mx-1">•</span>'));
+}
 
 /** Открывает окно «💼 Пополнить баланс финансиста» (право cash_issue). */
 export async function openTopUpBalanceModal() {
@@ -423,21 +501,13 @@ export async function openTopUpBalanceModal() {
 
     select.innerHTML = '<option value="">Загрузка...</option>';
 
-    const { data, error } = await db.select('employees', {
-        select: 'id, name, position, status',
-        filters: { position: 'Финансист' },
-        orderBy: { column: 'name', asc: true }
-    });
+    const { financiers, error } = await loadFinanciers();
 
     if (error) {
         select.innerHTML = '<option value="">Ошибка загрузки</option>';
         toast('Не удалось загрузить список финансистов', 'error');
         return;
     }
-
-    // Должность «Финансист» есть в справочнике (CONFIG.POSITIONS), но самого
-    // сотрудника с такой должностью в базе может ещё не быть.
-    const financiers = (data || []).filter(emp => !emp.status || emp.status === 'active');
 
     if (financiers.length === 0) {
         select.innerHTML = '<option value="">— нет активных финансистов —</option>';
@@ -494,6 +564,10 @@ export async function saveTopUpBalance(event) {
         toast(`Подотчёт финансиста пополнен на ${formatMoney(amount)}`, 'success');
         hideModal('topup-balance-modal');
         form.reset();
+
+        // Баланс рядом с кнопкой переписываем сразу: директор только что передал
+        // деньги и должен видеть новую сумму, не переключая раздел.
+        await renderFinancierBalanceHint();
 
     } catch (err) {
         log.error('Исключение при пополнении подотчёта финансиста:', err);

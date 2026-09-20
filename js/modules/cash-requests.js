@@ -30,7 +30,7 @@ import {
     formatDate, formatMoney, parseNumber, roundMoney
 } from '../utils.js';
 import { can, getEmployee, getRole, canSeeTab, canSeeHeaderButton } from '../permissions.js';
-import { loadBalance, formatBalance } from './cash.js';
+import { loadBalance, formatBalance, renderFinancierBalanceHint } from './cash.js';
 import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
@@ -157,6 +157,10 @@ export async function loadCashRequests() {
     renderCashRequests();
     updateCashRequestsNavButton();
     await renderFinancierPanel();
+
+    // Баланс финансиста рядом с кнопкой пополнения (директор и другие кассиры):
+    // цифра тянется тем же открытием раздела, поэтому всегда свежая.
+    await renderFinancierBalanceHint();
 }
 
 /**
@@ -186,8 +190,10 @@ async function refreshDashboardIfVisible() {
 }
 
 /**
- * Панель «Рабочий стол финансиста»: его подотчёт и сколько денег нужно
- * выдать по одобренным заявкам. У остальных ролей блок скрыт.
+ * Панель «Рабочий стол финансиста»: его баланс (подотчёт) и сколько денег
+ * нужно выдать по одобренным заявкам. У остальных ролей блок скрыт:
+ * у директора на этом же месте — баланс финансиста рядом с кнопкой пополнения
+ * (`renderFinancierBalanceHint()` из js/modules/cash.js).
  */
 async function renderFinancierPanel() {
     const panel = document.getElementById('financier-balance-panel');
@@ -215,9 +221,8 @@ async function renderFinancierPanel() {
     panel.innerHTML = `
         <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
             <div>
-                <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">💰 Мой подотчёт</p>
+                <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">💰 Мой баланс</p>
                 <p class="${formatted.color} text-2xl font-bold">${formatted.icon} ${formatted.text}</p>
-                <p class="mt-1 text-[11px] text-gray-500">Пополняет директор: кнопка «💼 Пополнить баланс финансиста» в этом разделе.</p>
             </div>
             <div class="text-right">
                 <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">🟡 К выдаче</p>
