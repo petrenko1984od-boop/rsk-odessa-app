@@ -615,6 +615,74 @@ async function main() {
         'итог=' + order.invoice_total + ', строк доставки: ' +
         afterReturn.filter((row) => row.name.includes('Доставка')).length);
 
+    // --- Доставка компании: сумму вписывают, но она ВНЕ счёта поставщика ---
+    // Финансист должен получить счёт только на материалы, а строка доставки
+    // остаться в заявке (в реестре — категорией «🚚 Доставка»).
+    log('--- доставка компании: сумма вне счёта поставщика ---');
+    await evaluate('window.openOrderInvoiceModal(900)');
+    await sleep(700);
+
+    const companyForm = await evaluate('(() => {' +
+        'const radio = document.querySelector(' +
+        '\'input[name="order-invoice-delivery-type"][value="company"]\');' +
+        'radio.checked = true;' +
+        'radio.dispatchEvent(new Event("change", { bubbles: true }));' +
+        'document.getElementById("order-invoice-delivery").value = "800";' +
+        'window.recalcOrderInvoiceTotal();' +
+        'return { label: document.getElementById("order-invoice-delivery-label").textContent,' +
+        ' note: document.getElementById("order-invoice-delivery-outside").textContent,' +
+        ' total: document.getElementById("order-invoice-total").textContent }; })()');
+    ok('«доставка компании»: подпись и подсказка меняются на месте',
+        companyForm.label.includes('компании') &&
+        companyForm.note.replace(/\s+/g, ' ').includes('800,00'),
+        JSON.stringify(companyForm));
+    ok('«доставка компании»: в итог счёта сумма не вошла (14 000 материалов)',
+        companyForm.total.replace(/\s+/g, ' ').includes('14 000,00'),
+        String(companyForm.total));
+
+    await evaluate('document.getElementById("order-invoice-form").dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }))');
+    await sleep(2400);
+
+    const afterCompany = store.order_items.filter((row) => row.order_id === 900);
+    const companyDeliveryRow = afterCompany.find((row) => row.name.includes('Доставка'));
+    ok('доставка компании: та же строка заявки, но «Доставка компании» на 800',
+        afterCompany.filter((row) => row.name.includes('Доставка')).length === 1 &&
+        companyDeliveryRow.name === 'Доставка компании' && Number(companyDeliveryRow.total_price) === 800,
+        JSON.stringify(afterCompany.map((i) => i.name + ' = ' + i.total_price)));
+    ok('доставка компании: счёт поставщику — только материалы (14 000), итог заявки — 14 800',
+        Number(order.invoice_total) === 14000 && Number(order.total_sum) === 14800,
+        'invoice_total=' + order.invoice_total + ', total_sum=' + order.total_sum);
+
+    // Повторное открытие окна: вид доставки восстанавливается по строке заявки
+    // (отдельной колонки в orders нет — вид хранится в имени строки).
+    await evaluate('window.openOrderInvoiceModal(900)');
+    await sleep(700);
+    const restoredDelivery = await evaluate('(() => ({' +
+        'type: document.querySelector(\'input[name="order-invoice-delivery-type"]:checked\').value,' +
+        'sum: document.getElementById("order-invoice-delivery").value,' +
+        'label: document.getElementById("order-invoice-delivery-label").textContent }))()');
+    ok('окно счёта помнит «доставку компании» (радиокнопка, сумма и подпись)',
+        restoredDelivery.type === 'company' && restoredDelivery.sum === '800' &&
+        restoredDelivery.label.includes('компании'),
+        JSON.stringify(restoredDelivery));
+
+    // Возврат к «доставке поставщика»: строка переименовывается обратно, сумма
+    // снова входит в счёт, а второй строки доставки не появляется.
+    await evaluate('(() => {' +
+        'const radio = document.querySelector(' +
+        '\'input[name="order-invoice-delivery-type"][value="supplier"]\');' +
+        'radio.checked = true;' +
+        'radio.dispatchEvent(new Event("change", { bubbles: true }));' +
+        'return true; })()');
+    await saveInvoiceWithDelivery('1500');
+    const afterSupplierAgain = store.order_items.filter((row) => row.order_id === 900);
+    ok('возврат к «доставке поставщика»: строка одна, счёт снова 15 500',
+        afterSupplierAgain.filter((row) => row.name.includes('Доставка')).length === 1 &&
+        afterSupplierAgain.some((row) => row.name === 'Доставка' && Number(row.total_price) === 1500) &&
+        Number(order.invoice_total) === 15500 && Number(order.total_sum) === 15500,
+        'итог=' + order.invoice_total + ', позиции: ' +
+        JSON.stringify(afterSupplierAgain.map((i) => i.name)));
+
     // ------------------- 2. Доставка на объект -------------------
     await evaluate('window.openOrderDetail(900)');
     await sleep(700);
@@ -703,6 +771,28 @@ async function main() {
 
     await evaluate('window.resetRegistryFilters()');
     await sleep(400);
+
+    // Доставка компании в реестре: сумма в счёт поставщика не входила, поэтому
+    // в колонке «Оплата» у строки НЕ «Ожидает оплаты» (долга фирмы нет),
+    // а «🏢 Вне счёта»; категория при этом та же — «🚚 Доставка».
+    log('--- реестр: доставка компании вне счёта поставщика ---');
+    const registryDeliveryRow = store.order_items.find(
+        (row) => row.order_id === 900 && row.name === 'Доставка'
+    );
+    registryDeliveryRow.name = 'Доставка компании';
+    await evaluate('window.switchTab("registry")');
+    await sleep(1600);
+
+    const companyRegistry = (await evaluate(text('registry-tbody'))).replace(/\s+/g, ' ');
+    ok('реестр: «Доставка компании» — категория «🚚 Доставка» и «🏢 Вне счёта»',
+        companyRegistry.includes('Доставка компании') &&
+        companyRegistry.includes('🏢 Вне счёта') &&
+        companyRegistry.includes('1 500,00'),
+        companyRegistry.slice(0, 320));
+
+    // Возвращаем строку как была: следующие шаги ждут «доставку поставщика»
+    // с долгом перед поставщиком (строку берут из мока, как из базы).
+    registryDeliveryRow.name = 'Доставка';
 
     // ------------------- 3. Финансист: оплата счёта -------------------
     await loginAs(9, 'Финансист');

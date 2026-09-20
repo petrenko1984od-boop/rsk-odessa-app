@@ -47,7 +47,12 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        периода у истории оплат и выгрузка в Excel по этому фильтру
 //        (index.html, js/modules/invoices.js, js/modules/cash-requests.js,
 //        js/i18n.js).
-const SHELL_REVISION = 'r5';
+//   r6 — в окне «🧾 Счёт поставщика» появился выбор «🚚 Чья доставка»:
+//        «🏬 доставка поставщика» входит в счёт, «🏢 доставка компании» — вне
+//        счёта (строка «Доставка компании» в заявке, в реестре — «🏢 Вне счёта»)
+//        (index.html, js/config.js, js/utils.js, js/i18n.js,
+//        js/modules/orders.js, js/modules/registry.js).
+const SHELL_REVISION = 'r6';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

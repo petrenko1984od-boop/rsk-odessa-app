@@ -174,16 +174,51 @@ export function isExtraSectionName(name) {
  *
  * Доставку снабженец вписывает отдельной строкой в окне счёта
  * (js/modules/orders.js → saveOrderInvoice), а живёт она в order_items —
- * отдельной колонки в orders нет, миграция базы не нужна. По этому признаку:
+ * отдельной колонки в orders нет, миграция базы не нужна. Вид доставки
+ * («везёт поставщик» / «везёт компания») тоже хранится в имени строки:
+ * CONFIG.DELIVERY_ITEM.NAME / COMPANY_NAME. По этому признаку:
  *   * «📊 Реестр материалов» показывает строку категорией «🚚 Доставка»,
  *     а не «📦 Материалы» (js/modules/registry.js);
  *   * в списках и карточках заявок строке ставится иконка 🚚 вместо 📦
- *     (js/modules/orders.js) — поэтому в `CONFIG.DELIVERY_ITEM.NAME` эмодзи нет.
- * Имя — ключ сопоставления (его пишет приложение при сохранении доставки),
+ *     (js/modules/orders.js) — поэтому в именах доставки эмодзи нет.
+ * Имена — ключ сопоставления (их пишет приложение при сохранении доставки),
  * поэтому сравниваем так же, как разделы сметы: без регистра и двойных пробелов.
  */
 export function isDeliveryItem(item) {
-    return normalizeSectionName(item?.name) === normalizeSectionName(CONFIG.DELIVERY_ITEM?.NAME || '');
+    return getDeliveryItemType(item) !== null;
+}
+
+/**
+ * Вид доставки у позиции заявки:
+ *   CONFIG.DELIVERY_ITEM.TYPE.SUPPLIER — везёт поставщик (сумма в счёте),
+ *   CONFIG.DELIVERY_ITEM.TYPE.COMPANY  — везёт компания (вне счёта поставщика),
+ *   null — это не строка доставки, а обычная позиция.
+ *
+ * Вид читаем из имени строки: «Доставка» / «Доставка компании»
+ * (CONFIG.DELIVERY_ITEM.NAME / COMPANY_NAME). Отдельной колонки в order_items
+ * нет намеренно — иначе потребовалась бы миграция боевой базы.
+ */
+export function getDeliveryItemType(item) {
+    const name = normalizeSectionName(item?.name);
+    if (!name) return null;
+
+    const types = CONFIG.DELIVERY_ITEM?.TYPE || {};
+    if (name === normalizeSectionName(CONFIG.DELIVERY_ITEM?.NAME || '')) return types.SUPPLIER || 'supplier';
+    if (name === normalizeSectionName(CONFIG.DELIVERY_ITEM?.COMPANY_NAME || '')) return types.COMPANY || 'company';
+
+    return null;
+}
+
+/**
+ * Как называется строка доставки в заявке для выбранного вида.
+ * Принимает CONFIG.DELIVERY_ITEM.TYPE.* (всё остальное считаем доставкой
+ * поставщика — так же, как это делает форма счёта по умолчанию).
+ */
+export function getDeliveryItemName(type) {
+    const company = CONFIG.DELIVERY_ITEM?.TYPE?.COMPANY;
+    return type === company
+        ? (CONFIG.DELIVERY_ITEM?.COMPANY_NAME || '')
+        : (CONFIG.DELIVERY_ITEM?.NAME || '');
 }
 
 // =====================================================================

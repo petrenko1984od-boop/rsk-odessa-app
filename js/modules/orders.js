@@ -18,13 +18,14 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatDateTime, formatMoney, roundMoney, isDeliveryItem
+    formatDate, formatDateTime, formatMoney, roundMoney,
+    isDeliveryItem, getDeliveryItemType, getDeliveryItemName
 } from '../utils.js';
 import {
     can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
 } from '../permissions.js';
 import { CONFIG } from '../config.js';
-import { t } from '../i18n.js';
+import { t, onLangChange } from '../i18n.js';
 import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
@@ -1160,9 +1161,17 @@ export async function closeOrder(event) {
 // Доставка водится здесь же, отдельным полем «🚚 Стоимость доставки»:
 // она приходит из счёта одной суммой (не зависит от количества), поэтому
 // хранится отдельной позицией заявки (CONFIG.DELIVERY_ITEM), а не ценой
-// материала. Пустое поле — доставки нет, позицию удаляем. Так доставка
-// сама попадает в итог счёта, в заявку, в «📊 Реестр материалов»
-// (категория «🚚 Доставка») и в план-факт объекта.
+// материала. Пустое поле — доставки нет, позицию удаляем.
+//
+// Чья доставка — снабженец выбирает радиокнопками (см. index.html →
+// #order-invoice-delivery-supplier / -company), и от этого зависит счёт:
+//   * «🏬 Доставка поставщика» — сумма входит в итог счёта
+//     (orders.invoice_total) и уходит финансисту вместе с материалами;
+//   * «🏢 Доставка компании» — в счёт поставщика сумма НЕ входит: финансист
+//     получит счёт только на материалы, а доставка останется отдельной
+//     строкой заявки и расходом объекта.
+// Дальше обе доставки ведут себя одинаково: попадают в «📊 Реестр материалов»
+// (категория «🚚 Доставка»), в план-факт и в окно «🚚 Доставлено на объект».
 
 /** Короткое безопасное имя файла для Storage: кириллица → «_», расширение сохраняем. */
 function invoiceFileName(originalName) {
@@ -1219,6 +1228,10 @@ export async function openOrderInvoiceModal(orderId) {
         deliveryInput.value = saved > 0 ? String(saved) : '';
     }
 
+    // Вид доставки восстанавливаем по строке заявки: «Доставка компании» значит,
+    // что в прошлый раз выбрали компанию. Строки нет — по умолчанию поставщик.
+    setInvoiceDeliveryType(getDeliveryItemType(deliveryItem) || CONFIG.DELIVERY_ITEM.TYPE.SUPPLIER);
+
     const container = document.getElementById('order-invoice-items');
     if (container) {
         container.innerHTML = items.length === 0
@@ -1245,7 +1258,75 @@ export async function openOrderInvoiceModal(orderId) {
 }
 
 /**
- * Итого по счёту = сумма (кол-во × цена) по всем позициям + стоимость доставки.
+ * Вид доставки, выбранный в окне счёта: 'supplier' (по умолчанию) или 'company'.
+ * Читаем из радиокнопок (index.html → input[name="order-invoice-delivery-type"]).
+ */
+function getInvoiceDeliveryType() {
+    const value = document.querySelector('input[name="order-invoice-delivery-type"]:checked')?.value;
+    return value === CONFIG.DELIVERY_ITEM.TYPE.COMPANY
+        ? CONFIG.DELIVERY_ITEM.TYPE.COMPANY
+        : CONFIG.DELIVERY_ITEM.TYPE.SUPPLIER;
+}
+
+/** Ставит выбор «чья доставка» и обновляет подписи под него. */
+function setInvoiceDeliveryType(type) {
+    const company = type === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
+    const radio = document.getElementById(
+        company ? 'order-invoice-delivery-company' : 'order-invoice-delivery-supplier'
+    );
+    if (radio) radio.checked = true;
+
+    updateOrderInvoiceDeliveryHints();
+}
+
+/**
+ * Подписи к выбору «чья доставка»: заголовок поля и подсказка под ним зависят
+ * от того, везёт поставщик или компания.
+ *
+ * У этих двух элементов нет data-i18n (в index.html они помечены
+ * data-i18n-skip): переводим строки сами, через t(). Вызывается при открытии
+ * окна, при смене радиокнопки и при смене языка — см. onLangChange ниже.
+ */
+export function updateOrderInvoiceDeliveryHints() {
+    const company = getInvoiceDeliveryType() === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
+
+    const label = document.getElementById('order-invoice-delivery-label');
+    if (label) label.textContent = company ? t('order.invoiceDeliveryCompanyLabel') : t('order.invoiceDelivery');
+
+    const hint = document.getElementById('order-invoice-delivery-hint');
+    if (hint) hint.textContent = company ? t('order.invoiceDeliveryCompanyHint') : t('order.invoiceDeliveryHint');
+
+    recalcOrderInvoiceTotal();
+}
+
+/**
+ * Подсказка «сколько доставки осталось вне счёта поставщика» — чтобы было
+ * видно, почему вписанная сумма не увеличила «Итого по счёту». Показываем
+ * только для доставки компании с суммой: у доставки поставщика вся сумма
+ * и так в счёте.
+ */
+function updateOrderInvoiceDeliveryNote(amount, company) {
+    const note = document.getElementById('order-invoice-delivery-outside');
+    if (!note) return;
+
+    const show = company && amount > 0;
+    note.textContent = show ? t('order.invoiceDeliveryOutside', { sum: formatMoney(amount) }) : '';
+    note.classList.toggle('hidden', !show);
+}
+
+/** Сумма доставки, вписанная в окне счёта (не меньше нуля). */
+function invoiceDeliveryAmount() {
+    return roundMoney(Math.max(
+        0, parseFloat(document.getElementById('order-invoice-delivery')?.value) || 0
+    ));
+}
+
+/**
+ * Итого по счёту = (кол-во × цена) по позициям + доставка поставщика.
+ *
+ * Доставку компании в итог счёта НЕ включаем: её поставщик не выставляет,
+ * иначе фирма заплатила бы ему лишнее. Сумма при этом не теряется — она
+ * уходит отдельной строкой заявки, о чём говорит подсказка под итогом.
  */
 export function recalcOrderInvoiceTotal() {
     const rows = document.querySelectorAll('.order-invoice-item');
@@ -1259,27 +1340,33 @@ export function recalcOrderInvoiceTotal() {
 
     // Доставка — отдельная строка счёта (CONFIG.DELIVERY_ITEM): входит в итог
     // наравне с позициями, иначе финансист увидел бы сумму меньше счёта.
-    const delivery = parseFloat(document.getElementById('order-invoice-delivery')?.value) || 0;
-    total = roundMoney(total + delivery);
+    const delivery = invoiceDeliveryAmount();
+    const company = getInvoiceDeliveryType() === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
+
+    if (!company) total = roundMoney(total + delivery);
 
     const totalEl = document.getElementById('order-invoice-total');
     if (totalEl) totalEl.textContent = formatMoney(total);
+
+    updateOrderInvoiceDeliveryNote(delivery, company);
 }
 
 /**
- * Сохраняет стоимость доставки отдельной позицией заявки (CONFIG.DELIVERY_ITEM).
+ * Сохраняет строку доставки заявки (CONFIG.DELIVERY_ITEM).
  *
- *   amount > 0 — строку создаём (если её ещё нет) или обновляем её сумму;
- *   amount = 0 — строку удаляем: пустое поле и значит «доставки нет».
+ *   amount > 0 — строку создаём (если её ещё нет) или обновляем, в том числе
+ *                переименовываем: снабженец сменил вид доставки, а строка
+ *                у заявки одна («Доставка» ↔ «Доставка компании»);
+ *   amount = 0 — строку удаляем: пустое поле значит «доставки нет».
  *
  * Возвращает null при успехе и текст ошибки — при сбое. Ошибку не глотаем
  * молча: без строки доставки итог счёта и «Реестр материалов» разойдутся.
  */
-async function saveDeliveryItem(orderId, deliveryItem, amount) {
+async function saveDeliveryItem(orderId, deliveryItem, name, amount) {
     if (amount > 0) {
         const payload = {
             order_id: orderId,
-            name: CONFIG.DELIVERY_ITEM.NAME,
+            name,
             unit: CONFIG.DELIVERY_ITEM.UNIT,
             qty: 1,
             unit_price: amount,
@@ -1348,10 +1435,10 @@ export async function saveOrderInvoice(event) {
 
     // Доставка из счёта — отдельная позиция заявки (CONFIG.DELIVERY_ITEM),
     // а не цена материала: приходит одной суммой и сохраняется отдельно.
+    // Вид доставки берём из радиокнопок окна (поставщик / компания).
     const deliveryItem = (order._items || []).find(isDeliveryItem) || null;
-    const deliveryAmount = roundMoney(Math.max(
-        0, parseFloat(document.getElementById('order-invoice-delivery')?.value) || 0
-    ));
+    const deliveryType = getInvoiceDeliveryType();
+    const deliveryAmount = invoiceDeliveryAmount();
 
     const file = document.getElementById('order-invoice-file')?.files?.[0] || null;
     const submitBtn = event.target.querySelector('button[type="submit"]');
@@ -1393,20 +1480,32 @@ export async function saveOrderInvoice(event) {
         // Доставку сохраняем отдельной позицией заявки: так она попадает
         // в «📊 Реестр материалов» отдельной строкой (категория «🚚 Доставка»)
         // и в план-факт — без ручного пересчёта сумм в двух местах.
-        const deliveryError = await saveDeliveryItem(orderId, deliveryItem, deliveryAmount);
+        const deliveryError = await saveDeliveryItem(
+            orderId, deliveryItem, getDeliveryItemName(deliveryType), deliveryAmount
+        );
         if (deliveryError) {
             log.error('Ошибка сохранения доставки:', deliveryError);
             toast(t('order.invoiceDeliveryFailed'), 'warning');
         }
 
-        const totalSum = roundMoney(
-            prices.reduce((sum, item) => sum + item.totalPrice, 0) + deliveryAmount
+        // Итог заявки — вся закупка: материалы + доставка (её платит фирма или
+        // снабженец из подотчёта, но для объекта это расход).
+        const materialsSum = roundMoney(
+            prices.reduce((sum, item) => sum + item.totalPrice, 0)
         );
+        const totalSum = roundMoney(materialsSum + deliveryAmount);
+
+        // Итог счёта — то, что выставил поставщик. Доставку компании он не
+        // выставляет, поэтому в счёт она не входит: иначе финансист оплатил бы
+        // поставщику лишнее. Сумма доставки компании остаётся строкой заявки.
+        const invoiceTotal = deliveryType === CONFIG.DELIVERY_ITEM.TYPE.COMPANY
+            ? materialsSum
+            : totalSum;
 
         const payload = {
             supplier,
             total_sum: totalSum,
-            invoice_total: totalSum,
+            invoice_total: invoiceTotal,
             invoice_path: invoicePath,
             invoice_file_name: invoiceFileNameSaved,
             invoice_uploaded_at: new Date().toISOString()
@@ -1423,7 +1522,9 @@ export async function saveOrderInvoice(event) {
             return;
         }
 
-        log.info('🧾 Счёт сохранён по заявке', order.request_number, `на ${formatMoney(totalSum)}`);
+        log.info('🧾 Счёт сохранён по заявке', order.request_number,
+            `на ${formatMoney(invoiceTotal)}`,
+            invoiceTotal === totalSum ? '' : `(заявка ${formatMoney(totalSum)}: доставка компании вне счёта)`);
         toast(t('order.invoiceSaved', { number: order.request_number }), 'success');
 
         hideModal('order-invoice-modal');
@@ -1540,6 +1641,7 @@ window.recalcOrderTotal = recalcOrderTotal;
 window.takeOrderToWork = takeOrderToWork;
 window.openOrderInvoiceModal = openOrderInvoiceModal;
 window.recalcOrderInvoiceTotal = recalcOrderInvoiceTotal;
+window.updateOrderInvoiceDeliveryHints = updateOrderInvoiceDeliveryHints;
 window.saveOrderInvoice = saveOrderInvoice;
 window.viewOrderInvoice = viewOrderInvoice;
 window.openCloseOrderModal = openCloseOrderModal;
@@ -1547,3 +1649,11 @@ window.recalcCloseOrderTotal = recalcCloseOrderTotal;
 window.updateCloseOrderPaymentHints = updateCloseOrderPaymentHints;
 window.archiveOrder = archiveOrder;
 window.deleteOrder = deleteOrder;
+
+// Язык может смениться, пока открыто окно счёта: подписи выбора «чья доставка»
+// берутся через t() (у них нет data-i18n — см. updateOrderInvoiceDeliveryHints),
+// поэтому обновляем их сами.
+onLangChange(() => {
+    const modal = document.getElementById('order-invoice-modal');
+    if (modal && !modal.classList.contains('hidden')) updateOrderInvoiceDeliveryHints();
+});

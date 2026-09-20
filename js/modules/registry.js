@@ -21,12 +21,16 @@
 //   - Доставка по заявке — отдельная позиция заявки (CONFIG.DELIVERY_ITEM, её
 //     вписывает снабженец в окне счёта): показывается категорией «🚚 Доставка»,
 //     поэтому фильтр «Категория → 🚚 Доставка» видит реальные суммы доставки.
+//     Если доставку везла компания («Доставка компании»), сумма в счёт
+//     поставщика не входила — в колонке «Оплата» у такой строки стоит
+//     «🏢 Вне счёта», а не «Ожидает оплаты»: долга перед поставщиком нет.
 // =====================================================================
 
 import { db } from '../database.js';
+import { CONFIG } from '../config.js';
 import {
     log, toast, escapeHtml, formatMoney,
-    formatDate, roundMoney, isDeliveryItem
+    formatDate, roundMoney, isDeliveryItem, getDeliveryItemType
 } from '../utils.js';
 
 // =====================================================================
@@ -118,6 +122,15 @@ export async function loadRegistry() {
             const order = orderMap[it.order_id];
             if (!order) return;
 
+            // Доставка приходит отдельной позицией заявки, поэтому её и
+            // показываем категорией «🚚 Доставка»: фильтр «Категория» тогда
+            // видит реальные суммы доставки.
+            const deliveryType = getDeliveryItemType(it);
+            // Доставку компании поставщик не выставлял: её сумма в счёт
+            // (и в долг фирмы перед поставщиком) не входила, поэтому у строки
+            // своя отметка оплаты и в «Поставщике» прочерк.
+            const companyDelivery = deliveryType === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
+
             items.push({
                 _source: 'order',
                 _orderNumber: order.request_number,
@@ -128,11 +141,8 @@ export async function loadRegistry() {
                 qty: it.qty,
                 unitPrice: it.unit_price || 0,
                 sum: it.total_price || 0,
-                // Доставка приходит отдельной позицией заявки: показываем её
-                // категорией «🚚 Доставка», а не «📦 Материалы» — тогда фильтр
-                // «Категория» показывает, сколько стоила доставка.
-                category: isDeliveryItem(it) ? 'delivery' : 'materials',
-                supplier: order.supplier || '—',
+                category: deliveryType ? 'delivery' : 'materials',
+                supplier: companyDelivery ? '—' : (order.supplier || '—'),
                 project: order.project?.name || '—',
                 projectId: order.project_id,
                 section: order.section?.name || '—',
@@ -140,7 +150,9 @@ export async function loadRegistry() {
                 employee: order.created_by_emp?.name || '—',
                 // Статус оплаты берём у заявки: «Ожидает оплаты» держится до
                 // отметки финансиста по счёту, а не по каждой позиции.
-                payment: order.payment_status || it.payment_status || 'paid'
+                payment: companyDelivery
+                    ? 'company'
+                    : (order.payment_status || it.payment_status || 'paid')
             });
         });
     }
@@ -384,9 +396,14 @@ function renderRegistryRow(item) {
 
     const categoryLabel = CATEGORY_LABELS[item.category] || item.category || '—';
 
+    // 'company' — доставка компании: суммы в счёте поставщика не было, поэтому
+    // врать «Ожидает оплаты» нельзя — иначе долг перед поставщиком казался бы
+    // больше, чем он есть.
     const paymentBadge = item.payment === 'debt'
         ? `<span class="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold text-[10px]">Ожидает оплаты</span>`
-        : `<span class="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-bold text-[10px]">Оплачено</span>`;
+        : item.payment === 'company'
+            ? `<span class="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold text-[10px]" title="Доставка компании: в счёт поставщика не входит">🏢 Вне счёта</span>`
+            : `<span class="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-bold text-[10px]">Оплачено</span>`;
 
     return `
         <tr class="hover:bg-emerald-50/60 transition border-b">
@@ -455,7 +472,8 @@ export function exportRegistryToExcel() {
         'Цена за ед.': money(item.unitPrice),
         'Сумма': money(item.sum),
         'Категория': CATEGORY_LABELS[item.category] || item.category || '—',
-        'Оплата': item.payment === 'debt' ? 'Ожидает оплаты' : 'Оплачено',
+        'Оплата': item.payment === 'debt' ? 'Ожидает оплаты'
+            : item.payment === 'company' ? 'Вне счёта поставщика' : 'Оплачено',
         'Поставщик': item.supplier,
         'Объект': item.project,
         'Раздел': item.section,
