@@ -48,6 +48,12 @@ const store = {
         { id: 902, request_number: 'З-12/26', project_id: 3, section_id: 5, status: 'in_progress', supplier: null, total_sum: null, created_at: '2026-09-18T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } },
         { id: 903, request_number: 'З-13/26', project_id: 3, section_id: 5, status: 'delivered', supplier: 'Стройбаза Одесса', total_sum: 25000, created_at: '2026-09-19T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } }
     ],
+    // Позиции доставленной заявки: на них проверяется подробная карточка,
+    // которая открывается нажатием на карточку заявки в списке материалов.
+    orderItems: [
+        { id: 801, order_id: 903, name: 'Цемент М400', unit: 'меш', qty: 100, unit_price: 200, total_price: 20000, payment_status: 'debt' },
+        { id: 802, order_id: 903, name: 'Песок', unit: 'т', qty: 5, unit_price: 1000, total_price: 5000, payment_status: 'debt' }
+    ],
     cashRequests: [],
     cashRequestItems: [],
     cashOperations: [],
@@ -104,6 +110,15 @@ function rowsFor(table, params) {
         return rows.filter((row) => String(row[column]) === String(raw).replace(/^eq\./, ''));
     };
 
+    // Фильтр «по списку»: project_id=in.(3) — так рабочий экран прораба просит
+    // заявки только по своим объектам.
+    const byIn = (rows, column) => {
+        const raw = params[column];
+        if (!raw) return rows;
+        const list = String(raw).replace(/^in\.\(/, '').replace(/\)$/, '').split(',').map((v) => v.trim());
+        return rows.filter((row) => list.includes(String(row[column])));
+    };
+
     switch (table) {
         case 'employees': {
             let rows = store.employees.slice();
@@ -114,7 +129,18 @@ function rowsFor(table, params) {
         }
         case 'projects': return store.projects;
         case 'sections': return store.sections;
-        case 'orders': return store.orders;
+        case 'orders': {
+            let rows = byEq(store.orders, 'id');
+            rows = byIn(rows, 'project_id');
+            return rows.map((row) => ({
+                ...row,
+                project: store.projects.find((p) => p.id === row.project_id) || null,
+                section: store.sections.find((s) => s.id === row.section_id) || null,
+                created_by_emp: employee(row.created_by_employee_id),
+                payer: employee(row.payer_employee_id)
+            }));
+        }
+        case 'order_items': return byEq(store.orderItems, 'order_id');
         case 'cash_requests': return byEq(cashRequestRows(), 'id');
         case 'cash_request_items': return byEq(store.cashRequestItems, 'request_id');
         case 'cash_operations': {
@@ -139,6 +165,8 @@ function rowsFor(table, params) {
 function wantsSingleRow(table, params) {
     if (table === 'employees') return Boolean(params.user_id || params.id);
     if (table === 'employee_cash_balance') return Boolean(params.employee_id);
+    // openOrderDetail() добирает заявку по id через .maybeSingle() — тоже ждёт объект
+    if (table === 'orders') return Boolean(params.id);
     return false;
 }
 
@@ -799,6 +827,38 @@ try {
     ok('в фильтре «Все» видны все три заявки на материалы',
         ['З-11/26', 'З-12/26', 'З-13/26'].every((number) => materialsAll.includes(number)),
         materialsAll.replace(/\n/g, ' | ').slice(0, 200));
+
+    // Карточка заявки на материалы: суммы в списке нет (цену вносит снабженец
+    // при доставке), зато нажимается вся карточка и открывает подробную
+    // карточку заявки из «Снабжения» — состав, поставщик, даты, оплата счёта.
+    ok('в списке заявок на материалы нет сумм',
+        !materialsAll.includes('грн'),
+        materialsAll.replace(/\n/g, ' | ').slice(0, 200));
+
+    const materialsCards = await evaluate('(() => {' +
+        'const cards = Array.prototype.filter.call(document.querySelectorAll(\"#dash-block-materials-body button\"),' +
+        ' (b) => (b.getAttribute(\"onclick\") || \"\").indexOf(\"openOrderDetail\") >= 0);' +
+        'return { count: cards.length, text: cards.map((c) => c.innerText.trim()).join(\" || \") }; })()');
+    ok('каждая карточка заявки кликабельна целиком (3 заявки — 3 карточки)',
+        materialsCards.count === 3, JSON.stringify(materialsCards).slice(0, 220));
+
+    await evaluate('(() => {' +
+        'const card = Array.prototype.filter.call(document.querySelectorAll(\"#dash-block-materials-body button\"),' +
+        ' (b) => (b.getAttribute(\"onclick\") || \"\").indexOf(\"openOrderDetail(903)\") >= 0)[0];' +
+        'if (card) card.click();' +
+        'return !!card; })()');
+    await sleep(900);
+    const orderDetailCard = await evaluate('(() => ({' +
+        ' hidden: document.getElementById(\"order-detail-modal\").classList.contains(\"hidden\"),' +
+        ' text: (document.getElementById(\"order-detail-content\") || {}).innerText || \"\" }))()');
+    ok('нажатие на карточку открывает подробную карточку заявки: состав, поставщик, суммы',
+        !orderDetailCard.hidden &&
+        ['З-13/26', 'Стройбаза Одесса', 'Цемент М400', 'Песок', 'грн']
+            .every((part) => orderDetailCard.text.includes(part)),
+        orderDetailCard.text.replace(/\n/g, ' | ').slice(0, 400));
+
+    await evaluate('hideModal(\"order-detail-modal\")');
+    await sleep(300);
 
     await evaluate('window.setMyMaterialsFilter(\"supply\")');
     await sleep(400);

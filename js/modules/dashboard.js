@@ -436,6 +436,14 @@ export function setMyFinanceFilter(filter) {
 // объект»), следом последние пять закрытых и архивных. Фильтры «Поданы в
 // снабжение» и «Доставлено на объект» отвечают на два ежедневных вопроса
 // прораба: что уже заказано и что привезли (см. MATERIAL_FILTERS выше).
+//
+// Стоимости закупки в списке нет. Цену вносит снабженец при доставке (вместе
+// с поставщиком и счётом), а список отвечает на вопрос «что заказано», а не
+// «сколько это стоило» — сумма в каждой строке только мешала. Зато нажимается
+// ВСЯ карточка: она открывает общую подробную карточку заявки
+// openOrderDetail() из «Снабжения» — состав заявки (позиции, количество,
+// цены), объект и раздел, поставщик, даты и отметку об оплате счёта.
+// Раньше кликабельным был только номер заявки в маленькой кнопке.
 const ORDER_STATUS_ORDER = ['new', 'in_progress', 'delivered', 'closed', 'archived'];
 const ORDER_ACTIVE_STATUSES = ['new', 'in_progress', 'delivered'];
 
@@ -487,17 +495,17 @@ function renderMyMaterialOrdersBody() {
         const sectionName = order.section?.name || '';
 
         return `
-            <div class="rounded-lg border ${status.border} p-3">
+            <button type="button" onclick="window.openOrderDetail(${order.id})"
+                    class="w-full rounded-lg border ${status.border} p-3 text-left transition hover:bg-emerald-50/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <div class="flex flex-wrap items-center gap-2">
-                        <button type="button" onclick="window.openOrderDetail(${order.id})"
-                                class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(order.request_number)}</button>
+                        <span class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(order.request_number)}</span>
                         <span class="rounded px-1.5 py-0.5 text-[10px] font-bold ${status.bg} ${status.color}">${status.label}</span>
                     </div>
-                    <span class="text-sm font-bold text-[#166534]">${order.total_sum ? formatMoney(order.total_sum) : ''}</span>
+                    <span class="whitespace-nowrap text-[10px] font-semibold text-gray-400">Подробнее ›</span>
                 </div>
                 <p class="mt-1 text-[11px] text-gray-500">🏗 ${escapeHtml(projectName)}${sectionName ? ' · ' + escapeHtml(sectionName) : ''}${order.supplier ? ' · 🚚 ' + escapeHtml(order.supplier) : ''}${order.created_at ? ' · 📅 ' + formatDate(order.created_at) : ''}</p>
-            </div>
+            </button>
         `;
     }).join('');
 
