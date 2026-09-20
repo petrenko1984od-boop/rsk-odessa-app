@@ -142,6 +142,48 @@ function main() {
     ok('есть проверка, что ограничение больше не запрещает delivered',
         /MISSING — delivered запрещён/.test(sql) && /as k on true;/.test(sql));
 
+    // --- 3в. Отдельный файл быстрой правки ограничения статусов ---
+    // Короткий скрипт для случая «заявка не закрывается»: его копируют в
+    // SQL Editor целиком, поэтому он должен быть безопасен к копированию,
+    // повторному запуску и обрыву на ошибке — проверяем то же, что у миграции.
+    const FIX = path.join(ROOT, 'database', 'fix-orders-status-check.sql');
+
+    if (!fs.existsSync(FIX)) {
+        ok('есть файл database/fix-orders-status-check.sql', false, FIX);
+    } else {
+        const fix = fs.readFileSync(FIX, 'utf8');
+        const fixHandlers = (fix.match(/exception\s+when\s+others/gi) || []).length;
+
+        ok('fix-orders-status-check.sql: снимает старое и ставит новое ограничение',
+            /orders_status_check/.test(fix) && /drop constraint/i.test(fix) &&
+            /add constraint orders_status_check/i.test(fix), 'drop + add');
+
+        const fixMissing = STATUS_VALUES.filter((value) => !new RegExp(`'${value}'`).test(fix));
+        ok('fix-orders-status-check.sql: разрешает все статусы кода (включая delivered)',
+            fixMissing.length === 0, fixMissing.join(', ') || STATUS_VALUES.join(' | '));
+
+        ok('fix-orders-status-check.sql: шаги защищены и есть проверка результата',
+            fixHandlers >= 2 && /MISSING — delivered запрещён/.test(fix),
+            'обработчиков exception when others: ' + fixHandlers);
+
+        const fixTypo = codeLines(fix).filter((line) => TYPOGRAPHIC.test(line.code));
+        const fixInvisible = codeLines(fix).filter((line) => INVISIBLE.test(line.code));
+        const fixStripped = linesOf(fix)
+            .map((line) => {
+                const comment = line.indexOf('--');
+                return comment === -1 ? line : line.slice(0, comment);
+            })
+            .join('\n')
+            .replace(/'(?:[^']|'')*'/g, "''");
+        const fixEven = (open, close) => fixStripped.split(open).length === fixStripped.split(close).length;
+
+        ok('fix-orders-status-check.sql: чистый для копирования (кавычки, пробелы, скобки, $$)',
+            fixTypo.length === 0 && fixInvisible.length === 0 &&
+            fixEven('(', ')') && ((fix.match(/\$\$/g) || []).length % 2 === 0),
+            [...fixTypo, ...fixInvisible]
+                .map((line) => line.number + ': ' + line.code.trim().slice(0, 50)).join(' | '));
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'

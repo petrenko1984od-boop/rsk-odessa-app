@@ -12,7 +12,9 @@
 //   6. СТАРОЕ CHECK-ограничение orders_status_check (боевая база: список без
 //      'delivered') снимается, и заявку снова можно закрыть. Без этой правки
 //      приложение отвечало «new row for relation "orders" violates check
-//      constraint "orders_status_check"» — «заявка не закрывается».
+//      constraint "orders_status_check"» — «заявка не закрывается»;
+//   7. короткий файл database/fix-orders-status-check.sql (для случаев, когда
+//      миграцию целиком не запускают) лечит то же самое сам.
 //
 // Пакет нужен только для этого прогона:
 //     npm install @electric-sql/pglite
@@ -187,6 +189,56 @@ ok('самопроверка сообщает MISSING, а не молчит',
     verifyBroken.rows.map((row) => row.column_name + '=' + row.status).join(', ').slice(0, 160));
 
 await db.close();
+
+// --- отдельный файл database/fix-orders-status-check.sql ---------------------
+// Для случаев, когда миграцию целиком не запускают: короткий скрипт должен сам
+// снять устаревшее ограничение и поставить новое. Проверяем на том же
+// состоянии боевой базы (ограничение без 'delivered').
+const FIX = path.join(ROOT, 'database', 'fix-orders-status-check.sql');
+
+if (fs.existsSync(FIX)) {
+    const db2 = new PGlite();
+    await db2.exec(`
+        create table orders (
+            id bigint primary key,
+            status text not null default 'new'
+        );
+        alter table orders add constraint orders_status_check
+            check (status in ('new', 'in_progress', 'closed', 'archived'));
+        insert into orders (id, status) values (1, 'in_progress');
+    `);
+
+    let fixBefore = null;
+    try { await db2.exec("update orders set status = 'delivered' where id = 1"); }
+    catch (error) { fixBefore = error; }
+
+    let fixError = null;
+    try { await db2.exec(fs.readFileSync(FIX, 'utf8')); }
+    catch (error) { fixError = error; }
+
+    let fixAfter = null;
+    try { await db2.exec("update orders set status = 'delivered' where id = 1"); }
+    catch (error) { fixAfter = error; }
+
+    const fixConstraint = (await db2.query(`
+        select pg_get_constraintdef(oid) as def from pg_constraint
+        where conrelid = 'orders'::regclass and conname = 'orders_status_check'
+    `)).rows[0];
+
+    ok('fix-orders-status-check.sql: до правки delivered запрещён',
+        fixBefore !== null && /orders_status_check/.test(fixBefore.message),
+        fixBefore ? fixBefore.message : 'запись прошла — тест не воспроизвёл ошибку');
+    ok('fix-orders-status-check.sql: выполняется без ошибок', fixError === null,
+        fixError ? fixError.message : '');
+    ok('fix-orders-status-check.sql: после правки заявка закрывается', fixAfter === null,
+        fixAfter ? fixAfter.message : '');
+    ok('fix-orders-status-check.sql: ограничение допускает delivered',
+        /delivered/.test(fixConstraint?.def || ''), String(fixConstraint?.def || 'ограничения нет'));
+
+    await db2.close();
+} else {
+    ok('есть файл database/fix-orders-status-check.sql', false, FIX);
+}
 
 log('--- ИТОГ ---');
 log(failed === 0

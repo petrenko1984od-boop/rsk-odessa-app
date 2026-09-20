@@ -39,6 +39,9 @@ in the schema cache` или `column orders.payment_status does not exist` — э
 `invoice_uploaded_at`, `invoice_total`, `payment_status`, `delivered_at`, `paid_at`,
 `paid_by_employee_id`, а также обновляет CHECK-ограничение `orders_status_check`
 (старый список статусов не знает `delivered` — без этого заявка не закрывается).
+Если заявка уже не закрывается, а колонки на месте (ошибка `23514`,
+`violates check constraint "orders_status_check"`) — тот же шаг делает короткий
+служебный файл `database/fix-orders-status-check.sql`.
 Пока её нет, приложение пишет в уведомлении по-русски, чего
 именно не хватает: жёлтая плашка в «📦 Снабжении» и «📊 Реестре материалов»,
 красная строка в блоке «🧾 Счета на материалы», тост при сохранении
@@ -121,6 +124,10 @@ js/pwa.js             установка приложения (PWA): регис�
 js/modules/*.js       разделы: employees, projects, estimate, gantt, orders, cash,
                       cash-requests, registry, tasks, files, dashboard
 database/schema.sql   реконструкция схемы БД по коду (см. предупреждение в файле)
+database/migrate-v2.4.sql  миграция v2.4.0: 8 колонок в orders + обновление CHECK-ограничения
+                      статусов (status = 'delivered'), самопроверка в конце
+database/fix-orders-status-check.sql  служебный скрипт: «заявка не закрывается»
+                      (устаревшее ограничение orders_status_check) — короткая правка
 database/fix-unconfirmed-users.sql  запросы для SQL Editor: подтвердить аккаунты, застрявшие
                       без письма (Confirm email включён), и посмотреть непривязанных сотрудников
 sw.js                 service worker: офлайн-кэш оболочки приложения (данные из базы не кэширует)
