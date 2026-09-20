@@ -8,7 +8,7 @@
 // Это позволяет обрабатывать ошибки единообразно.
 // =====================================================================
 
-import { supabase, CONFIG } from './config.js';
+import { supabase } from './config.js';
 import { log, currentYear, formatRequestNumber, parseRequestNumber } from './utils.js';
 
 // =====================================================================
@@ -32,6 +32,60 @@ import { log, currentYear, formatRequestNumber, parseRequestNumber } from './uti
 // =====================================================================
 
 let schemaWarningShown = false;
+
+// Какая миграция добавила какие колонки. Нужна, чтобы подсказка называла
+// ИМЕННО тот файл, который лечит ошибку: колонки НДС и своей доставки приносит
+// database/migrate-v2.5.sql, и снабженец, которому посоветовали бы v2.4.0,
+// применил бы её и получил бы ту же ошибку второй раз.
+//
+// version — версия САМОЙ МИГРАЦИИ (не приложения!), и в подсказке для консоли
+// печатается именно она. Раньше там стояла версия приложения, и при
+// отсутствующей колонке из v2.4.0 (payment_status) администратор читал
+// «база не обновлена под v2.5.0» — то есть не про тот файл, который нужен.
+const MIGRATIONS = [
+    {
+        file: 'database/migrate-v2.5.sql',
+        version: '2.5.0',
+        why: 'НДС, режим цены счёта и своя доставка',
+        columns: [
+            'invoice_price_mode',
+            'invoice_vat_rate',
+            'vat_total',
+            'own_delivery_charge',
+            'own_delivery_employee_id',
+            'own_delivery_vat_rate',
+            'vat_rate',
+            'vat_amount',
+            'price_with_vat',
+            'delivery_kind'
+        ]
+    },
+    {
+        file: 'database/migrate-v2.4.sql',
+        version: '2.4.0',
+        why: 'счёт поставщика, доставка и оплата заявок',
+        columns: [
+            'invoice_path',
+            'invoice_file_name',
+            'invoice_uploaded_at',
+            'invoice_total',
+            'payment_status',
+            'delivered_at',
+            'paid_at',
+            'paid_by_employee_id'
+        ]
+    }
+];
+
+/**
+ * Миграция, которая добавляет колонку. Для незнакомого имени возвращает
+ * базовую v2.4.0 — на ней держится счёт поставщика целиком.
+ * @returns {{ file: string, version: string, why: string }}
+ */
+function migrationForColumn(column) {
+    const name = String(column || '').toLowerCase();
+    return MIGRATIONS.find(item => item.columns.includes(name)) || MIGRATIONS[MIGRATIONS.length - 1];
+}
 
 /**
  * Достаёт из ошибки PostgREST имя отсутствующей колонки и таблицы.
@@ -117,15 +171,18 @@ export function explainError(error) {
     }
 
     const where = missing.table ? `в таблице «${missing.table}»` : 'в базе данных';
+    const migration = migrationForColumn(missing.column);
 
     if (!schemaWarningShown) {
         schemaWarningShown = true;
-        log.error(`⚠ В таблице ${missing.table || '?'} нет колонки «${missing.column}» — база не обновлена под v${CONFIG.APP.VERSION}`);
-        log.error('⚠ Выполните database/migrate-v2.4.sql в Supabase → SQL Editor: без этих колонок счёт, доставка и оплата заявок не сохраняются.');
+        // Версия — из самой миграции (migration.version), а не CONFIG.APP.VERSION:
+        // иначе при старой базе консоль обещала бы v2.5.0 там, где нужен v2.4.0.
+        log.error(`⚠ В таблице ${missing.table || '?'} нет колонки «${missing.column}» — база не обновлена под v${migration.version}`);
+        log.error(`⚠ Выполните ${migration.file} в Supabase → SQL Editor: без этих колонок не сохраняются ${migration.why}.`);
     }
 
     return `База данных не обновлена: ${where} нет колонки «${missing.column}». ` +
-        'Примените database/migrate-v2.4.sql (Supabase → SQL Editor) и повторите действие.';
+        `Примените ${migration.file} (Supabase → SQL Editor) и повторите действие.`;
 }
 
 /**

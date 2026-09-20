@@ -4,8 +4,9 @@
 
 | Файл | Что это |
 | --- | --- |
-| `schema.sql` | Полная схема для **чистой** установки: таблицы, колонки, внешние ключи. Включает изменения v2.4.0 |
+| `schema.sql` | Полная схема для **чистой** установки: таблицы, колонки, внешние ключи. Включает изменения v2.4.0 и v2.5.0 |
 | `migrate-v2.4.sql` | Пошаговая миграция v2.4.0 для **уже работающей** базы: счёт поставщика по заявке, статус «Доставлено на объект», оплата счёта финансистом, обновление CHECK-ограничения `orders_status_check` |
+| `migrate-v2.5.sql` | Пошаговая миграция v2.5.0 для **уже работающей** базы: НДС (ПДВ) в счёте и в позициях заявки, признак вида доставки `delivery_kind`, учёт своей доставки из подотчёта (`source = 'own_delivery'`) |
 | `fix-unconfirmed-users.sql` | Служебный скрипт: что делать с аккаунтами, застрявшими в «Email not confirmed» |
 | `fix-orders-status-check.sql` | Служебный скрипт: если заявка не закрывается из-за устаревшего CHECK-ограничения `orders_status_check` (ошибка `23514`) — короткая правка вместо запуска всей миграции |
 
@@ -13,7 +14,8 @@
 
 `schema.sql` — это **реконструкция** схемы по коду, а не дамп боевой базы: там нет индексов,
 триггеров, политик RLS и настроек Storage. Поэтому на работающем проекте применяют
-**миграции по порядку**, а не `schema.sql`.
+**миграции по порядку**, а не `schema.sql`: сначала `migrate-v2.4.sql`, затем
+`migrate-v2.5.sql`.
 
 ### Как применить `migrate-v2.4.sql`
 
@@ -52,6 +54,72 @@
 Отдельного бакета Storage не нужно: счета лежат в бакете чеков.
 
 Повторный запуск безопасен.
+
+### Как применить `migrate-v2.5.sql`
+
+Файл нужен, когда приложение жалуется на колонки **НДС и своей доставки**: `invoice_price_mode`,
+`invoice_vat_rate`, `vat_total`, `own_delivery_charge`, `own_delivery_employee_id`,
+`own_delivery_vat_rate` (в `orders`), `vat_rate`, `vat_amount`, `price_with_vat`, `delivery_kind`
+(в `order_items`), `vat_rate`, `vat_amount` (в `cash_operations`).
+
+1. Supabase → **SQL Editor** → **New query**. Бэкап — как в шаге 2 выше.
+2. Откройте `database/migrate-v2.5.sql`, скопируйте файл **целиком** и вставьте в редактор → **Run**.
+3. Посмотрите результат запроса — самопроверка в конце файла даёт **12 строк со статусом `ok`**:
+
+   | table_name | column_name | status |
+   | --- | --- | --- |
+   | cash_operations | vat_rate | ok |
+   | cash_operations | vat_amount | ok |
+   | order_items | vat_rate | ok |
+   | order_items | vat_amount | ok |
+   | order_items | price_with_vat | ok |
+   | order_items | delivery_kind | ok |
+   | orders | invoice_price_mode | ok |
+   | orders | invoice_vat_rate | ok |
+   | orders | vat_total | ok |
+   | orders | own_delivery_charge | ok |
+   | orders | own_delivery_employee_id | ok |
+   | orders | own_delivery_vat_rate | ok |
+
+   Где `MISSING — примените файл целиком` — запустите файл ещё раз; во вкладке **Notices**
+   по каждой неудачной колонке будет точная ошибка базы.
+4. В **Notices** будет ещё два сообщения про уже созданные строки доставки: сколько строк
+   «Доставка» помечено доставкой поставщика (`delivery_kind = 'supplier'`), а «Доставка компании» —
+   своей (`delivery_kind = 'company'`). Имена строк и суммы не меняются.
+5. Обновите приложение (Ctrl+F5) и сохраните счёт ещё раз: в окне счёта появятся блоки
+   «🧮 ПДВ в счёте» и «🚚 Чья доставка», а в «📊 Реестре материалов» — колонка «в т.ч. ПДВ».
+
+Что делает миграция:
+
+* добавляет 12 колонок (6 в `orders`, 4 в `order_items`, 2 в `cash_operations`) — каждая отдельным
+  защищённым блоком (`add column if not exists` + `exception when others`), поэтому «наполовину
+  применённой» она не остаётся: один упавший `alter table` не отменяет остальные;
+* заполняет `delivery_kind` у уже созданных строк по имени (раньше вид доставки читался только по
+  тексту строки, и её нельзя было переименовать без риска развалить учёт);
+* просит PostgREST перечитать схему (`notify pgrst, 'reload schema'`) — иначе приложение ещё
+  несколько минут получает «Could not find the … column in the schema cache».
+
+Повторный запуск безопасен. Значения, которые пишет приложение, совпадают с `js/config.js`
+(`CONFIG.VAT.MODE` → `with_vat` / `without_vat`, `CONFIG.DELIVERY_ITEM.CHARGE` → `snagach` /
+`employee` / `firm`, `CONFIG.DELIVERY_ITEM.TYPE` → `supplier` / `company`), а согласованность
+«миграция ↔ схема ↔ код ↔ словарь» стережёт прогон `tools/checks/vat-check.mjs`.
+
+То же самое одним запросом (для отчёта «сколько колонок v2.5.0 есть»):
+
+```sql
+select count(*) as columns_present
+from information_schema.columns
+where table_schema = 'public' and (
+    (table_name = 'orders' and column_name in (
+        'invoice_price_mode', 'invoice_vat_rate', 'vat_total',
+        'own_delivery_charge', 'own_delivery_employee_id', 'own_delivery_vat_rate')) or
+    (table_name = 'order_items' and column_name in (
+        'vat_rate', 'vat_amount', 'price_with_vat', 'delivery_kind')) or
+    (table_name = 'cash_operations' and column_name in ('vat_rate', 'vat_amount'))
+);
+```
+
+Должно быть `12`. Меньше — примените `database/migrate-v2.5.sql` целиком.
 
 ### Если заявка не закрывается: `violates check constraint "orders_status_check"`
 
@@ -121,9 +189,11 @@ WARNING: НЕ ДОБАВЛЕНО — orders.payment_status: permission denied fo
 
 ### Если применилась только часть колонок
 
-Запустите обновлённый `migrate-v2.4.sql` целиком ещё раз — он добавит то, чего
+Запустите обновлённый файл целиком ещё раз — он добавит то, чего
 не хватает, а существующие колонки не тронет (`if not exists`). Самопроверка
-(**БЛОК 3**) покажет, что осталось.
+(**БЛОК 3** у v2.4.0, таблица из 12 строк у v2.5.0) покажет, что осталось.
+Для `migrate-v2.5.sql` это особенно безопасно: там **каждая** колонка — отдельный
+защищённый блок, поэтому падение одной не отменяет остальные.
 
 Если на боевой базе не хватает ровно тех четырёх колонок, которые не успели
 добавиться (проверьте самопроверкой!), можно выполнить только их:
@@ -197,9 +267,9 @@ where table_name = 'orders' and column_name in (
 
 ## Если миграция не применена — что видно в приложении
 
-PostgREST отвечает по-английски, поэтому в v2.4.0 такие ошибки переведены
+PostgREST отвечает по-английски, поэтому такие ошибки переведены
 (`js/database.js` → `explainError()`), и в интерфейсе видно, чего именно не
-хватает и что делать:
+хватает, **какой файл миграции применить** и что делать:
 
 * **раздел «📦 Снабжение»** — жёлтая плашка над списком заявок
   (`#orders-warning`, заполняет `js/modules/orders.js → loadOrders()`);
@@ -212,7 +282,15 @@ PostgREST отвечает по-английски, поэтому в v2.4.0 т�
 ```
 База данных не обновлена: в таблице «orders» нет колонки «payment_status».
 Примените database/migrate-v2.4.sql (Supabase → SQL Editor) и повторите действие.
+
+База данных не обновлена: в таблице «orders» нет колонки «invoice_price_mode».
+Примените database/migrate-v2.5.sql (Supabase → SQL Editor) и повторите действие.
 ```
+
+Файл в подсказке выбирается по **имени отсутствующей колонки** (`js/database.js` →
+`MIGRATIONS`): колонки НДС и своей доставки ведут к `migrate-v2.5.sql`, счёт поставщика,
+доставка и оплата заявки — к `migrate-v2.4.sql`. Так администратор не запускает не тот файл
+и не видит ту же ошибку второй раз.
 
 Сырые ответы базы, по которым легко узнать эту ситуацию:
 
@@ -222,8 +300,12 @@ PostgREST отвечает по-английски, поэтому в v2.4.0 т�
 | `column orders.delivered_at does not exist` (42703) | то же: в списке/реестре запрошена отсутствующая колонка |
 | `Could not find the 'delivered_at' column of 'orders' in the schema cache` (PGRST204) | запись — «Доставлено на объект» |
 | `Could not find the 'payment_status' column of 'orders' in the schema cache` (PGRST204) | запись — «Сохранить счёт» (именно это видно на боевой базе после половины миграции) |
+| `Could not find the 'vat_rate' column of 'order_items' in the schema cache` (PGRST204) | запись — «Сохранить счёт» на базе без v2.5.0 (НДС и своя доставка) |
+| `column orders.vat_total does not exist` (42703) | чтение `orders` — реестр и счета финансиста на базе без v2.5.0 |
 | `new row for relation "orders" violates check constraint "orders_status_check"` (23514) | запись `orders` — «🚚 Доставлено на объект»: устаревшее ограничение статусов без `delivered` (см. «Если заявка не закрывается») |
 
-Порядок действий в этом случае один: применить `migrate-v2.4.sql` целиком
-(см. «Если применилась только часть колонок») и обновить приложение (Ctrl+F5).
+Порядок действий в этом случае один: применить **нужный** файл миграции целиком и обновить
+приложение (Ctrl+F5). Какой именно — приложение пишет в подсказке:
+`migrate-v2.4.sql` (счёт поставщика, статусы, оплата заявки) или `migrate-v2.5.sql`
+(НДС и своя доставка); см. «Если применилась только часть колонок».
 

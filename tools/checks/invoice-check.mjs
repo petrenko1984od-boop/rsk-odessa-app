@@ -58,7 +58,11 @@ const store = {
     cash_operations: [],
     cash_requests: [],
     cash_request_items: [],
-    ids: { order: 901, orderItem: 5100, order_items: 6000, operation: 7000 }
+    // id строки выдаётся по ИМЕНИ таблицы: insertRows() берёт store.ids[table].
+    // Для cash_operations ключ обязателен: иначе расход получает id = undefined,
+    // и приложение не может его удалить — при возврате к «доставке поставщика»
+    // лишний расход подотчёта остаётся в базе (в v2.5.0 он убирается по id).
+    ids: { order: 901, orderItem: 5100, order_items: 6000, cash_operations: 7000 }
 };
 
 const requests = [];
@@ -170,6 +174,12 @@ function rowsFor(table, params) {
             rows = eq(rows, 'operation_type');
             rows = eq(rows, 'employee_id');
             rows = inList(rows, 'employee_id');
+            // Своя доставка ищется по заявке и по маркеру source (js/modules/
+            // orders.js → saveOwnDeliveryExpense). Без этих фильтров мок отдавал
+            // бы ЧУЖИЕ операции, и приложение правила бы не тот расход —
+            // проверка «лишний расход удаляется» была бы фиктивной.
+            rows = eq(rows, 'order_id');
+            rows = eq(rows, 'source');
             return rows.map((row) => ({ ...row, employee: employee(row.employee_id) }));
         }
         case 'cash_requests': return eq(store.cash_requests, 'id');
@@ -653,8 +663,9 @@ async function main() {
         Number(order.invoice_total) === 14000 && Number(order.total_sum) === 14800,
         'invoice_total=' + order.invoice_total + ', total_sum=' + order.total_sum);
 
-    // Повторное открытие окна: вид доставки восстанавливается по строке заявки
-    // (отдельной колонки в orders нет — вид хранится в имени строки).
+    // Повторное открытие окна: вид доставки берётся из строки заявки —
+    // order_items.delivery_kind (v2.5.0), а для строк, созданных раньше,
+    // миграция заполнила признак по имени («Доставка компании» → 'company').
     await evaluate('window.openOrderInvoiceModal(900)');
     await sleep(700);
     const restoredDelivery = await evaluate('(() => ({' +
@@ -775,11 +786,25 @@ async function main() {
     // Доставка компании в реестре: сумма в счёт поставщика не входила, поэтому
     // в колонке «Оплата» у строки НЕ «Ожидает оплаты» (долга фирмы нет),
     // а «🏢 Вне счёта»; категория при этом та же — «🚚 Доставка».
+    //
+    // С v2.5.0 вид доставки определяет КОЛОНКА order_items.delivery_kind, а не
+    // имя строки (иначе строку нельзя переименовать, не развалив учёт). Поэтому
+    // сначала убеждаемся, что одного переименования недостаточно, и только
+    // потом ставим признак — так же, как это делает миграция v2.5.0.
     log('--- реестр: доставка компании вне счёта поставщика ---');
     const registryDeliveryRow = store.order_items.find(
         (row) => row.order_id === 900 && row.name === 'Доставка'
     );
     registryDeliveryRow.name = 'Доставка компании';
+    await evaluate('window.switchTab("registry")');
+    await sleep(1600);
+
+    const renamedOnly = (await evaluate(text('registry-tbody'))).replace(/\s+/g, ' ');
+    ok('переименование строки само по себе не делает доставку «вне счёта» (решает delivery_kind)',
+        renamedOnly.includes('Доставка компании') && !renamedOnly.includes('🏢 Вне счёта'),
+        renamedOnly.slice(0, 220));
+
+    registryDeliveryRow.delivery_kind = 'company';
     await evaluate('window.switchTab("registry")');
     await sleep(1600);
 
@@ -790,9 +815,11 @@ async function main() {
         companyRegistry.includes('1 500,00'),
         companyRegistry.slice(0, 320));
 
-    // Возвращаем строку как была: следующие шаги ждут «доставку поставщика»
-    // с долгом перед поставщиком (строку берут из мока, как из базы).
+    // Возвращаем строку как была (и имя, и признак): следующие шаги ждут
+    // «доставку поставщика» с долгом перед поставщиком (строку берут из мока,
+    // как из базы).
     registryDeliveryRow.name = 'Доставка';
+    registryDeliveryRow.delivery_kind = 'supplier';
 
     // ------------------- 3. Финансист: оплата счёта -------------------
     await loginAs(9, 'Финансист');

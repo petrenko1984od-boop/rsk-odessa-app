@@ -64,7 +64,13 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        (database/migrate-v2.5.sql, js/config.js, js/utils.js, js/i18n.js,
 //        index.html, js/modules/orders.js, js/modules/cash.js,
 //        js/modules/registry.js, js/modules/dashboard.js).
-const SHELL_REVISION = 'r1';
+//   r2 — подсказка при непройденной миграции называет НУЖНЫЙ файл: колонки НДС
+//        и своей доставки ведут к database/migrate-v2.5.sql, а не к v2.4.0 —
+//        иначе администратор запускал не тот файл и видел ту же ошибку снова.
+//        В консоли та же подсказка называет версию НУЖНОЙ миграции (v2.4.0 для
+//        payment_status), а не версию приложения
+//        (js/database.js → MIGRATIONS, migrationForColumn(), explainError()).
+const SHELL_REVISION = 'r2';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

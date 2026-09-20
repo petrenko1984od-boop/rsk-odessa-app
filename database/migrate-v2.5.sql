@@ -168,14 +168,14 @@ begin
      where delivery_kind is null
        and name = 'Доставка';
     get diagnostics updated = row_count;
-    raise notice 'ok: order_items.delivery_kind=supplier у строк «Доставка»: %', updated;
+    raise notice 'ok: order_items.delivery_kind=supplier у строк "Доставка": %', updated;
 
     update order_items
        set delivery_kind = 'company'
      where delivery_kind is null
        and name = 'Доставка компании';
     get diagnostics updated = row_count;
-    raise notice 'ok: order_items.delivery_kind=company у строк «Доставка компании»: %', updated;
+    raise notice 'ok: order_items.delivery_kind=company у строк "Доставка компании": %', updated;
 exception when others then
     raise warning 'признак доставки НЕ заполнен: % (%) — приложение продолжит работать: вид доставки читается и по имени строки', sqlerrm, sqlstate;
 end $$;
