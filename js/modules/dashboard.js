@@ -3,7 +3,7 @@
 // =====================================================================
 
 import { db } from '../database.js';
-import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal, roundMoney, isExtraSectionName } from '../utils.js';
+import { escapeHtml, formatDate, formatMoney, log, showModal, hideModal, roundMoney, isExtraSectionName, isOwnDeliveryItem, ownDeliveryCoveredOrderIds } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 // Заявки на финансирование: прораб видит их на своём рабочем экране рядом
 // с задачами. loadCashRequests() наполняет кэш модуля, из которого берём
@@ -677,13 +677,29 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         .filter(order => ['delivered', 'closed', 'archived'].includes(order.status) && order.payment_source === 'company')
         .map(order => order.id));
     const orderIdsWithCashOperation = new Set((cashOperations || [])
+        // 'own_delivery' исключаем: это расход только за свою доставку, а не
+        // вся закупка заявки. Иначе из факта пропали бы и материалы заявки —
+        // заявку фирмы целиком в подотчёт никто не списывал.
+        // Остальные источники оставляем как раньше: заявка, оплаченная
+        // сотрудником, приходит в факт расходами, а не позициями.
+        .filter(operation => operation.source !== 'own_delivery')
         .map(operation => operation.order_id ? String(operation.order_id) : null)
         .filter(Boolean));
     const orderSectionMap = new Map((orders || [])
         .filter(order => closedOrderIds.has(order.id) && order.section_id && !orderIdsWithCashOperation.has(order.id))
         .map(order => [String(order.id), String(order.section_id)]));
+
+    // Своя доставка, оплаченная из подотчёта: её деньги уже посчитаны выше —
+    // строкой расхода кассы (category = 'delivery'). Поэтому позицию доставки
+    // в заявке пропускаем: без этого сумма вошла бы в перерасход объекта дважды.
+    const ownDeliveryPaidOrders = ownDeliveryCoveredOrderIds(cashOperations || []);
+
     (orderItems || []).forEach(item => {
         const sectionId = orderSectionMap.get(String(item.order_id));
+        if (!sectionId) return;
+
+        if (ownDeliveryPaidOrders.has(String(item.order_id)) && isOwnDeliveryItem(item)) return;
+
         const amount = Number(item.total_price) || 0;
         const sectionFacts = sectionFactMap.get(sectionId) || { materials: 0, works: 0 };
         sectionFacts.materials += amount;
@@ -980,14 +996,14 @@ export async function loadDashboard() {
             db.select('projects', { select: 'id, name, foreman_id' }),
             db.select('sections', { select: 'id, project_id, name, plan_works, plan_materials' }),
             db.select('cash_operations', {
-                select: 'id, order_id, project_id, section_id, operation_type, category, amount, created_at',
+                select: 'id, order_id, project_id, section_id, operation_type, category, amount, source, created_at',
                 orderBy: { column: 'created_at', asc: false }
             }),
             db.select('employee_cash_balance', { select: 'employee_id, balance' }),
             db.select('tasks', { select: 'id, title, project_id, status, deadline, completed_at, created_at' }),
             db.select('orders', { select: 'id, status, project_id, section_id, payment_source, request_number, supplier, created_at' }),
             db.select('employees', { select: 'id, name, position, status' }),
-            db.select('order_items', { select: 'id, order_id, total_price, payment_status' })
+            db.select('order_items', { select: 'id, order_id, name, total_price, payment_status' })
         ]);
 
         const failedResult = [

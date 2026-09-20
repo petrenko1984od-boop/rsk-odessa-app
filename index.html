@@ -475,6 +475,7 @@
                                 <th class="p-2.5 text-left">Кол-во</th>
                                 <th class="p-2.5 text-left">Цена за ед.</th>
                                 <th class="p-2.5 text-left">Сумма</th>
+                                <th class="p-2.5 text-left">в т.ч. ПДВ</th>
                                 <th class="p-2.5 text-left">Категория</th>
                                 <th class="p-2.5 text-left">Оплата</th>
                                 <th class="p-2.5 text-left">Поставщик</th>
@@ -924,6 +925,40 @@
 
                 <div class="border-t border-b py-3 space-y-2">
                     <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="order.invoicePrices">💰 Цены по позициям (по счёту)</p>
+                    <!-- НДС (ПДВ): галочки «+20%» здесь нет намеренно. Снабженец
+                         выбирает, как поставщик написал цены: налог либо
+                         ВЫДЕЛЯЕТСЯ из конечной суммы, либо добавляется сверху.
+                         Считает только js/utils.js → calcVat(), поэтому налог не
+                         может прибавиться дважды. Итог счёта в обоих режимах
+                         одинаковый — меняется лишь расшифровка «в т.ч. ПДВ». -->
+                    <div class="bg-gray-50 rounded-lg p-3 border space-y-2">
+                        <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="order.invoiceVatTitle">🧮 ПДВ в счёте</p>
+                        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                            <label class="flex items-center gap-2 text-sm text-gray-800 cursor-pointer">
+                                <input type="radio" name="order-invoice-vat-mode" value="with_vat"
+                                       id="order-invoice-vat-mode-with" checked class="w-4 h-4"
+                                       onchange="window.recalcOrderInvoiceTotal()">
+                                <span data-i18n="order.invoiceVatModeWith">Цены уже с ПДВ</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm text-gray-800 cursor-pointer">
+                                <input type="radio" name="order-invoice-vat-mode" value="without_vat"
+                                       id="order-invoice-vat-mode-without" class="w-4 h-4"
+                                       onchange="window.recalcOrderInvoiceTotal()">
+                                <span data-i18n="order.invoiceVatModeWithout">Цены без ПДВ (налог сверху)</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                                <span data-i18n="order.invoiceVatRate">Ставка ПДВ, %</span>
+                                <!-- Подсказки 0 / 7 / 20 подставляет js/modules/orders.js
+                                     из CONFIG.VAT.RATES, свою ставку можно вписать. -->
+                                <input type="number" step="0.01" min="0" max="100" id="order-invoice-vat-rate"
+                                       list="order-invoice-vat-rates" value="20"
+                                       class="w-20 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
+                                       oninput="window.recalcOrderInvoiceTotal()">
+                                <datalist id="order-invoice-vat-rates"></datalist>
+                            </label>
+                        </div>
+                        <p class="text-[11px] text-gray-500" data-i18n="order.invoiceVatHint">Выберите, как поставщик написал цены: «уже с ПДВ» — налог выделяется из суммы, «без ПДВ» — добавляется сверху. Итог счёта не меняется, меняется только расшифровка налога.</p>
+                    </div>
                     <!-- Строки позиций рисует js/modules/orders.js → openOrderInvoiceModal().
                          Позиция доставки (CONFIG.DELIVERY_ITEM) сюда не попадает: у неё
                          отдельное поле ниже — она приходит из счёта одной суммой. -->
@@ -958,11 +993,50 @@
                            class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
                            oninput="window.recalcOrderInvoiceTotal()">
                     <p class="text-[11px] text-gray-500" id="order-invoice-delivery-hint" data-i18n-skip>Везёт поставщик: сумма входит в итог счёта и уходит финансисту вместе с материалами. Пусто — доставки нет.</p>
+
+                    <!-- Своя доставка (везёт компания) — это деньги объекта, но
+                         платит их не поставщик. Показываем только для неё: кто
+                         списывает сумму. Если подотчёт (снабженца или другого
+                         сотрудника) — js/modules/orders.js создаёт расход кассы
+                         (source = 'own_delivery'), и строка заявки перестаёт
+                         считаться деньгами, иначе сумма попала бы в итоги дважды.
+                         «Платит фирма» — расход не создаём: строка заявки, как и
+                         раньше, остаётся себестоимостью объекта. -->
+                    <div id="order-invoice-own-charge-block" class="hidden space-y-2 pt-2 border-t border-gray-200">
+                        <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="order.invoiceOwnChargeTitle">💳 Чем списываем свою доставку</p>
+                        <select id="order-invoice-own-charge"
+                                class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
+                                onchange="window.updateOrderInvoiceDeliveryHints()">
+                            <option value="snagach" data-i18n="order.invoiceOwnChargeSnagach">С подотчёта снабженца (я платил)</option>
+                            <option value="employee" data-i18n="order.invoiceOwnChargeEmployee">С подотчёта сотрудника</option>
+                            <option value="firm" data-i18n="order.invoiceOwnChargeFirm">Платит фирма (безнал)</option>
+                        </select>
+                        <div id="order-invoice-own-employee-block" class="hidden space-y-1">
+                            <label class="block text-xs font-semibold text-gray-600" for="order-invoice-own-employee" data-i18n="order.invoiceOwnEmployee">Чей подотчёт</label>
+                            <select id="order-invoice-own-employee"
+                                    class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                                <option value="">— выбери сотрудника —</option>
+                            </select>
+                            <p class="text-[10px] text-gray-400" data-i18n="order.invoiceOwnEmployeeHint">Расход спишется с подотчёта выбранного сотрудника: для объекта это внутренний расход (транспортный отдел, водитель), а не счёт поставщика.</p>
+                        </div>
+                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                            <span data-i18n="order.invoiceOwnDeliveryVat">ПДВ на доставку, %</span>
+                            <input type="number" step="0.01" min="0" max="100" id="order-invoice-own-vat-rate" value="0"
+                                   class="w-20 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
+                                   oninput="window.recalcOrderInvoiceTotal()">
+                        </label>
+                    </div>
                 </div>
 
-                <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
-                    <span class="text-xs font-bold text-gray-600 uppercase" data-i18n="order.invoiceTotal">Итого по счёту</span>
-                    <span class="text-lg font-bold text-[#166534]" id="order-invoice-total">0,00 грн</span>
+                <div class="bg-emerald-50 rounded-lg p-3 border border-emerald-200 space-y-1">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold text-gray-600 uppercase" data-i18n="order.invoiceTotal">Итого по счёту</span>
+                        <span class="text-lg font-bold text-[#166534]" id="order-invoice-total">0,00 грн</span>
+                    </div>
+                    <!-- Расшифровка для бухгалтера: сколько налога внутри итога и
+                         сколько без него. Ставит js/modules/orders.js →
+                         recalcOrderInvoiceTotal() (только когда есть налог). -->
+                    <p class="hidden text-[11px] text-gray-600" id="order-invoice-vat-summary"></p>
                 </div>
 
                 <!-- Доставка компании в счёт поставщика не входит: показываем сумму

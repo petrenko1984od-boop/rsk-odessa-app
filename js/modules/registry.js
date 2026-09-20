@@ -24,13 +24,21 @@
 //     Если доставку везла компания («Доставка компании»), сумма в счёт
 //     поставщика не входила — в колонке «Оплата» у такой строки стоит
 //     «🏢 Вне счёта», а не «Ожидает оплаты»: долга перед поставщиком нет.
+//   - Своя доставка (v2.5.0): если она оплачена из подотчёта, деньги лежат в
+//     cash_operations (source = 'own_delivery'), поэтому строка заявки в реестр
+//     НЕ попадает — вместо неё показывается расход с пометкой «🚚 Своя
+//     доставка». Иначе одна сумма стояла бы в таблице дважды.
+//   - НДС: у строки показывается «в т.ч. ПДВ» (order_items.vat_amount /
+//     cash_operations.vat_amount). Сумма при этом ВСЕГДА с налогом — колонка
+//     «Сумма» остаётся деньгами к оплате, поэтому итоги реестра не меняются.
 // =====================================================================
 
 import { db } from '../database.js';
 import { CONFIG } from '../config.js';
 import {
     log, toast, escapeHtml, formatMoney,
-    formatDate, roundMoney, isDeliveryItem, getDeliveryItemType
+    formatDate, roundMoney, isDeliveryItem, getDeliveryItemType,
+    isOwnDeliveryCovered, ownDeliveryCoveredOrderIds
 } from '../utils.js';
 
 // =====================================================================
@@ -66,7 +74,12 @@ const CATEGORY_LABELS = {
 export async function loadRegistry() {
     log.info('Загрузка реестра материалов...');
 
-    const items = [];
+    const items = [];       // готовые строки таблицы
+    // Строки заявок собираем отдельно: их добавим ПОСЛЕ расходов. Причина —
+    // своя доставка: если за неё уже заплатили из подотчёта, её деньги лежат
+    // расходом кассы, и строку заявки показывать нельзя (сумма удвоилась бы).
+    // Узнать об этом можно только по загруженным операциям (шаг 2).
+    const orderRows = [];
 
     // ============================================================
     // 1. Заявки с оплатой фирмой (status: closed ИЛИ archived)
@@ -131,16 +144,20 @@ export async function loadRegistry() {
             // своя отметка оплаты и в «Поставщике» прочерк.
             const companyDelivery = deliveryType === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
 
-            items.push({
+            orderRows.push({
                 _source: 'order',
                 _orderNumber: order.request_number,
                 _orderId: order.id,
+                order_id: order.id,
                 date: order.delivered_at || order.closed_at || order.created_at,
                 name: it.name,
                 unit: it.unit || 'шт',
                 qty: it.qty,
                 unitPrice: it.unit_price || 0,
                 sum: it.total_price || 0,
+                // НДС внутри суммы (v2.5.0). У строк, созданных раньше, ноль —
+                // колонка «в т.ч. ПДВ» тогда показывает прочерк.
+                vat: Number(it.vat_amount) || 0,
                 category: deliveryType ? 'delivery' : 'materials',
                 supplier: companyDelivery ? '—' : (order.supplier || '—'),
                 project: order.project?.name || '—',
@@ -202,12 +219,26 @@ export async function loadRegistry() {
                 const orderInfo = orderNumbersMap[exp.order_id];
                 sourceLabel = orderInfo ? orderInfo.request_number : '—';
                 supplier = orderInfo?.supplier || '—';
+            } else if (exp.source === 'own_delivery' && exp.order_id) {
+                // Своя доставка: расход создало само приложение при сохранении
+                // счёта (js/modules/orders.js). Поставщика нет — везли своими
+                // силами, поэтому в «Поставщике» прочерк, а в «Источнике» —
+                // номер заявки, к которой расход относится.
+                const orderInfo = orderNumbersMap[exp.order_id];
+                sourceLabel = orderInfo ? orderInfo.request_number : '—';
+                supplier = '—';
             }
+
+            // Тип строки: заявка, оплаченная сотрудником, прямой расход или
+            // своя доставка из подотчёта (у неё своя пометка в таблице).
+            const rowSource = exp.source === 'own_delivery'
+                ? 'own_delivery'
+                : (exp.source === 'order' ? 'order_employee' : 'expense');
 
             if (expItems.length > 0) {
                 expItems.forEach(it => {
                     items.push({
-                        _source: exp.source === 'order' ? 'order_employee' : 'expense',
+                        _source: rowSource,
                         _orderNumber: sourceLabel,
                         _orderId: exp.order_id,
                         date: exp.operation_date || exp.created_at,
@@ -216,6 +247,7 @@ export async function loadRegistry() {
                         qty: it.qty,
                         unitPrice: it.price || 0,
                         sum: it.sum || 0,
+                        vat: Number(exp.vat_amount) || 0,
                         // Заявку оплатил снабженец из подотчёта — позиции пришли
                         // из cash_operation (category там одна на операцию),
                         // поэтому доставку тоже показываем её категорией.
@@ -231,7 +263,7 @@ export async function loadRegistry() {
                 });
             } else {
                 items.push({
-                    _source: exp.source === 'order' ? 'order_employee' : 'expense',
+                    _source: rowSource,
                     _orderNumber: sourceLabel,
                     _orderId: exp.order_id,
                     date: exp.operation_date || exp.created_at,
@@ -240,6 +272,7 @@ export async function loadRegistry() {
                     qty: 1,
                     unitPrice: exp.amount,
                     sum: exp.amount,
+                    vat: Number(exp.vat_amount) || 0,
                     category: exp.category,
                     supplier: supplier,
                     project: exp.project?.name || '—',
@@ -252,6 +285,21 @@ export async function loadRegistry() {
             }
         });
     }
+
+    // ---- Строки заявок: добавляем после расходов ----
+    // Своя доставка, оплаченная из подотчёта, уже показана строкой расхода
+    // (source = 'own_delivery'), поэтому строку заявки пропускаем: иначе одна
+    // и та же сумма стояла бы в таблице дважды. Заявки, где доставку ещё не
+    // оплатили (или платит фирма), проходят как раньше — «🏢 Вне счёта».
+    const coveredOwnDelivery = ownDeliveryCoveredOrderIds(expenses || []);
+
+    orderRows.forEach(row => {
+        if (isOwnDeliveryCovered(row, coveredOwnDelivery)) {
+            log.info(`Реестр: своя доставка по заявке ${row._orderNumber} — деньги в расходе подотчёта, строку заявки не показываем`);
+            return;
+        }
+        items.push(row);
+    });
 
     // Сортируем по дате (сначала новые)
     items.sort((a, b) => {
@@ -390,6 +438,11 @@ function renderRegistryRow(item) {
         sourceBadge = `<span class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold" title="Заявка (оплата фирмой)">📦 Заявка</span>`;
     } else if (item._source === 'order_employee') {
         sourceBadge = `<span class="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold" title="Заявка (оплата сотрудником)">📦 Заявка</span>`;
+    } else if (item._source === 'own_delivery') {
+        // Своя доставка: расход подотчёта, созданный при сохранении счёта.
+        // Отдельная пометка нужна, чтобы в реестре было видно: это не счёт
+        // поставщика, а внутренний расход (водитель, транспортный отдел).
+        sourceBadge = `<span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold" title="Своя доставка: расход подотчёта">🚚 Своя доставка</span>`;
     } else {
         sourceBadge = `<span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold" title="Прямой расход">💰 Расход</span>`;
     }
@@ -413,6 +466,7 @@ function renderRegistryRow(item) {
             <td class="p-2.5 whitespace-nowrap text-xs">${item.qty} ${escapeHtml(item.unit)}</td>
             <td class="p-2.5 whitespace-nowrap text-xs">${formatMoney(item.unitPrice)}</td>
             <td class="p-2.5 whitespace-nowrap text-xs font-bold text-[#15803d]">${formatMoney(item.sum)}</td>
+            <td class="p-2.5 whitespace-nowrap text-xs text-gray-600" title="НДС внутри суммы (справочно: деньги в колонке «Сумма» уже с налогом)">${item.vat > 0 ? formatMoney(item.vat) : '—'}</td>
             <td class="p-2.5 whitespace-nowrap text-xs">${categoryLabel}</td>
             <td class="p-2.5 whitespace-nowrap text-xs">${paymentBadge}</td>
             <td class="p-2.5 text-xs text-gray-700">${escapeHtml(item.supplier)}</td>
@@ -471,6 +525,8 @@ export function exportRegistryToExcel() {
         'Ед. изм.': item.unit,
         'Цена за ед.': money(item.unitPrice),
         'Сумма': money(item.sum),
+        'в т.ч. ПДВ': item.vat > 0 ? money(item.vat) : 0,
+        'Без ПДВ': item.vat > 0 ? money(roundMoney(Number(item.sum) - Number(item.vat))) : money(item.sum),
         'Категория': CATEGORY_LABELS[item.category] || item.category || '—',
         'Оплата': item.payment === 'debt' ? 'Ожидает оплаты'
             : item.payment === 'company' ? 'Вне счёта поставщика' : 'Оплачено',

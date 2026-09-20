@@ -19,7 +19,8 @@ import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatDateTime, formatMoney, roundMoney,
-    isDeliveryItem, getDeliveryItemType, getDeliveryItemName
+    isDeliveryItem, getDeliveryItemType, getDeliveryItemName,
+    calcVat, vatFromTotal, normalizeVatRate
 } from '../utils.js';
 import {
     can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
@@ -1026,6 +1027,12 @@ export async function closeOrder(event) {
     const companyUnpaid = paymentSource === 'company' && !order.paid_at;
     const itemPaymentStatus = companyUnpaid ? 'debt' : 'paid';
 
+    // НДС на этом шаге не вводится: ставка берётся из счёта заявки, а цены —
+    // конечные суммы к оплате, поэтому налог только ВЫДЕЛЯЕМ (ничего не
+    // добавляем). Заявка без счёта (ставка не задана) — налога нет.
+    const invoiceVatRate = normalizeVatRate(order.invoice_vat_rate);
+    const ownDeliveryVatRate = normalizeVatRate(order.own_delivery_vat_rate);
+
     for (const row of rows) {
         const itemId = parseInt(row.dataset.itemId, 10);
         const name = row.dataset.itemName;
@@ -1042,6 +1049,12 @@ export async function closeOrder(event) {
         const totalPrice = roundMoney(qty * unitPrice);
         totalSum = roundMoney(totalSum + totalPrice);
 
+        // У доставки своя ставка: у поставщика — ставка счёта, у своей — её
+        // собственная (перевозка своими силами часто без налога).
+        const rowVatRate = getDeliveryItemType({ name }) === CONFIG.DELIVERY_ITEM.TYPE.COMPANY
+            ? ownDeliveryVatRate
+            : invoiceVatRate;
+
         updatedItems.push({
             id: itemId,
             name,
@@ -1049,7 +1062,9 @@ export async function closeOrder(event) {
             unit,
             unit_price: unitPrice,
             total_price: totalPrice,
-            payment_status: paymentStatus
+            payment_status: paymentStatus,
+            vat_rate: rowVatRate,
+            vat_amount: vatFromTotal(totalPrice, rowVatRate)
         });
     }
 
@@ -1073,6 +1088,22 @@ export async function closeOrder(event) {
 
         if (error) {
             log.error('Ошибка обновления позиции:', error.message);
+        }
+    }
+
+    // 1б. НДС пишем ОТДЕЛЬНОЙ попыткой: если миграция v2.5.0 ещё не применена,
+    //     заявка всё равно закроется (цены — главное), а в лог попадёт причина.
+    //     Молча не «теряем» налог: он пересчитается при следующем сохранении
+    //     счёта, а в консоли видно предупреждение.
+    for (const item of updatedItems) {
+        const { error } = await db.update('order_items', {
+            vat_rate: item.vat_rate,
+            vat_amount: item.vat_amount,
+            price_with_vat: true
+        }, { id: item.id });
+
+        if (error) {
+            log.warn('НДС позиции не записан (нужна миграция v2.5.0?):', error.message);
         }
     }
 
@@ -1186,6 +1217,122 @@ function invoiceFileName(originalName) {
     return (base || 'invoice') + ext;
 }
 
+// =====================================================================
+// НДС И СВОЯ ДОСТАВКА В ОКНЕ СЧЁТА (v2.5.0)
+// =====================================================================
+// Галочки «+20%» здесь нет намеренно: у поставщиков цены бывают и без налога,
+// и уже с ним. Поэтому снабженец выбирает РЕЖИМ ввода (цены уже с ПДВ / без
+// него) и ставку, а налог всегда считает js/utils.js → calcVat(). Отсюда
+// правило «налог не прибавляется дважды»: в режиме «с ПДВ» он ВЫДЕЛЯЕТСЯ из
+// введённой суммы, в режиме «без ПДВ» — добавляется ровно один раз при
+// сохранении. Итог счёта в обоих режимах одинаковый, меняется только
+// расшифровка «в т.ч. ПДВ».
+//
+// Деньги по позициям (order_items.unit_price / total_price) хранятся С НДС —
+// это то, что реально платит фирма. Поэтому orders.invoice_total и total_sum
+// по смыслу не меняются, а НДС виден колонкой в реестре и расшифровкой под
+// итогом счёта.
+//
+// Своя доставка (везёт компания) оплачивается не поставщику, а своим: если
+// сумму списывают с подотчёта, создаётся расход кассы (source = 'own_delivery',
+// см. saveOwnDeliveryExpense ниже), и строка заявки перестаёт считаться
+// деньгами — иначе одна сумма попала бы в итоги дважды.
+
+/** Режим ввода цен в счёте: CONFIG.VAT.MODE.WITH_VAT (по умолчанию) или WITHOUT_VAT. */
+function getInvoiceVatMode() {
+    const value = document.querySelector('input[name="order-invoice-vat-mode"]:checked')?.value;
+    return value === CONFIG.VAT.MODE.WITHOUT_VAT
+        ? CONFIG.VAT.MODE.WITHOUT_VAT
+        : CONFIG.VAT.MODE.WITH_VAT;
+}
+
+/** Ставка НДС счёта, % — пустое поле значит «налога нет». */
+function getInvoiceVatRate() {
+    return normalizeVatRate(document.getElementById('order-invoice-vat-rate')?.value);
+}
+
+/**
+ * Ставка НДС на свою доставку, %.
+ * Отдельная от ставки материалов: перевозка своими силами часто без налога.
+ */
+function getInvoiceOwnVatRate() {
+    return normalizeVatRate(document.getElementById('order-invoice-own-vat-rate')?.value);
+}
+
+/** Чем закрываем свою доставку: CONFIG.DELIVERY_ITEM.CHARGE.* (по умолчанию снабженец). */
+function getInvoiceOwnCharge() {
+    const charge = CONFIG.DELIVERY_ITEM?.CHARGE || {};
+    const value = document.getElementById('order-invoice-own-charge')?.value;
+    const allowed = [charge.SNAGACH, charge.EMPLOYEE, charge.FIRM];
+    return allowed.includes(value) ? value : (charge.SNAGACH || 'snagach');
+}
+
+/** id сотрудника, чей подотчёт списываем (нужен только для CHARGE.EMPLOYEE). */
+function getInvoiceOwnEmployeeId() {
+    const value = parseInt(document.getElementById('order-invoice-own-employee')?.value, 10);
+    return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Подсказки ставки (0 / 7 / 20) — из конфига, чтобы значения не расходились. */
+function fillInvoiceVatRateOptions() {
+    const list = document.getElementById('order-invoice-vat-rates');
+    if (!list) return;
+    list.innerHTML = (CONFIG.VAT?.RATES || []).map(rate => `<option value="${rate}"></option>`).join('');
+}
+
+/** Ставит радиокнопку режима ввода цен. */
+function setInvoiceVatMode(mode) {
+    const without = mode === CONFIG.VAT.MODE.WITHOUT_VAT;
+    const radio = document.getElementById(without ? 'order-invoice-vat-mode-without' : 'order-invoice-vat-mode-with');
+    if (radio) radio.checked = true;
+}
+
+/**
+ * Заполняет список «чей подотчёт» активными сотрудниками.
+ * Нужен, когда свою доставку списывают не со снабженца, а с водителя или
+ * транспортного отдела: расход уходит на подотчёт этого сотрудника, а объект
+ * видит сумму как внутренний расход, а не как счёт поставщика.
+ */
+async function fillInvoiceOwnEmployees(selectedId = null) {
+    const select = document.getElementById('order-invoice-own-employee');
+    if (!select) return;
+
+    const { data, error } = await db.select('employees', {
+        select: 'id, name, position',
+        filters: { status: 'active' },
+        orderBy: { column: 'name', asc: true }
+    });
+
+    if (error) {
+        log.warn('Не удалось загрузить сотрудников для своей доставки:', error.message);
+        return;
+    }
+
+    const wanted = selectedId ? String(selectedId) : select.value;
+    select.innerHTML = '<option value="">— выбери сотрудника —</option>' +
+        (data || []).map(emp => `<option value="${emp.id}">${escapeHtml(emp.name)}${emp.position ? ' · ' + escapeHtml(emp.position) : ''}</option>`).join('');
+    select.value = wanted || '';
+}
+
+/**
+ * Цена для поля ввода по позиции.
+ *
+ * В режиме «цены уже с ПДВ» показываем то, что хранится (сумма к оплате).
+ * В режиме «без ПДВ» показываем цену БЕЗ налога: иначе при повторном
+ * сохранении того же счёта налог прибавился бы второй раз.
+ */
+function invoiceItemInputPrice(item, priceMode, vatRate) {
+    const unitPrice = Number(item?.unit_price) || 0;
+    if (!unitPrice) return '';
+
+    if (priceMode !== CONFIG.VAT.MODE.WITHOUT_VAT) return String(unitPrice);
+
+    const qty = Number(item?.qty) || 0;
+    const vatAmount = Number(item?.vat_amount) || 0;
+    const vatPerUnit = qty > 0 ? vatAmount / qty : 0;
+    return String(roundMoney(unitPrice - vatPerUnit));
+}
+
 /** Открывает окно загрузки счёта по заявке. */
 export async function openOrderInvoiceModal(orderId) {
     if (!canProcessOrder()) {
@@ -1217,6 +1364,26 @@ export async function openOrderInvoiceModal(orderId) {
             : '';
     }
 
+    // НДС: режим и ставка восстанавливаются из заявки. У заявок, сохранённых до
+    // v2.5.0, стоит значение по умолчанию — «цены уже с ПДВ»: при нём в суммы
+    // ничего не добавляется, и учёт остаётся прежним.
+    const priceMode = order.invoice_price_mode === CONFIG.VAT.MODE.WITHOUT_VAT
+        ? CONFIG.VAT.MODE.WITHOUT_VAT
+        : CONFIG.VAT.DEFAULT_MODE;
+    const vatRate = normalizeVatRate(order.invoice_vat_rate ?? CONFIG.VAT.DEFAULT_RATE);
+
+    setInvoiceVatMode(priceMode);
+    const rateInput = document.getElementById('order-invoice-vat-rate');
+    if (rateInput) rateInput.value = String(vatRate);
+    fillInvoiceVatRateOptions();
+
+    // Своя доставка: чем закрывали в прошлый раз и чей подотчёт списывали.
+    const chargeSelect = document.getElementById('order-invoice-own-charge');
+    if (chargeSelect) chargeSelect.value = order.own_delivery_charge || CONFIG.DELIVERY_ITEM.DEFAULT_CHARGE;
+    const ownRateInput = document.getElementById('order-invoice-own-vat-rate');
+    if (ownRateInput) ownRateInput.value = String(Number(order.own_delivery_vat_rate) || 0);
+    await fillInvoiceOwnEmployees(order.own_delivery_employee_id);
+
     const items = (order._items || []).filter(it => !isDeliveryItem(it));
     const deliveryItem = (order._items || []).find(isDeliveryItem) || null;
 
@@ -1246,7 +1413,7 @@ export async function openOrderInvoiceModal(orderId) {
                         <p class="text-[11px] text-gray-500">${it.qty} ${escapeHtml(it.unit || 'шт')}</p>
                     </div>
                     <input type="number" step="0.01" min="0" placeholder="Цена, грн"
-                           value="${it.unit_price || ''}"
+                           value="${invoiceItemInputPrice(it, priceMode, vatRate)}"
                            class="order-invoice-price w-24 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
                            oninput="window.recalcOrderInvoiceTotal()">
                 </div>
@@ -1289,12 +1456,36 @@ function setInvoiceDeliveryType(type) {
  */
 export function updateOrderInvoiceDeliveryHints() {
     const company = getInvoiceDeliveryType() === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
+    const charge = getInvoiceOwnCharge();
 
     const label = document.getElementById('order-invoice-delivery-label');
     if (label) label.textContent = company ? t('order.invoiceDeliveryCompanyLabel') : t('order.invoiceDelivery');
 
+    // Подсказка объясняет и «кто везёт», и «чем платим». Для своей доставки из
+    // подотчёта деньги уходят расходом кассы, и строка заявки деньгами уже не
+    // считается — иначе одна сумма попала бы в итоги дважды.
     const hint = document.getElementById('order-invoice-delivery-hint');
-    if (hint) hint.textContent = company ? t('order.invoiceDeliveryCompanyHint') : t('order.invoiceDeliveryHint');
+    if (hint) {
+        if (!company) {
+            hint.textContent = t('order.invoiceDeliveryHint');
+        } else if (charge === CONFIG.DELIVERY_ITEM.CHARGE.FIRM) {
+            hint.textContent = t('order.invoiceDeliveryCompanyHint');
+        } else {
+            hint.textContent = charge === CONFIG.DELIVERY_ITEM.CHARGE.EMPLOYEE
+                ? t('order.invoiceOwnHintEmployee')
+                : t('order.invoiceOwnHintSnagach');
+        }
+    }
+
+    // Блок «чем списываем» относится только к своей доставке, а список
+    // сотрудников нужен только когда списываем не со снабженца.
+    const chargeBlock = document.getElementById('order-invoice-own-charge-block');
+    if (chargeBlock) chargeBlock.classList.toggle('hidden', !company);
+
+    const employeeBlock = document.getElementById('order-invoice-own-employee-block');
+    if (employeeBlock) {
+        employeeBlock.classList.toggle('hidden', charge !== CONFIG.DELIVERY_ITEM.CHARGE.EMPLOYEE);
+    }
 
     recalcOrderInvoiceTotal();
 }
@@ -1330,12 +1521,18 @@ function invoiceDeliveryAmount() {
  */
 export function recalcOrderInvoiceTotal() {
     const rows = document.querySelectorAll('.order-invoice-item');
-    let total = 0;
+    const withVat = getInvoiceVatMode() !== CONFIG.VAT.MODE.WITHOUT_VAT;
+    const rate = getInvoiceVatRate();
+
+    let total = 0;    // деньги по позициям — С НДС
+    let vatSum = 0;   // сколько налога внутри этих денег
 
     rows.forEach(row => {
         const qty = parseFloat(row.dataset.itemQty) || 0;
         const price = parseFloat(row.querySelector('.order-invoice-price')?.value) || 0;
-        total = roundMoney(total + qty * price);
+        const rowVat = calcVat(roundMoney(qty * price), rate, withVat);
+        total = roundMoney(total + rowVat.total);
+        vatSum = roundMoney(vatSum + rowVat.vat);
     });
 
     // Доставка — отдельная строка счёта (CONFIG.DELIVERY_ITEM): входит в итог
@@ -1343,10 +1540,26 @@ export function recalcOrderInvoiceTotal() {
     const delivery = invoiceDeliveryAmount();
     const company = getInvoiceDeliveryType() === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
 
-    if (!company) total = roundMoney(total + delivery);
+    if (!company) {
+        // Сумму доставки снабженец вписывает так, как её выставил поставщик
+        // (это реальная сумма к оплате), поэтому налог здесь только выделяем —
+        // добавлять сверху значило бы заплатить поставщику лишнее.
+        total = roundMoney(total + delivery);
+        vatSum = roundMoney(vatSum + vatFromTotal(delivery, rate));
+    }
 
     const totalEl = document.getElementById('order-invoice-total');
     if (totalEl) totalEl.textContent = formatMoney(total);
+
+    // Расшифровка для бухгалтера: налог внутри итога и сумма без налога.
+    const summaryEl = document.getElementById('order-invoice-vat-summary');
+    if (summaryEl) {
+        const show = vatSum > 0;
+        summaryEl.textContent = show
+            ? `${t('order.invoiceVatAmount')}: ${formatMoney(vatSum)} · ${t('order.invoiceVatBase')}: ${formatMoney(roundMoney(total - vatSum))}`
+            : '';
+        summaryEl.classList.toggle('hidden', !show);
+    }
 
     updateOrderInvoiceDeliveryNote(delivery, company);
 }
@@ -1359,18 +1572,29 @@ export function recalcOrderInvoiceTotal() {
  *                у заявки одна («Доставка» ↔ «Доставка компании»);
  *   amount = 0 — строку удаляем: пустое поле значит «доставки нет».
  *
+ * С v2.5.0 вместе с суммой пишем вид доставки (delivery_kind) и НДС: вид —
+ * чтобы учёт не зависел от имени строки, НДС — чтобы налог был виден в реестре.
+ * Сумму НДС ВЫДЕЛЯЕМ из вписанной суммы: снабженец вписывает то, что реально
+ * платят (счёт поставщика или подотчёт), поэтому прибавлять налог сверху нельзя.
+ *
  * Возвращает null при успехе и текст ошибки — при сбое. Ошибку не глотаем
  * молча: без строки доставки итог счёта и «Реестр материалов» разойдутся.
  */
-async function saveDeliveryItem(orderId, deliveryItem, name, amount) {
+async function saveDeliveryItem(orderId, deliveryItem, name, amount, deliveryKind, vatRate) {
     if (amount > 0) {
+        const vatAmount = vatFromTotal(amount, vatRate);
+
         const payload = {
             order_id: orderId,
             name,
             unit: CONFIG.DELIVERY_ITEM.UNIT,
             qty: 1,
             unit_price: amount,
-            total_price: amount
+            total_price: amount,
+            delivery_kind: deliveryKind || CONFIG.DELIVERY_ITEM.TYPE.SUPPLIER,
+            vat_rate: vatAmount > 0 ? normalizeVatRate(vatRate) : 0,
+            vat_amount: vatAmount,
+            price_with_vat: true
         };
 
         const { error } = deliveryItem
@@ -1383,6 +1607,84 @@ async function saveDeliveryItem(orderId, deliveryItem, name, amount) {
     if (!deliveryItem) return null;   // доставки не было и не появилось
 
     const { error } = await db.remove('order_items', { id: deliveryItem.id });
+    return error ? error.message : null;
+}
+
+/**
+ * Своя доставка: переносит её деньги из строки заявки в расход подотчёта.
+ *
+ * Зачем: заявку везла компания, поставщик её не выставлял, а платили свои —
+ * снабженец или другой сотрудник из подотчёта (либо фирма безналом). Чтобы
+ * сумма не считалась дважды (строка заявки + расход кассы), деньги живут
+ * ровно в одном месте — в cash_operations с source = 'own_delivery'. Реестр,
+ * план-факт, «Доп. расходы» и дашборд пропускают строку заявки, если по ней
+ * есть такой расход (js/utils.js → isOwnDeliveryCovered).
+ *
+ *   платит фирма (CHARGE.FIRM) — расход не создаём: строка заявки, как и
+ *                                раньше, остаётся себестоимостью объекта;
+ *   подотчёт (SNAGACH/EMPLOYEE) — создаём расход: подотчёт уменьшается, и в
+ *                                отчётах сумма учитывается один раз.
+ *
+ * Расход у заявки один: нашли — обновляем, стали не нужны (сумму стёрли или
+ * переключились на «платит фирма») — удаляем, чтобы в реестре не осталось
+ * лишней строки.
+ *
+ * @returns {Promise<string|null>} текст ошибки или null при успехе
+ */
+async function saveOwnDeliveryExpense({ order, amount, company, charge, vatRate, employeeId }) {
+    const { data: existing, error: selectError } = await db.select('cash_operations', {
+        select: 'id, employee_id, amount',
+        filters: { order_id: order.id, source: 'own_delivery' }
+    });
+
+    if (selectError) return selectError.message;
+
+    const current = (existing || [])[0] || null;
+    const chargeFirm = charge === CONFIG.DELIVERY_ITEM.CHARGE.FIRM;
+
+    // Платит фирма, доставки нет или везёт поставщик — расхода подотчёта быть
+    // не должно. Если он остался от прошлого сохранения, убираем.
+    if (!company || amount <= 0 || chargeFirm) {
+        if (!current) return null;
+        const { error } = await db.remove('cash_operations', { id: current.id });
+        return error ? error.message : null;
+    }
+
+    const me = getEmployee();
+    const payerId = charge === CONFIG.DELIVERY_ITEM.CHARGE.EMPLOYEE
+        ? employeeId
+        : (me ? me.id : null);
+
+    if (!payerId) return 'не удалось определить, чей подотчёт списываем';
+
+    const vatAmount = vatFromTotal(amount, vatRate);
+
+    const payload = {
+        employee_id: payerId,
+        operation_type: 'expense',
+        amount,
+        category: 'delivery',
+        project_id: order.project_id,
+        section_id: order.section_id,
+        order_id: order.id,
+        items: [{
+            name: getDeliveryItemName(CONFIG.DELIVERY_ITEM.TYPE.COMPANY),
+            unit: CONFIG.DELIVERY_ITEM.UNIT,
+            qty: 1,
+            price: amount,
+            sum: amount
+        }],
+        vat_rate: vatAmount > 0 ? normalizeVatRate(vatRate) : 0,
+        vat_amount: vatAmount,
+        source: 'own_delivery',
+        description: `Своя доставка по заявке ${order.request_number}`,
+        operation_date: new Date().toISOString().split('T')[0]
+    };
+
+    const { error } = current
+        ? await db.update('cash_operations', payload, { id: current.id })
+        : await db.insert('cash_operations', payload);
+
     return error ? error.message : null;
 }
 
@@ -1408,6 +1710,12 @@ export async function saveOrderInvoice(event) {
         return;
     }
 
+    // Режим и ставка НДС — из шапки окна счёта. Всё, что дальше, считается
+    // здесь и больше нигде: к сохранённым суммам налог никогда не добавляется.
+    const vatMode = getInvoiceVatMode();
+    const vatRate = getInvoiceVatRate();
+    const priceWithVat = vatMode !== CONFIG.VAT.MODE.WITHOUT_VAT;
+
     const rows = document.querySelectorAll('.order-invoice-item');
     const prices = [];
 
@@ -1421,10 +1729,21 @@ export async function saveOrderInvoice(event) {
             return;
         }
 
+        // НДС: «цены уже с ПДВ» — налог ВЫДЕЛЯЕТСЯ из введённой суммы,
+        // «цены без ПДВ» — добавляется ровно один раз, здесь. В базу уходит уже
+        // сумма к оплате (с НДС) плюс расшифровка налога для бухгалтера.
+        const enteredTotal = roundMoney(qty * unitPrice);
+        const payTotal = calcVat(enteredTotal, vatRate, priceWithVat).total;
+        const savedUnitPrice = qty > 0 ? roundMoney(payTotal / qty) : payTotal;
+        const savedTotalPrice = roundMoney(qty * savedUnitPrice);
+
         prices.push({
             id: parseInt(row.dataset.itemId, 10),
-            unitPrice,
-            totalPrice: roundMoney(qty * unitPrice)
+            unitPrice: savedUnitPrice,
+            totalPrice: savedTotalPrice,
+            vatRate: normalizeVatRate(vatRate),
+            vatAmount: vatFromTotal(savedTotalPrice, vatRate),
+            priceWithVat
         });
     }
 
@@ -1439,6 +1758,25 @@ export async function saveOrderInvoice(event) {
     const deliveryItem = (order._items || []).find(isDeliveryItem) || null;
     const deliveryType = getInvoiceDeliveryType();
     const deliveryAmount = invoiceDeliveryAmount();
+    const companyDelivery = deliveryType === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
+
+    // Своя доставка: чем закрываем и (если подотчёт другого сотрудника) чей.
+    const ownCharge = getInvoiceOwnCharge();
+    const ownEmployeeId = getInvoiceOwnEmployeeId();
+    const ownVatRate = getInvoiceOwnVatRate();
+
+    // Своя доставка из подотчёта: сотрудника надо выбрать — иначе расход молча
+    // списался бы не с того подотчёта, а ошибку в деньгах потом не найти.
+    if (companyDelivery && deliveryAmount > 0 &&
+        getInvoiceOwnCharge() === CONFIG.DELIVERY_ITEM.CHARGE.EMPLOYEE && !ownEmployeeId) {
+        toast(t('order.invoiceOwnNeedEmployee'), 'error');
+        return;
+    }
+
+    // Своя доставка списана с подотчёта снабженца — после сохранения обновим
+    // баланс в шапке профиля (как это делает оплата заявки из подотчёта).
+    const ownPaidFromMe = companyDelivery && deliveryAmount > 0 &&
+        ownCharge === CONFIG.DELIVERY_ITEM.CHARGE.SNAGACH;
 
     const file = document.getElementById('order-invoice-file')?.files?.[0] || null;
     const submitBtn = event.target.querySelector('button[type="submit"]');
@@ -1467,25 +1805,51 @@ export async function saveOrderInvoice(event) {
             invoiceFileNameSaved = file.name;
         }
 
-        // Цены по позициям — из них собирается «📊 Реестр материалов»
+        // Цены по позициям — из них собирается «📊 Реестр материалов».
+        // Вместе с ценами пишем НДС: сумма к оплате (с налогом) + расшифровка
+        // налога, чтобы реестр и бухгалтерия видели одно и то же число.
         for (const item of prices) {
             const { error } = await db.update('order_items', {
                 unit_price: item.unitPrice,
-                total_price: item.totalPrice
+                total_price: item.totalPrice,
+                vat_rate: item.vatRate,
+                vat_amount: item.vatAmount,
+                price_with_vat: item.priceWithVat
             }, { id: item.id });
 
             if (error) log.error('Ошибка обновления цены позиции:', error.message);
         }
 
+        // Доставка поставщика входит в счёт, своя — вне счёта; ставку НДС для
+        // своей берём из её поля (перевозка своими силами часто без налога).
+        const deliveryVatRate = companyDelivery ? ownVatRate : vatRate;
+
         // Доставку сохраняем отдельной позицией заявки: так она попадает
         // в «📊 Реестр материалов» отдельной строкой (категория «🚚 Доставка»)
         // и в план-факт — без ручного пересчёта сумм в двух местах.
         const deliveryError = await saveDeliveryItem(
-            orderId, deliveryItem, getDeliveryItemName(deliveryType), deliveryAmount
+            orderId, deliveryItem, getDeliveryItemName(deliveryType), deliveryAmount,
+            deliveryType, deliveryVatRate
         );
         if (deliveryError) {
             log.error('Ошибка сохранения доставки:', deliveryError);
             toast(t('order.invoiceDeliveryFailed'), 'warning');
+        }
+
+        // Своя доставка: деньги уходят в расход подотчёта (или остаются
+        // себестоимостью строки заявки, если платит фирма). Делаем это здесь,
+        // чтобы снабженцу не приходилось помнить про вторую операцию.
+        const ownDeliveryError = await saveOwnDeliveryExpense({
+            order,
+            amount: deliveryAmount,
+            company: companyDelivery,
+            charge: ownCharge,
+            vatRate: ownVatRate,
+            employeeId: ownEmployeeId
+        });
+        if (ownDeliveryError) {
+            log.error('Ошибка расхода по своей доставке:', ownDeliveryError);
+            toast(t('order.invoiceOwnDeliveryFailed'), 'warning');
         }
 
         // Итог заявки — вся закупка: материалы + доставка (её платит фирма или
@@ -1493,19 +1857,37 @@ export async function saveOrderInvoice(event) {
         const materialsSum = roundMoney(
             prices.reduce((sum, item) => sum + item.totalPrice, 0)
         );
+        const materialsVat = roundMoney(
+            prices.reduce((sum, item) => sum + item.vatAmount, 0)
+        );
         const totalSum = roundMoney(materialsSum + deliveryAmount);
 
         // Итог счёта — то, что выставил поставщик. Доставку компании он не
         // выставляет, поэтому в счёт она не входит: иначе финансист оплатил бы
         // поставщику лишнее. Сумма доставки компании остаётся строкой заявки.
-        const invoiceTotal = deliveryType === CONFIG.DELIVERY_ITEM.TYPE.COMPANY
-            ? materialsSum
-            : totalSum;
+        const invoiceTotal = companyDelivery ? materialsSum : totalSum;
+
+        // НДС по счёту — только то, что выставил поставщик (материалы + его
+        // доставка). Налог своей доставки живёт в расходе подотчёта: в счёт
+        // поставщика она не входит, и складывать её сюда нельзя.
+        const vatTotal = companyDelivery
+            ? materialsVat
+            : roundMoney(materialsVat + vatFromTotal(deliveryAmount, vatRate));
 
         const payload = {
             supplier,
             total_sum: totalSum,
             invoice_total: invoiceTotal,
+            // Как вводили цены и с какой ставкой — чтобы окно счёта открывалось
+            // ровно в том же виде, а суммы не пересчитывались задним числом.
+            invoice_price_mode: vatMode,
+            invoice_vat_rate: vatRate,
+            vat_total: vatTotal,
+            // Своя доставка: чем закрыли (для повторного открытия окна).
+            own_delivery_charge: companyDelivery ? ownCharge : null,
+            own_delivery_employee_id: companyDelivery &&
+                ownCharge === CONFIG.DELIVERY_ITEM.CHARGE.EMPLOYEE ? ownEmployeeId : null,
+            own_delivery_vat_rate: companyDelivery ? ownVatRate : 0,
             invoice_path: invoicePath,
             invoice_file_name: invoiceFileNameSaved,
             invoice_uploaded_at: new Date().toISOString()
@@ -1530,6 +1912,12 @@ export async function saveOrderInvoice(event) {
         hideModal('order-invoice-modal');
         await loadOrders();
         await openOrderDetail(orderId);   // карточка сразу покажет счёт и статус оплаты
+
+        // Своя доставка ушла с моего подотчёта — баланс в шапке должен
+        // измениться сразу, иначе сумма «висит» и вводит в заблуждение.
+        if (ownPaidFromMe && window.renderProfileBalance) {
+            await window.renderProfileBalance();
+        }
 
     } catch (err) {
         log.error('Исключение при сохранении счёта:', err);

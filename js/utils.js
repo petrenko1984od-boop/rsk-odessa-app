@@ -169,6 +169,67 @@ export function isExtraSectionName(name) {
     return normalizeSectionName(name) === normalizeSectionName(CONFIG.EXTRA_SECTION?.NAME || '');
 }
 
+// =====================================================================
+// НДС (ПДВ)
+// =====================================================================
+// Галочки «+20%» в приложении нет намеренно: у поставщиков цены бывают и без
+// налога, и уже с ним. Поэтому в окне счёта снабженец выбирает РЕЖИМ ввода
+// (CONFIG.VAT.MODE), а налог всегда считает одна функция — эта.
+//
+// Инвариант денег: в order_items.unit_price / total_price лежит сумма К ОПЛАТЕ
+// (с НДС), а vat_amount — сколько налога внутри. Отсюда правило «налог не
+// прибавляется дважды»: либо он ВЫДЕЛЯЕТСЯ из конечной цены, либо добавляется
+// к цене без налога ровно один раз — при сохранении счёта.
+// Равенство base + vat === total выполняется строго до копейки (vat считается
+// вычитанием), иначе суммы в реестре разъехались бы на копейку.
+
+/**
+ * Ставка НДС в процентах. Пустое поле, мусор и отрицательные значения — ноль:
+ * в приложении ноль значит «налога нет».
+ */
+export function normalizeVatRate(rate) {
+    const num = Number(rate);
+    if (!Number.isFinite(num) || num <= 0) return 0;
+    return Math.min(100, num);
+}
+
+/**
+ * Разбирает сумму на базу и НДС.
+ *
+ * @param {number} amount — сумма, которую ввёл снабженец (цена × количество);
+ * @param {number} rate — ставка НДС в процентах (0 / 7 / 20 / своя);
+ * @param {boolean} amountWithVat — true: в сумме налог УЖЕ есть (выделяем),
+ *        false: сумма без налога (налог добавляем сверху).
+ * @returns {{ base: number, vat: number, total: number, rate: number }}
+ *          где base + vat === total (строго).
+ */
+export function calcVat(amount, rate, amountWithVat) {
+    const percent = normalizeVatRate(rate);
+    const total = roundMoney(amount);
+
+    if (percent === 0) {
+        return { base: total, vat: 0, total, rate: 0 };
+    }
+
+    if (amountWithVat) {
+        const base = roundMoney(total * 100 / (100 + percent));
+        return { base, vat: roundMoney(total - base), total, rate: percent };
+    }
+
+    const base = total;
+    const vat = roundMoney(base * percent / 100);
+    return { base, vat, total: roundMoney(base + vat), rate: percent };
+}
+
+/**
+ * НДС, «спрятанный» внутри суммы с налогом.
+ * Нужно там, где известна только сумма к оплате (реестр, расход подотчёта,
+ * своя доставка): base = total − vat.
+ */
+export function vatFromTotal(total, rate) {
+    return calcVat(total, rate, true).vat;
+}
+
 /**
  * Это позиция доставки по заявке на материалы (CONFIG.DELIVERY_ITEM)?
  *
@@ -194,19 +255,65 @@ export function isDeliveryItem(item) {
  *   CONFIG.DELIVERY_ITEM.TYPE.COMPANY  — везёт компания (вне счёта поставщика),
  *   null — это не строка доставки, а обычная позиция.
  *
- * Вид читаем из имени строки: «Доставка» / «Доставка компании»
- * (CONFIG.DELIVERY_ITEM.NAME / COMPANY_NAME). Отдельной колонки в order_items
- * нет намеренно — иначе потребовалась бы миграция боевой базы.
+ * С v2.5.0 вид лежит в колонке order_items.delivery_kind ('supplier' /
+ * 'company') — это надёжнее имени строки, которое можно переименовать.
+ * Строки, созданные раньше, распознаём по имени («Доставка» / «Доставка
+ * компании», CONFIG.DELIVERY_ITEM.NAME / COMPANY_NAME): оно остаётся
+ * ключом совместимости.
  */
 export function getDeliveryItemType(item) {
+    const types = CONFIG.DELIVERY_ITEM?.TYPE || {};
+    const kind = String(item?.delivery_kind || '').trim().toLowerCase();
+
+    if (kind === (types.COMPANY || 'company')) return types.COMPANY || 'company';
+    if (kind === (types.SUPPLIER || 'supplier')) return types.SUPPLIER || 'supplier';
+
     const name = normalizeSectionName(item?.name);
     if (!name) return null;
 
-    const types = CONFIG.DELIVERY_ITEM?.TYPE || {};
     if (name === normalizeSectionName(CONFIG.DELIVERY_ITEM?.NAME || '')) return types.SUPPLIER || 'supplier';
     if (name === normalizeSectionName(CONFIG.DELIVERY_ITEM?.COMPANY_NAME || '')) return types.COMPANY || 'company';
 
     return null;
+}
+
+/**
+ * Это своя доставка — заявку везла компания, в счёт поставщика сумма не вошла?
+ */
+export function isOwnDeliveryItem(item) {
+    return getDeliveryItemType(item) === (CONFIG.DELIVERY_ITEM?.TYPE?.COMPANY || 'company');
+}
+
+/**
+ * Заявки, по которым своя доставка уже оплачена расходом подотчёта.
+ *
+ * Своя доставка — та самая сумма, которую легко посчитать дважды: она есть и
+ * строкой заявки (order_items), и расходом кассы (cash_operations.source =
+ * 'own_delivery', его создаёт js/modules/orders.js → saveOwnDeliveryExpense()).
+ * Поэтому все модули, которые складывают деньги — реестр, план-факт, «Доп.
+ * расходы», дашборд, — берут эту проверку отсюда, а не пишут свою.
+ * Возвращает Set строк с id заявок: сравнивать через String(), потому что
+ * PostgREST отдаёт bigint как строку.
+ *
+ * @param {Array<Object>} operations — операции кассы (расходы) любого источника
+ * @returns {Set<string>}
+ */
+export function ownDeliveryCoveredOrderIds(operations) {
+    return new Set((operations || [])
+        .filter(op => op && op.source === 'own_delivery' && op.order_id)
+        .map(op => String(op.order_id)));
+}
+
+/**
+ * Позицию заявки надо пропустить: своя доставка, за которую уже заплатили
+ * расходом подотчёта (иначе сумма попала бы в итоги дважды).
+ *
+ * @param {Object} item — позиция заявки (order_items, нужен order_id)
+ * @param {Set<string>} coveredOrderIds — результат ownDeliveryCoveredOrderIds()
+ */
+export function isOwnDeliveryCovered(item, coveredOrderIds) {
+    if (!item || !coveredOrderIds || coveredOrderIds.size === 0) return false;
+    return isOwnDeliveryItem(item) && coveredOrderIds.has(String(item.order_id || ''));
 }
 
 /**

@@ -232,6 +232,89 @@ function main() {
                 .map((line) => line.number + ': ' + line.code.trim().slice(0, 50)).join(' | '));
     }
 
+    // --- 3д. Миграция v2.5.0: НДС (ПДВ) и своя доставка ---
+    // Отдельный файл, а не правка v2.4.0: ту миграцию могли уже применить, а
+    // НДС и способ закрытия своей доставки появились позже. Приложение при
+    // отсутствии этих колонок отказывается сохранять счёт и говорит, какой
+    // файл применить (js/database.js → explainError).
+    const VAT_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.5.sql');
+
+    const VAT_COLUMNS = [
+        'invoice_price_mode',
+        'invoice_vat_rate',
+        'vat_total',
+        'own_delivery_charge',
+        'own_delivery_employee_id',
+        'own_delivery_vat_rate',
+        'vat_rate',
+        'vat_amount',
+        'price_with_vat',
+        'delivery_kind'
+    ];
+
+    if (!fs.existsSync(VAT_MIGRATION)) {
+        ok('есть файл database/migrate-v2.5.sql', false, VAT_MIGRATION);
+    } else {
+        const vatSql = fs.readFileSync(VAT_MIGRATION, 'utf8');
+
+        const vatMissing = VAT_COLUMNS.filter((col) => !new RegExp(`\\b${col}\\b`).test(vatSql));
+        ok('миграция v2.5.0 описывает колонки НДС и свою доставку',
+            vatMissing.length === 0, vatMissing.join(', ') || 'все на месте');
+
+        const vatInSchema = VAT_COLUMNS.filter((col) => !new RegExp(`\\b${col}\\b`).test(schema));
+        ok('schema.sql описывает те же колонки НДС и свою доставку',
+            vatInSchema.length === 0, vatInSchema.join(', ') || 'все на месте');
+
+        const vatWithType = VAT_COLUMNS.filter(
+            (col) => new RegExp(`'${col}\\s+(text|timestamptz|numeric|bigint|boolean)`, 'i').test(vatSql)
+        );
+        ok('колонки НДС перечислены с типом (text/numeric/bigint/boolean)',
+            vatWithType.length === VAT_COLUMNS.length,
+            vatWithType.length + ' из ' + VAT_COLUMNS.length);
+
+        const vatAddColumn = (vatSql.match(/add column/gi) || []).length;
+        const vatGuarded = (vatSql.match(/add column\s+if not exists/gi) || []).length;
+        ok('в миграции v2.5.0 у каждого add column есть if not exists',
+            vatGuarded === vatAddColumn && vatAddColumn >= 3,
+            vatGuarded + ' из ' + vatAddColumn);
+
+        const vatHandlers = (vatSql.match(/exception\s+when\s+others/gi) || []).length;
+        ok('колонки v2.5.0 добавляются в защищённых блоках (exception when others)',
+            vatHandlers >= 4, 'обработчиков exception when others: ' + vatHandlers);
+
+        ok('в конце миграции v2.5.0 есть самопроверка (ok / MISSING)',
+            /MISSING — примените файл целиком/.test(vatSql) && /'ok'/.test(vatSql));
+
+        ok('миграция v2.5.0 просит PostgREST перечитать схему (notify pgrst)',
+            /notify\s+pgrst\s*,\s*'reload schema'/i.test(vatSql));
+
+        ok('миграция v2.5.0 заполняет вид доставки у старых строк (supplier / company)',
+            /set delivery_kind = 'supplier'/.test(vatSql) && /set delivery_kind = 'company'/.test(vatSql));
+
+        const vatTypo = codeLines(vatSql).filter((line) => TYPOGRAPHIC.test(line.code));
+        const vatInvisible = codeLines(vatSql).filter((line) => INVISIBLE.test(line.code));
+        const vatStripped = linesOf(vatSql)
+            .map((line) => {
+                const comment = line.indexOf('--');
+                return comment === -1 ? line : line.slice(0, comment);
+            })
+            .join('\n')
+            .replace(/'(?:[^']|'')*'/g, "''");
+        const vatEven = (open, close) => vatStripped.split(open).length === vatStripped.split(close).length;
+
+        ok('миграция v2.5.0 чистая для копирования (кавычки, пробелы, скобки, $$)',
+            vatTypo.length === 0 && vatInvisible.length === 0 &&
+            vatEven('(', ')') && ((vatSql.match(/\$\$/g) || []).length % 2 === 0),
+            [...vatTypo, ...vatInvisible]
+                .map((line) => line.number + ': ' + line.code.trim().slice(0, 50)).join(' | '));
+
+        // Код и миграция должны называть одно и то же: если приложение начнёт
+        // писать другой маркер расхода, проверка это заметит.
+        const utilsJs = fs.readFileSync(path.join(ROOT, 'js', 'utils.js'), 'utf8');
+        ok("код знает маркер расхода своей доставки (source = 'own_delivery')",
+            /own_delivery/.test(utilsJs) && /ownDeliveryCoveredOrderIds/.test(utilsJs));
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'

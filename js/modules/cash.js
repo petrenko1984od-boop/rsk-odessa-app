@@ -12,7 +12,8 @@
 import { db } from '../database.js';
 import {
     log, toast, formatMoney, formatDate, escapeHtml,
-    parseNumber, roundMoney, isExtraSectionName, todayISO
+    parseNumber, roundMoney, isExtraSectionName, todayISO,
+    isOwnDeliveryCovered, ownDeliveryCoveredOrderIds
 } from '../utils.js';
 import { can, getEmployee, getRole, requirePermission } from '../permissions.js';
 import { getCurrentUser } from '../auth.js';
@@ -226,10 +227,19 @@ export async function loadExpensesForProject(projectId) {
             });
         }
 
-        // Преобразуем каждую позицию заявки в "псевдо-операцию"
+        // Преобразуем каждую позицию заявки в "псевдо-операцию".
+        //
+        // ⚠️ Своя доставка, за которую уже заплатили из подотчёта, здесь
+        //    пропускается: её деньги — обычный расход кассы (source =
+        //    'own_delivery', его создаёт js/modules/orders.js). Без этой
+        //    проверки сумма попала бы в план-факт и в «Доп. расходы» дважды:
+        //    строкой заявки и расходом подотчёта.
+        const coveredOwnDeliveryOrders = ownDeliveryCoveredOrderIds(projectExpenses);
+
         firmOrderItems.forEach(it => {
             const order = orderMap[it.order_id];
             if (!order) return;
+            if (isOwnDeliveryCovered(it, coveredOwnDeliveryOrders)) return;
 
             allItems.push({
                 _source: 'order',
