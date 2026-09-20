@@ -72,6 +72,23 @@ function canSeeOrder(order) {
 // ЗАГРУЗКА
 // =====================================================================
 
+/**
+ * Плашка над списком заявок в разделе «Снабжение» (#orders-warning).
+ * Пустая строка — плашку прячем.
+ *
+ * Нужна затем же, зачем такая плашка в «Реестре материалов»: если заявки не
+ * загрузились (частая причина — не применённая миграция, в базе нет колонок
+ * v2.4.0), сотрудник видел только пустой список и тост «Не удалось загрузить
+ * заявки» без причины. Теперь на экране остаётся объяснение и что делать.
+ */
+function showOrdersWarning(text) {
+    const el = document.getElementById('orders-warning');
+    if (!el) return;
+
+    el.textContent = text || '';
+    el.classList.toggle('hidden', !text);
+}
+
 export async function loadOrders() {
     log.info('Загрузка заявок...');
 
@@ -89,8 +106,12 @@ export async function loadOrders() {
     if (error) {
         log.error('Ошибка загрузки заявок:', error.message);
         toast('Не удалось загрузить заявки', 'error');
+        showOrdersWarning('⚠ Заявки не загрузились: ' + db.explainError(error));
+        renderOrders();
         return;
     }
+
+    showOrdersWarning('');
 
     // Фильтруем по правам
     const allOrders = data || [];
@@ -721,7 +742,7 @@ async function createOrder(form) {
 
     if (orderError) {
         log.error('Ошибка создания заявки:', orderError.message);
-        toast('Не удалось создать заявку: ' + orderError.message, 'error');
+        toast('Не удалось создать заявку: ' + db.explainError(orderError), 'error');
         return false;
     }
 
@@ -794,7 +815,7 @@ export async function takeOrderToWork(id) {
     }, { id });
 
     if (error) {
-        toast('Ошибка: ' + error.message, 'error');
+        toast('Ошибка: ' + db.explainError(error), 'error');
         return;
     }
 
@@ -1361,7 +1382,7 @@ export async function archiveOrder(id) {
     }, { id });
 
     if (error) {
-        toast('Ошибка: ' + error.message, 'error');
+        toast('Ошибка: ' + db.explainError(error), 'error');
         return;
     }
 
@@ -1395,7 +1416,7 @@ export async function deleteOrder(id) {
     const { error } = await db.remove('orders', { id });
 
     if (error) {
-        toast('Ошибка удаления: ' + error.message, 'error');
+        toast('Ошибка удаления: ' + db.explainError(error), 'error');
         return;
     }
 

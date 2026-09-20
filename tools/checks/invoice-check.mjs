@@ -66,6 +66,27 @@ const report = [];
 const log = (...a) => { const line = a.join(' '); report.push(line); console.log(line); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// =====================================================================
+// РЕЖИМЫ «ПЛОХОЙ БАЗЫ» — для проверки раздела «Снабжение» и счетов
+// =====================================================================
+// 1. missingColumns — миграция v2.4.0 применилась наполовину: в orders нет
+//    части колонок. Мок отвечает как настоящий PostgREST: на чтение 42703
+//    («column orders.payment_status does not exist»), на запись PGRST204
+//    («Could not find the 'payment_status' column of 'orders' ...»). Именно это
+//    видели на боевой базе: счёт не сохранялся, у финансиста очередь пустая.
+// 2. brokenOrdersJoin — переименовали связь внешнего ключа: GET orders падает
+//    с PGRST200, то есть список заявок не загружается вообще.
+const missingColumns = { orders: [] };
+let brokenOrdersJoin = false;
+
+/** Первая колонка из запроса, которой нет в «старой» базе (или null). */
+function missingColumnFor(table, columns) {
+    const absent = missingColumns[table] || [];
+    const list = String(columns || '').split(',').map((col) => col.trim());
+    return absent.find((col) => list.includes(col)) || null;
+}
+
+
 const balanceOf = (id) => store.cash_operations
     .filter((op) => op.employee_id === id)
     .reduce((sum, op) => {
@@ -251,6 +272,21 @@ function handleMock(req, res, body) {
 
     // ---- Чтение ----
     if (req.method === 'GET') {
+        if (table === 'orders' && brokenOrdersJoin) {
+            return sendJson(res, 400, {
+                code: 'PGRST200', details: null, hint: null,
+                message: "Could not find a relationship between 'orders' and 'employees' in the schema cache"
+            });
+        }
+
+        const absent = missingColumnFor(table, params.select);
+        if (absent) {
+            return sendJson(res, 400, {
+                code: '42703', details: null, hint: null,
+                message: 'column ' + table + '.' + absent + ' does not exist'
+            });
+        }
+
         const rows = rowsFor(table, params);
 
         if (wantsObject || wantsSingleRow(table, params)) {
@@ -267,7 +303,19 @@ function handleMock(req, res, body) {
     }
 
     if (req.method === 'POST') return sendJson(res, 201, insertRows(table, payload));
-    if (req.method === 'PATCH') return sendJson(res, 200, updateRows(table, params, payload));
+
+    if (req.method === 'PATCH') {
+        // Запись в колонку, которой нет: PostgREST отвечает PGRST204
+        const absent = missingColumnFor(table, Object.keys(payload || {}).join(','));
+        if (absent) {
+            return sendJson(res, 400, {
+                code: 'PGRST204', details: null, hint: null,
+                message: "Could not find the '" + absent + "' column of '" + table + "' in the schema cache"
+            });
+        }
+
+        return sendJson(res, 200, updateRows(table, params, payload));
+    }
 
     if (req.method === 'DELETE') {
         res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
@@ -661,6 +709,92 @@ async function main() {
         backState.projects.includes('Объекты') && backState.registry.includes('Оплачено') &&
         backState.theme === 'green' && backState.stored === 'green/ru',
         JSON.stringify(backState));
+
+    // =================================================================
+    // РЕГРЕССИЯ «БАЗА НЕ ОБНОВЛЕНА» (боевая жалоба: снабженец не может
+    // сохранить счёт, финансист не видит счетов). Проверяем, что приложение
+    // говорит, чего не хватает, а не молчит пустыми списками.
+    // =================================================================
+    log('--- база не обновлена: половина миграции v2.4.0 ---');
+
+    // 1. Список заявок вообще не загружается (сломана связь внешнего ключа):
+    //    раздел «Снабжение» обязан объяснить это плашкой, а не показать «Заявок нет».
+    brokenOrdersJoin = true;
+    await loginAs(10, 'Снабженец: база отвечает ошибкой');
+    await evaluate('window.switchTab("orders")');
+    await sleep(1600);
+
+    const ordersWarn = await evaluate(text('orders-warning'));
+    ok('«Снабжение» показывает плашку вместо пустого списка',
+        ordersWarn.includes('Заявки не загрузились'),
+        ordersWarn.replace(/\n/g, ' ').slice(0, 160));
+
+    brokenOrdersJoin = false;
+
+    // 2. Миграция применилась наполовину: в orders нет четырёх колонок.
+    //    Заявку возвращаем в «не оплачена»: именно по такой заявке снабженец
+    //    сохраняет счёт на боевой базе, и приложение пишет payment_status = 'debt'.
+    //    Важно сделать это ДО перечитывания списка — иначе в кэше приложения
+    //    останется paid_at и оно не станет писать payment_status вовсе.
+    missingColumns.orders = ['payment_status', 'delivered_at', 'paid_at', 'paid_by_employee_id'];
+
+    const invoiceOrder = store.orders.find((row) => row.id === 900);
+    const paidAtBefore = invoiceOrder.paid_at;
+    invoiceOrder.paid_at = null;
+    invoiceOrder.payment_status = 'debt';
+
+    // База «починилась»: перечитываем список заявок. Без этого в кэше модуля
+    // пусто, и окно счёта открывать не по чему (тест ловил «Заявка не найдена»).
+    await evaluate('window.switchTab("orders")');
+    await sleep(1500);
+
+    const ordersWarnCleared = await evaluate(text('orders-warning'));
+    ok('после восстановления базы плашка исчезает',
+        !ordersWarnCleared.includes('не загрузились'),
+        ordersWarnCleared.replace(/\n/g, ' ').slice(0, 120) || 'плашки нет');
+
+    await evaluate('window.openOrderDetail(900)');
+    await sleep(700);
+    await evaluate('window.openOrderInvoiceModal(900)');
+    await sleep(700);
+    await evaluate('(() => {' +
+        'const rows = document.querySelectorAll(".order-invoice-item");' +
+        'rows.forEach((row) => { row.querySelector(".order-invoice-price").value = "5"; });' +
+        'document.getElementById("order-invoice-supplier").value = "Эпицентр";' +
+        'document.getElementById("order-invoice-form").dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));' +
+        'return true; })()');
+    await sleep(1500);
+
+    const saveToast = await evaluate('Array.from(document.body.children)' +
+        '.filter((el) => el.classList && el.classList.contains("top-4"))' +
+        '.map((el) => el.innerText).join(" | ")');
+    ok('сохранение счёта объясняет, что база не обновлена',
+        saveToast.includes('payment_status') && saveToast.includes('migrate-v2.4.sql'),
+        saveToast.replace(/\n/g, ' ').slice(0, 200));
+
+    await evaluate('window.hideModal("order-invoice-modal")');
+
+    // 3. Реестр материалов не смог загрузить заявки — плашка над таблицей
+    await loginAs(8, 'Директор: реестр на «старой» базе');
+    await evaluate('window.switchTab("registry")');
+    await sleep(1600);
+    const registryWarn = await evaluate(text('registry-warning'));
+    ok('«Реестр материалов» объясняет, почему нет заявок',
+        registryWarn.includes('migrate-v2.4.sql'),
+        registryWarn.replace(/\n/g, ' ').slice(0, 200));
+
+    // 4. Рабочий стол финансиста: очередь счетов не загрузилась
+    await loginAs(9, 'Финансист: база не обновлена');
+    await sleep(1800);
+    const finBroken = await evaluate(text('material-invoices-panel'));
+    ok('финансист видит объяснение вместо пустой очереди счетов',
+        finBroken.includes('Не удалось загрузить счета') && finBroken.includes('migrate-v2.4.sql'),
+        finBroken.replace(/\n/g, ' ').slice(0, 200));
+
+    // Возвращаем мок в рабочее состояние, чтобы итоговая сводка была честной
+    missingColumns.orders = [];
+    invoiceOrder.paid_at = paidAtBefore;
+    invoiceOrder.payment_status = 'paid';
 
     log('--- ИТОГ ---');
     log(failed === 0

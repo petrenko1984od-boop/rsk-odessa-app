@@ -327,6 +327,12 @@
                     <button onclick="switchOrdersTab('all')" id="orders-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
                 </div>
 
+                <!-- Плашка «база не обновлена»: появляется, если заявки не
+                     загрузились (например, в базе нет колонок v2.4.0 — не
+                     применена миграция). Заполняет js/modules/orders.js
+                     (loadOrders). -->
+                <div id="orders-warning" class="hidden rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900"></div>
+
                 <div id="orders-container" class="space-y-3"></div>
             </section>
 
