@@ -89,6 +89,17 @@ const DICT = {
         'invoice.paidAt': 'Оплачено',
         'invoice.noPermission': 'Нет прав на оплату счетов',
 
+        // --- рабочий стол финансиста: блок 2 «одобренные заявки на выдачу» ---
+        'finDesktop.sectionSubtitle': 'Два блока: 🧾 счета на материалы и 🟡 одобренные заявки на выдачу.',
+        'finDesktop.approvedTitle': '🟡 Одобренные заявки на выдачу',
+        'finDesktop.approvedSubtitle': 'Директор одобрил — деньги нужно выдать из вашего подотчёта.',
+        'finDesktop.tabApproved': '🟡 К выдаче',
+        'finDesktop.tabIssued': '🟢 Выданные',
+        'finDesktop.emptyApproved': 'Одобренных заявок нет',
+        'finDesktop.emptyApprovedHint': 'Все одобренные заявки уже оплачены. Новая появится здесь, как только директор её одобрит.',
+        'finDesktop.emptyIssued': 'Выданных заявок пока нет',
+        'finDesktop.emptyIssuedHint': 'Здесь будет история: заявки, по которым вы уже выдали деньги.',
+
         // --- счёт поставщика (снабженец) ---
         'order.invoiceButton': '🧾 Счёт от поставщика',
         'order.invoiceTitle': '🧾 Счёт поставщика по заявке',
@@ -168,6 +179,17 @@ const DICT = {
         'invoice.paidBy': 'Сплатив',
         'invoice.paidAt': 'Сплачено',
         'invoice.noPermission': 'Немає прав на оплату рахунків',
+
+        // --- робочий стіл фінансиста: блок 2 «схвалені заявки на видачу» ---
+        'finDesktop.sectionSubtitle': 'Два блоки: 🧾 рахунки на матеріали та 🟡 схвалені заявки на видачу.',
+        'finDesktop.approvedTitle': '🟡 Схвалені заявки на видачу',
+        'finDesktop.approvedSubtitle': 'Директор схвалив — гроші потрібно видати з вашого підзвіту.',
+        'finDesktop.tabApproved': '🟡 До видачі',
+        'finDesktop.tabIssued': '🟢 Видані',
+        'finDesktop.emptyApproved': 'Схвалених заявок немає',
+        'finDesktop.emptyApprovedHint': 'Усі схвалені заявки вже оплачені. Нова з’явиться тут, щойно директор її схвалить.',
+        'finDesktop.emptyIssued': 'Виданих заявок поки немає',
+        'finDesktop.emptyIssuedHint': 'Тут буде історія: заявки, за якими ви вже видали гроші.',
 
         // --- рахунок постачальника ---
         'order.invoiceButton': '🧾 Рахунок від постачальника',

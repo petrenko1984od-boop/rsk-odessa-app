@@ -365,21 +365,38 @@
                 <!-- Рабочий стол финансиста: подотчёт и сумма к выдаче (остальным ролям скрыт) -->
                 <div id="financier-balance-panel" class="hidden space-y-3"></div>
 
-                <!-- Счета на материалы: очередь оплаты финансиста. Наполняет
-                     js/modules/invoices.js (грузится вместе с разделом). -->
+                <!-- БЛОК 1 рабочего стола финансиста: «🧾 Счета на материалы» —
+                     счета, которые снабжение присылает на оплату (безнал фирмы).
+                     Наполняет js/modules/invoices.js (грузится вместе с разделом).
+                     У директора с правом pay_material_invoice тот же блок виден
+                     в разделе «💰 Финансы». -->
                 <div id="material-invoices-panel" class="hidden space-y-3"></div>
 
-                <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
-                    <button onclick="switchCashRequestsTab('active')" id="cashreq-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
-                    <button onclick="switchCashRequestsTab('pending')" id="cashreq-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Ожидают</button>
-                    <button onclick="switchCashRequestsTab('revision')" id="cashreq-filter-revision" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">✏️ На доработке</button>
-                    <button onclick="switchCashRequestsTab('approved')" id="cashreq-filter-approved" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Одобрены</button>
-                    <button onclick="switchCashRequestsTab('issued')" id="cashreq-filter-issued" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выданы</button>
-                    <button onclick="switchCashRequestsTab('rejected')" id="cashreq-filter-rejected" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">❌ Отклонены</button>
-                    <button onclick="switchCashRequestsTab('all')" id="cashreq-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
-                </div>
+                <!-- БЛОК 2 рабочего стола финансиста: «🟡 Одобренные заявки на
+                     выдачу» — заявки, одобренные директором: деньги нужно выдать
+                     из подотчёта. Заголовок (#financier-approved-head) и рамку
+                     блока рисует только финансисту js/modules/cash-requests.js.
+                     Сам список (#cash-requests-container) общий: у директора и
+                     кассиров он остаётся под общими фильтрами ниже. -->
+                <div id="financier-approved-block" class="space-y-3">
+                    <div id="financier-approved-head" class="hidden space-y-2"></div>
 
-                <div id="cash-requests-container" class="space-y-3"></div>
+                    <!-- Фильтры раздела: у финансиста скрыты (у него блок 2 со
+                         своими переключателями «К выдаче / Выданные»), у остальных
+                         ролей — как было. Скрывает js/modules/cash-requests.js →
+                         applyFinancierDesktopLayout(). -->
+                    <div id="cashreq-filters" class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
+                        <button onclick="switchCashRequestsTab('active')" id="cashreq-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
+                        <button onclick="switchCashRequestsTab('pending')" id="cashreq-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Ожидают</button>
+                        <button onclick="switchCashRequestsTab('revision')" id="cashreq-filter-revision" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">✏️ На доработке</button>
+                        <button onclick="switchCashRequestsTab('approved')" id="cashreq-filter-approved" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Одобрены</button>
+                        <button onclick="switchCashRequestsTab('issued')" id="cashreq-filter-issued" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выданы</button>
+                        <button onclick="switchCashRequestsTab('rejected')" id="cashreq-filter-rejected" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">❌ Отклонены</button>
+                        <button onclick="switchCashRequestsTab('all')" id="cashreq-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
+                    </div>
+
+                    <div id="cash-requests-container" class="space-y-3"></div>
+                </div>
             </section>
 
             <!-- РЕЕСТР -->

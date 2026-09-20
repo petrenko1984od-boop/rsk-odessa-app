@@ -633,6 +633,26 @@ try {
     ok('финансист видит одобренную заявку', finUi.lists.includes('Ф-1/26'));
     ok('финансист НЕ видит неодобренную заявку', !finUi.lists.includes('Ф-2/26'));
 
+    // Рабочий стол финансиста = два блока: счета на материалы + одобренные заявки
+    const finBlocks = await evaluate('(() => {' +
+        'const vis = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== "none"; };' +
+        'return { invoices: vis("material-invoices-panel"),' +
+        ' invoiceText: (document.getElementById("material-invoices-panel") || {}).innerText || "",' +
+        ' blockHead: vis("financier-approved-head"),' +
+        ' blockText: (document.getElementById("financier-approved-head") || {}).innerText || "",' +
+        ' filters: vis("cashreq-filters"),' +
+        ' tabs: Array.prototype.map.call(document.querySelectorAll("#financier-approved-head button"), (b) => b.id).join(",") }; })()');
+    ok('блок 1 рабочего стола — «🧾 Счета на материалы»',
+        finBlocks.invoices === true && finBlocks.invoiceText.includes('Счета на материалы'),
+        finBlocks.invoiceText.replace(/\n/g, ' | ').slice(0, 140));
+    ok('блок 2 рабочего стола — «🟡 Одобренные заявки на выдачу»',
+        finBlocks.blockHead === true && finBlocks.blockText.includes('Одобренные заявки на выдачу'),
+        finBlocks.blockText.replace(/\n/g, ' | ').slice(0, 160));
+    ok('общие фильтры заявок финансисту скрыты', finBlocks.filters === false,
+        'cashreq-filters виден: ' + finBlocks.filters);
+    ok('в блоке 2 два переключателя: «К выдаче» и «Выданные»',
+        finBlocks.tabs === 'financier-view-approved,financier-view-issued', finBlocks.tabs);
+
     await evaluate('window.openCashRequestDetail(' + requestA.id + ')');
     await sleep(700);
     const finActions = await evaluate('(document.getElementById("cash-request-detail-actions") || {}).innerText || ""');
@@ -658,6 +678,24 @@ try {
     ok('выдача не попала в «Реестр» как трата',
         store.cashOperations.filter((op) => op.operation_type === 'expense').length === 0,
         'операций expense: ' + store.cashOperations.filter((op) => op.operation_type === 'expense').length);
+
+    // Блок 2 рабочего стола: заявка ушла из «🟡 К выдаче» в «🟢 Выданные»
+    const finAfterIssue = await evaluate('(() => ({' +
+        ' head: (document.getElementById("financier-approved-head") || {}).innerText || "",' +
+        ' list: (document.getElementById("cash-requests-container") || {}).innerText || "" }))()');
+    ok('после выдачи список «🟡 К выдаче» опустел, счётчик стал 0',
+        !finAfterIssue.list.includes('Ф-1/26') && finAfterIssue.head.includes('К выдаче (0)'),
+        finAfterIssue.head.replace(/\n/g, ' | ') + ' :: ' + finAfterIssue.list.replace(/\n/g, ' | ').slice(0, 120));
+
+    await evaluate('window.setFinancierView("issued")');
+    await sleep(600);
+    const finIssuedList = await evaluate('(document.getElementById("cash-requests-container") || {}).innerText || ""');
+    ok('в «🟢 Выданные» видна выданная заявка со статусом «Выдано»',
+        finIssuedList.includes('Ф-1/26') && finIssuedList.includes('Выдано'),
+        finIssuedList.replace(/\n/g, ' | ').slice(0, 160));
+
+    await evaluate('window.setFinancierView("approved")');
+    await sleep(400);
 
     // ---------------------- 7. Директор отклоняет заявку ----------------------
     await loginAs(8, 'Директор');

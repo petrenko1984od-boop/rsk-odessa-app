@@ -43,6 +43,11 @@ import { fillSectionsSelect } from './sections.js';
 
 let cashRequestsCache = [];
 let currentFilter = 'active';   // 'active' | 'pending' | 'revision' | 'approved' | 'issued' | 'rejected' | 'all'
+// Что показывает БЛОК 2 рабочего стола финансиста: 'approved' — заявки,
+// одобренные директором (к выдаче), 'issued' — уже выданные (история).
+// Общий фильтр кассиров (currentFilter выше) при этом не трогаем: у директора
+// и администратора раздел должен открываться на тех же фильтрах, что и раньше.
+let financierView = 'approved';
 let currentRequestId = null;
 // id заявки, которую автор дорабатывает в форме (null — создаётся новая)
 let editingRequestId = null;
@@ -221,11 +226,12 @@ async function renderFinancierPanel() {
         return;
     }
 
-    // У финансиста раздел заявок — это его рабочий стол, поэтому заголовок свой
+    // У финансиста раздел заявок — это его рабочий стол, поэтому заголовок свой:
+    // под ним два блока (счета на материалы и одобренные заявки на выдачу)
     const title = document.getElementById('cashreq-tab-title');
     const subtitle = document.getElementById('cashreq-tab-subtitle');
     if (title) title.textContent = '💼 Рабочий стол финансиста';
-    if (subtitle) subtitle.textContent = 'Одобренные директором заявки: выдать деньги и отметить «Выдано»';
+    if (subtitle) subtitle.textContent = t('finDesktop.sectionSubtitle');
 
     const emp = getEmployee();
     const { balance } = emp ? await loadBalance(emp.id) : { balance: 0 };
@@ -291,6 +297,102 @@ export function switchCashRequestsTab(filter) {
 }
 
 // =====================================================================
+// РАБОЧИЙ СТОЛ ФИНАНСИСТА: ДВА БЛОКА
+// =====================================================================
+// На рабочем столе финансиста ровно две рабочие очереди:
+//
+//   БЛОК 1 «🧾 Счета на материалы» (#material-invoices-panel) — счета,
+//     которые снабжение присылает на оплату: материалы уже на объекте,
+//     деньги перечисляет фирма (безнал). Рисует js/modules/invoices.js;
+//
+//   БЛОК 2 «🟡 Одобренные заявки на выдачу» (#financier-approved-block) —
+//     заявки, которые директор одобрил: деньги нужно выдать из подотчёта
+//     финансиста. Список — тот же общий контейнер (#cash-requests-container),
+//     но у финансиста общие фильтры раздела (#cashreq-filters) скрыты, а
+//     вместо них два переключателя: «К выдаче» и «Выданные» (история).
+//
+// У остальных ролей (директор, администратор, главный инженер) раздел
+// выглядит как раньше: заголовка блока 2 нет, список идёт под общими
+// фильтрами, поэтому их фильтр (currentFilter) эти функции не меняют.
+
+/** Список блока 2: у финансиста в кэше только одобренные и выданные заявки. */
+function getFinancierBlockList() {
+    return cashRequestsCache.filter(r => r.status === financierView);
+}
+
+/**
+ * Переключатель внутри блока 2: «🟡 К выдаче» ↔ «🟢 Выданные».
+ * Права и статусы заявок не меняются — перерисовывается только список.
+ */
+export function setFinancierView(view) {
+    financierView = view === 'issued' ? 'issued' : 'approved';
+    renderCashRequests();
+}
+
+/**
+ * Приводит раздел к виду «глазами роли». Финансисту: две очереди отдельными
+ * блоками — прячем общие фильтры и показываем заголовок блока 2. Остальным:
+ * возвращаем прежний вид (фильтры + лента) на случай смены пользователя
+ * без перезагрузки страницы.
+ */
+function applyFinancierDesktopLayout() {
+    const filterBar = document.getElementById('cashreq-filters');
+    const block = document.getElementById('financier-approved-block');
+    const head = document.getElementById('financier-approved-head');
+
+    // Рамка карточки — как у блока 1 и у остальных панелей раздела
+    const blockCardClasses = ['bg-white', 'rounded-xl', 'shadow-sm', 'border', 'border-yellow-200', 'p-4'];
+
+    if (isFinancier()) {
+        filterBar?.classList.add('hidden');
+        block?.classList.add(...blockCardClasses);
+
+        if (head) {
+            head.classList.remove('hidden');
+            head.innerHTML = renderFinancierApprovedHead();
+        }
+        return;
+    }
+
+    filterBar?.classList.remove('hidden');
+    if (block) block.classList.remove(...blockCardClasses);
+
+    if (head) {
+        head.classList.add('hidden');
+        head.innerHTML = '';
+    }
+}
+
+/** Заголовок блока 2 и переключатели «К выдаче» / «Выданные» с количеством. */
+function renderFinancierApprovedHead() {
+    const approvedCount = cashRequestsCache.filter(r => r.status === 'approved').length;
+    const issuedCount = cashRequestsCache.filter(r => r.status === 'issued').length;
+
+    const tab = (view, label, count) => {
+        const active = financierView === view;
+        const cls = active
+            ? 'bg-[#15803d] text-white'
+            : 'bg-gray-100 text-gray-600 hover:bg-gray-200';
+
+        return `<button type="button" onclick="window.setFinancierView('${view}')" id="financier-view-${view}"
+                        class="px-3 py-1.5 rounded-lg text-xs font-semibold transition ${cls}">${label} (${count})</button>`;
+    };
+
+    return `
+        <div class="flex flex-wrap justify-between items-start gap-2">
+            <div>
+                <h3 class="text-sm font-bold text-gray-800">${t('finDesktop.approvedTitle')}</h3>
+                <p class="text-xs text-gray-500">${t('finDesktop.approvedSubtitle')}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                ${tab('approved', t('finDesktop.tabApproved'), approvedCount)}
+                ${tab('issued', t('finDesktop.tabIssued'), issuedCount)}
+            </div>
+        </div>
+    `;
+}
+
+// =====================================================================
 // РЕНДЕР
 // =====================================================================
 
@@ -301,9 +403,32 @@ export function renderCashRequests() {
     const container = document.getElementById('cash-requests-container');
     if (!container) return;
 
-    const filtered = getFilteredCashRequests();
+    // Вид раздела по роли: у финансиста — блок 2 со своими переключателями,
+    // у остальных — общие фильтры. Делается здесь, потому что эта функция
+    // вызывается и при открытии раздела, и при смене фильтра.
+    applyFinancierDesktopLayout();
+
+    const forFinancier = isFinancier();
+    const filtered = forFinancier ? getFinancierBlockList() : getFilteredCashRequests();
 
     if (filtered.length === 0) {
+        // У финансиста пустая очередь блока 2: не предлагаем создать заявку
+        // (он её не оформляет), а объясняем, что означает пустой список.
+        if (forFinancier) {
+            const emptyState = financierView === 'issued'
+                ? { icon: '🟢', title: t('finDesktop.emptyIssued'), hint: t('finDesktop.emptyIssuedHint') }
+                : { icon: '🟡', title: t('finDesktop.emptyApproved'), hint: t('finDesktop.emptyApprovedHint') };
+
+            container.innerHTML = `
+                <div class="bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-300 p-8 text-center space-y-2">
+                    <div class="text-5xl">${emptyState.icon}</div>
+                    <h3 class="font-bold text-gray-700">${emptyState.title}</h3>
+                    <p class="text-sm text-gray-500">${emptyState.hint}</p>
+                </div>
+            `;
+            return;
+        }
+
         container.innerHTML = `
             <div class="bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-300 p-8 text-center space-y-2">
                 <div class="text-5xl">💰</div>
@@ -453,7 +578,8 @@ function renderCashRequestActions(req) {
     }
 
     // Директор одобрил — и на этом его работа закончена: деньги выдаёт
-    // финансист, у которого заявка уже стоит в списке «🟡 Одобрены».
+    // финансист, у которого заявка уже стоит в блоке 2 «🟡 Одобренные заявки
+    // на выдачу» на вкладке «🟡 К выдаче».
     // Без этой подписи карточка выглядела бы «без кнопок» и директор ждал бы
     // от себя выдачи денег (раньше у него была кнопка «💵 Выдать»).
     if (req.status === 'approved' && canProcessCashRequest() && !canIssueCashRequest()) {
@@ -1396,6 +1522,8 @@ export async function deleteCashRequest(id) {
 
 window.openCashRequestDetail = openCashRequestDetail;
 window.switchCashRequestsTab = switchCashRequestsTab;
+// Переключатель блока 2 рабочего стола финансиста: «К выдаче» / «Выданные»
+window.setFinancierView = setFinancierView;
 window.openNewCashRequestForm = openNewCashRequestForm;
 window.openCashRequestEdit = openCashRequestEdit;
 window.loadSectionsForCashRequest = loadSectionsForCashRequest;

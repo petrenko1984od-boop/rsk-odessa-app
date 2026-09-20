@@ -611,6 +611,21 @@ async function main() {
         finPanel.replace(/\s+/g, ' ').includes('14 000'),
         finPanel.replace(/\n/g, ' | ').slice(0, 160));
 
+    // Рабочий стол финансиста — два блока на одной странице (не вкладки):
+    // счета на материалы и одобренные заявки на выдачу
+    const finBlocks = await evaluate('(() => {' +
+        'const vis = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== "none"; };' +
+        'return { invoices: vis("material-invoices-panel"), approved: vis("financier-approved-head"),' +
+        ' filters: vis("cashreq-filters"),' +
+        ' approvedText: (document.getElementById("financier-approved-head") || {}).innerText || "" }; })()');
+    ok('на рабочем столе финансиста два блока: счета и одобренные заявки',
+        finBlocks.invoices === true && finBlocks.approved === true &&
+        finBlocks.approvedText.includes('Одобренные заявки на выдачу'),
+        JSON.stringify({ invoices: finBlocks.invoices, approved: finBlocks.approved }) +
+        ' :: ' + finBlocks.approvedText.replace(/\n/g, ' | ').slice(0, 120));
+    ok('общие фильтры заявок у финансиста скрыты', finBlocks.filters === false,
+        'cashreq-filters виден: ' + finBlocks.filters);
+
     const balanceBefore = balanceOf(9);
     await evaluate('window.confirm = () => true');
     await evaluate('window.markMaterialInvoicePaid(900)');
