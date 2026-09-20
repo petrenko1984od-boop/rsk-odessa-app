@@ -116,6 +116,32 @@ function main() {
     ok('скрипт просит PostgREST перечитать схему (notify pgrst)',
         /notify\s+pgrst\s*,\s*'reload schema'/i.test(sql));
 
+    // --- 3б. Статусы заявки: миграция обновляет CHECK-ограничение ---
+    // Боевая жалоба «заявка не закрывается»: на orders.status висело старое
+    // ограничение без 'delivered', и запись падала с 23514 («violates check
+    // constraint "orders_status_check"»). Миграция обязана снять старое
+    // ограничение и поставить новое — со списком статусов из кода.
+    ok('миграция обновляет CHECK-ограничение orders_status_check',
+        /orders_status_check/.test(sql) &&
+        /drop constraint/i.test(sql) &&
+        /add constraint orders_status_check/i.test(sql),
+        'снятие старого + постановка нового');
+
+    const STATUS_VALUES = ['new', 'in_progress', 'delivered', 'closed', 'archived'];
+    const missingStatuses = STATUS_VALUES.filter((value) => !new RegExp(`'${value}'`).test(sql));
+    ok("новое ограничение разрешает все статусы кода (включая 'delivered')",
+        missingStatuses.length === 0, missingStatuses.join(', ') || STATUS_VALUES.join(' | '));
+
+    const missingInSchemaStatuses = STATUS_VALUES.filter((value) => !new RegExp(value).test(schema));
+    ok('schema.sql описывает тот же список статусов',
+        missingInSchemaStatuses.length === 0, missingInSchemaStatuses.join(', ') || 'все на месте');
+
+    ok('снятие и постановка ограничения тоже защищены (exception when others)',
+        handlers >= 4, 'обработчиков exception when others: ' + handlers);
+
+    ok('есть проверка, что ограничение больше не запрещает delivered',
+        /MISSING — delivered запрещён/.test(sql) && /as k on true;/.test(sql));
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'

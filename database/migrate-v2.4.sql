@@ -3,7 +3,11 @@
 -- =====================================================================
 -- Что добавляет эта версия:
 --   1. счёт поставщика по заявке на материалы + его оплату (безнал фирмы);
---   2. статус заявки «Доставлено на объект» (status = 'delivered').
+--   2. статус заявки «Доставлено на объект» (status = 'delivered') — вместе с
+--      обновлением CHECK-ограничения orders_status_check. На боевой базе оно
+--      осталось со старым списком статусов, и приложение не могло закрыть
+--      заявку: «new row for relation "orders" violates check constraint
+--      "orders_status_check"» (SQLSTATE 23514). См. БЛОК 4.
 -- Ведомость пополнений подотчёта финансиста миграции НЕ требует: колонка
 -- cash_operations.source есть в базе с прежних версий, а новое значение
 -- 'financier_topup' пишет само приложение.
@@ -116,9 +120,83 @@ notify pgrst, 'reload schema';
 -- ---------------------------------------------------------------------
 -- Новое значение статуса: 'delivered' — закупка приехала на объект, позиции
 -- уходят в «Реестр материалов», а счёт при этом может быть ещё не оплачен.
--- Миграция колонок НЕ нужна: status — обычный text без CHECK-констрейнта
--- (проверьте себя запросом ниже: строк не должно быть).
+--
+-- ⚠️ На боевой базе на колонке status висит СТАРОЕ CHECK-ограничение
+--    orders_status_check со списком без 'delivered'. Пока оно на месте,
+--    закрытие закупки падает:
+--        new row for relation "orders" violates check constraint
+--        "orders_status_check"
+--    — приложение пишет status = 'delivered' и не может сохранить заявку.
+--    Поэтому здесь старое ограничение снимается (4а), а новое ставится со
+--    всеми статусами, которые знает код (js/config.js → CONFIG.ORDER_STATUS):
+--        new | in_progress | delivered | closed | archived
 -- ---------------------------------------------------------------------
-select conname, pg_get_constraintdef(oid)
-from pg_constraint
-where conrelid = 'orders'::regclass and contype = 'c';
+
+-- 4а. Снимаем устаревшие ограничения на orders.status — те, в которых нет
+--     'delivered'. Те ограничения, что уже допускают этот статус, не трогаем.
+do $$
+declare
+    r record;
+    dropped int := 0;
+begin
+    for r in
+        select conname
+        from pg_constraint
+        where conrelid = 'orders'::regclass
+          and contype = 'c'
+          and pg_get_constraintdef(oid) ~ '\ystatus\y'
+          and pg_get_constraintdef(oid) !~ '\ydelivered\y'
+    loop
+        begin
+            execute format('alter table orders drop constraint %I', r.conname);
+            dropped := dropped + 1;
+            raise notice 'ok: устаревшее ограничение % снято (в нём не было статуса delivered)', r.conname;
+        exception when others then
+            raise warning 'НЕ СНЯТО — ограничение %: % (%)', r.conname, sqlerrm, sqlstate;
+        end;
+    end loop;
+
+    if dropped = 0 then
+        raise notice 'ok: устаревших ограничений на orders.status нет';
+    end if;
+end $$;
+
+-- 4б. Ставим ограничение заново — уже с 'delivered'.
+do $$
+declare
+    definition text;
+begin
+    select pg_get_constraintdef(oid) into definition
+    from pg_constraint
+    where conrelid = 'orders'::regclass and conname = 'orders_status_check';
+
+    if definition is not null and definition ~ '\ydelivered\y' then
+        raise notice 'ok: ограничение orders_status_check уже допускает delivered';
+        return;
+    end if;
+
+    execute format(
+        'alter table orders add constraint orders_status_check '
+        'check (status in (%L, %L, %L, %L, %L))',
+        'new', 'in_progress', 'delivered', 'closed', 'archived'
+    );
+
+    raise notice 'ok: ограничение orders_status_check обновлено — delivered разрешён';
+exception when others then
+    raise warning 'orders_status_check не обновлено: % (%) — приложение продолжит работать: статусы проверяет сам интерфейс', sqlerrm, sqlstate;
+end $$;
+
+-- 4в. ПРОВЕРКА: не осталось ли ограничение, запрещающее 'delivered'.
+--     Ожидается строка со статусом 'ok'. Если 'MISSING' — смотрите Notices.
+select coalesce(conname, '— ограничений на orders.status нет —') as constraint_name,
+       coalesce(pg_get_constraintdef(oid), 'status — обычный text') as definition,
+       case when oid is null or pg_get_constraintdef(oid) ~ '\ydelivered\y'
+            then 'ok' else 'MISSING — delivered запрещён: примените файл целиком' end as status
+from (select 1) as one
+left join lateral (
+    select conname, oid
+    from pg_constraint
+    where conrelid = 'orders'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ~ '\ystatus\y'
+) as k on true;

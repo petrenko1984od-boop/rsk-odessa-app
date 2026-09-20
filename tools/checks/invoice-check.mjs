@@ -79,6 +79,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const missingColumns = { orders: [] };
 let brokenOrdersJoin = false;
 
+// 3. checkViolationOrders — база отклонила запись по CHECK-ограничению (23514):
+//    на orders.status висело СТАРОЕ ограничение со списком без 'delivered'.
+//    Именно это видит снабженец, когда «заявка не закрывается»: приложение
+//    писало status = 'delivered', а база отвечала
+//    «new row for relation "orders" violates check constraint "orders_status_check"».
+let checkViolationOrders = false;
+
 /** Первая колонка из запроса, которой нет в «старой» базе (или null). */
 function missingColumnFor(table, columns) {
     const absent = missingColumns[table] || [];
@@ -305,6 +312,15 @@ function handleMock(req, res, body) {
     if (req.method === 'POST') return sendJson(res, 201, insertRows(table, payload));
 
     if (req.method === 'PATCH') {
+        // База отклонила значение по CHECK-ограничению (боевая жалоба «заявка
+        // не закрывается»): так выглядит устаревший список статусов.
+        if (table === 'orders' && checkViolationOrders) {
+            return sendJson(res, 400, {
+                code: '23514', details: null, hint: null,
+                message: 'new row for relation "orders" violates check constraint "orders_status_check"'
+            });
+        }
+
         // Запись в колонку, которой нет: PostgREST отвечает PGRST204
         const absent = missingColumnFor(table, Object.keys(payload || {}).join(','));
         if (absent) {
@@ -791,6 +807,40 @@ async function main() {
         finBroken.includes('Не удалось загрузить счета') && finBroken.includes('migrate-v2.4.sql'),
         finBroken.replace(/\n/g, ' ').slice(0, 200));
 
+    // 5. База отклонила СТАТУС (боевая жалоба «заявка не закрывается»):
+    //    на orders.status висело старое CHECK-ограничение без 'delivered'.
+    //    Сотрудник должен увидеть объяснение и файл миграции, а не английский
+    //    текст Postgres «violates check constraint "orders_status_check"».
+    log('--- заявка не закрывается: устаревшее ограничение статусов ---');
+    checkViolationOrders = true;
+    invoiceOrder.status = 'in_progress';   // окно доставки открывается только из «В работе»
+
+    await loginAs(10, 'Снабженец: ограничение статусов');
+    await evaluate('window.switchTab("orders")');
+    await sleep(1600);
+    await evaluate('window.openOrderDetail(900)');
+    await sleep(700);
+    await evaluate('window.openCloseOrderModal(900)');
+    await sleep(800);
+    await evaluate('(() => {' +
+        'document.querySelectorAll(".close-order-item").forEach((row) => {' +
+        '    row.querySelector(".close-order-price").value = "5"; });' +
+        'document.getElementById("close-order-supplier").value = "Эпицентр";' +
+        'document.getElementById("close-order-form").dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));' +
+        'return true; })()');
+    await sleep(1800);
+
+    const checkToast = await evaluate('Array.from(document.body.children)' +
+        '.filter((el) => el.classList && el.classList.contains("top-4"))' +
+        '.map((el) => el.innerText).join(" | ")');
+    ok('отказ по CHECK-ограничению объясняется по-русски и ведёт к миграции',
+        checkToast.includes('orders_status_check') && checkToast.includes('migrate-v2.4.sql') &&
+        !/violates check constraint/i.test(checkToast),
+        checkToast.replace(/\n/g, ' ').slice(0, 220));
+
+    checkViolationOrders = false;
+    invoiceOrder.status = 'delivered';
+
     // Возвращаем мок в рабочее состояние, чтобы итоговая сводка была честной
     missingColumns.orders = [];
     invoiceOrder.paid_at = paidAtBefore;
@@ -843,11 +893,13 @@ try {
     await main();
 } catch (error) {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
+    failed += 1;
 } finally {
     try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
     try { server.close(); } catch { /* уже закрыт */ }
     const outDir = path.join(os.tmpdir(), 'rsk-fin');
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'invoice-check.txt'), report.join('\r\n'), 'utf8');
-    process.exit(0);
+    // Код возврата 1, если есть непройденные проверки (удобно для автоматики).
+    process.exit(failed === 0 ? 0 : 1);
 }

@@ -691,11 +691,13 @@ try {
     log('  ошибки/исключения в консоли: ' + (consoleErrors.length ? '\n    ' + consoleErrors.join('\n    ') : 'нет'));
 } catch (error) {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
+    failed += 1;
 } finally {
     try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
     try { server.close(); } catch { /* уже закрыт */ }
     const outDir = path.join(os.tmpdir(), 'rsk-fin');
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'fin-workflow.txt'), report.join('\r\n'), 'utf8');
-    process.exit(0);
+    // Код возврата 1, если есть непройденные проверки (удобно для автоматики).
+    process.exit(failed === 0 ? 0 : 1);
 }

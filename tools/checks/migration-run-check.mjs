@@ -8,7 +8,11 @@
 //   3. самопроверка из файла печатает 8 строк ok;
 //   4. повторный запуск безопасен;
 //   5. если alter table падает (в тесте orders — это ВИД, а не таблица), скрипт
-//      всё равно доходит до конца и самопроверка печатает MISSING.
+//      всё равно доходит до конца и самопроверка печатает MISSING;
+//   6. СТАРОЕ CHECK-ограничение orders_status_check (боевая база: список без
+//      'delivered') снимается, и заявку снова можно закрыть. Без этой правки
+//      приложение отвечало «new row for relation "orders" violates check
+//      constraint "orders_status_check"» — «заявка не закрывается».
 //
 // Пакет нужен только для этого прогона:
 //     npm install @electric-sql/pglite
@@ -62,6 +66,10 @@ await db.exec(`
     alter table orders add column if not exists invoice_file_name text;
     alter table orders add column if not exists invoice_uploaded_at timestamptz;
     alter table orders add column if not exists invoice_total numeric;
+    -- Именно это ограничение стоит на боевой базе: список статусов старее
+    -- приложения — 'delivered' в нём нет, поэтому закрытие закупки падало.
+    alter table orders add constraint orders_status_check
+        check (status in ('new', 'in_progress', 'closed', 'archived'));
     insert into orders (id, status) values (1, 'in_progress');
 `);
 
@@ -77,8 +85,26 @@ const verifySql = sql.slice(
     sql.indexOf('order by c.name, 3;') + 'order by c.name, 3;'.length
 );
 
+// Запрос-проверка из БЛОК 4в: не осталось ли ограничение, запрещающее 'delivered'.
+const deliveredVerifySql = sql.slice(
+    sql.indexOf('select coalesce(conname'),
+    sql.indexOf(') as k on true;') + ') as k on true;'.length
+);
+
 log('Миграция в Postgres (PGlite): ' + path.relative(ROOT, MIGRATION));
 ok('до миграции колонок 4 из 8 (состояние боевой базы)', await columnsPresent() === 4);
+
+// Боевая жалоба «заявка не закрывается»: старое ограничение не пропускает
+// status = 'delivered'. Проверяем, что тест воспроизводит именно это.
+let deliveredBefore = null;
+try {
+    await db.exec("update orders set status = 'delivered' where id = 1");
+} catch (error) {
+    deliveredBefore = error;
+}
+ok('до миграции закрыть заявку нельзя (delivered запрещён ограничением)',
+    deliveredBefore !== null && /orders_status_check/.test(deliveredBefore.message),
+    deliveredBefore ? deliveredBefore.message : 'запись прошла — тест не воспроизвёл боевую ошибку');
 
 // Ошибку самого запуска тоже превращаем в строку отчёта, а не в падение прогона
 let firstRunError = null;
@@ -91,6 +117,29 @@ ok('миграция выполняется без ошибок', firstRunError 
     firstRunError ? firstRunError.message : '');
 
 ok('после миграции все 8 колонок', await columnsPresent() === 8);
+
+// Боевая жалоба «заявка не закрывается» — лечится: ограничение снято и
+// поставлено заново со статусом 'delivered'.
+let deliveredAfter = null;
+try {
+    await db.exec("update orders set status = 'delivered' where id = 1");
+} catch (error) {
+    deliveredAfter = error;
+}
+ok('после миграции заявка закрывается (status = delivered принимается)',
+    deliveredAfter === null, deliveredAfter ? deliveredAfter.message : '');
+
+const constraint = (await db.query(`
+    select pg_get_constraintdef(oid) as def from pg_constraint
+    where conrelid = 'orders'::regclass and conname = 'orders_status_check'
+`)).rows[0];
+ok('ограничение orders_status_check допускает delivered',
+    /delivered/.test(constraint?.def || ''), String(constraint?.def || 'ограничения нет'));
+
+const deliveredVerify = await db.query(deliveredVerifySql);
+ok('проверка из БЛОК 4в: ok (delivered больше не запрещён)',
+    deliveredVerify.rows.length > 0 && deliveredVerify.rows.every((row) => row.status === 'ok'),
+    deliveredVerify.rows.map((row) => row.constraint_name + '=' + row.status).join(', ').slice(0, 160));
 
 const def = (await db.query(`
     select column_default from information_schema.columns

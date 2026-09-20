@@ -53,12 +53,54 @@ function parseMissingColumn(error) {
 }
 
 /**
- * Текст ошибки для сотрудника. Для ошибок про отсутствующую колонку
- * возвращает понятную инструкцию, для остальных — исходное сообщение.
+ * Достаёт из ошибки имя CHECK-ограничения, которое не пропустило запись.
+ * Postgres: «new row for relation "orders" violates check constraint
+ * "orders_status_check"» (SQLSTATE 23514). Так выглядит УСТАРЕВШЕЕ ограничение
+ * на список значений: например, в базе список статусов заявки старее
+ * приложения, и она запрещает новый статус 'delivered' — сотрудник видит
+ * «заявка не закрывается» и не понимает, что делать.
+ * @returns {{ table: string|null, constraint: string }|null}
+ */
+function parseCheckViolation(error) {
+    const message = error?.message || '';
+    if (!message) return null;
+
+    const match = message.match(/violates check constraint "([^"]+)"/i);
+    if (!match) return null;
+
+    return {
+        table: (message.match(/relation "([^"]+)"/i) || [])[1] || null,
+        constraint: match[1]
+    };
+}
+
+/**
+ * Текст ошибки для сотрудника. Для отсутствующей колонки и устаревшего
+ * CHECK-ограничения возвращает понятную инструкцию, для остальных —
+ * исходное сообщение.
  */
 export function explainError(error) {
     const missing = parseMissingColumn(error);
-    if (!missing) return error?.message || String(error || 'Неизвестная ошибка');
+    if (!missing) {
+        // Не колонка — возможно, база отклонила значение по ограничению.
+        const check = parseCheckViolation(error);
+        if (!check) return error?.message || String(error || 'Неизвестная ошибка');
+
+        const where = check.table ? `в таблице «${check.table}»` : 'в базе данных';
+
+        // Ограничение на список статусов заявки: оно обновляется миграцией
+        // v2.4.0 (БЛОК 4), потому что статус 'delivered' появился в v2.4.0.
+        if (/status/i.test(check.constraint)) {
+            log.error(`⚠ ${where} сработало ограничение «${check.constraint}»: список статусов в базе старее приложения`);
+            log.error('⚠ Выполните database/migrate-v2.4.sql в Supabase → SQL Editor: он обновляет это ограничение и добавляет статус «Доставлено на объект».');
+            return `База отклонила запись: ${where} сработало ограничение «${check.constraint}» — в списке статусов нет «Доставлено на объект». ` +
+                'Примените database/migrate-v2.4.sql (Supabase → SQL Editor) и повторите действие.';
+        }
+
+        log.error(`⚠ ${where} сработало ограничение «${check.constraint}» — запись не прошла`);
+        return `База отклонила запись: ${where} сработало ограничение «${check.constraint}». ` +
+            'Значение не подходит по правилам базы — сообщите администратору.';
+    }
 
     const where = missing.table ? `в таблице «${missing.table}»` : 'в базе данных';
 

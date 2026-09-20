@@ -5,7 +5,7 @@
 | Файл | Что это |
 | --- | --- |
 | `schema.sql` | Полная схема для **чистой** установки: таблицы, колонки, внешние ключи. Включает изменения v2.4.0 |
-| `migrate-v2.4.sql` | Пошаговая миграция v2.4.0 для **уже работающей** базы: счёт поставщика по заявке, статус «Доставлено на объект», оплата счёта финансистом |
+| `migrate-v2.4.sql` | Пошаговая миграция v2.4.0 для **уже работающей** базы: счёт поставщика по заявке, статус «Доставлено на объект», оплата счёта финансистом, обновление CHECK-ограничения `orders_status_check` |
 | `fix-unconfirmed-users.sql` | Служебный скрипт: что делать с аккаунтами, застрявшими в «Email not confirmed» |
 
 ## Что делать с уже работающей базой
@@ -20,8 +20,8 @@
 2. Перед запуском сделайте бэкап: **Database → Backups** (или выгрузите дамп).
 3. Откройте `database/migrate-v2.4.sql`, скопируйте файл **целиком** и вставьте
    в редактор → **Run**.
-4. Посмотрите результат последнего запроса (**БЛОК 3** — самопроверка) и вкладку
-   **Notices**. В самопроверке должно быть **8 строк со статусом `ok`**:
+4. Посмотрите результаты запросов и вкладку **Notices**. Их должно быть два:
+   * **БЛОК 3** — самопроверка колонок: **8 строк со статусом `ok`**;
 
    | column_name | data_type | status |
    | --- | --- | --- |
@@ -34,15 +34,71 @@
    | paid_by_employee_id | bigint | ok |
    | payment_status | text | ok |
 
+   * **БЛОК 4в** — проверка статусов: строка `orders_status_check = ok`. Если
+     там `MISSING — delivered запрещён`, значит старое ограничение снять не
+     удалось (смотрите Notices) — без этого заявка не закроется, см. раздел
+     «Если заявка не закрывается» ниже.
+
 5. Обновите приложение в браузере (Ctrl+F5) и повторите действие, которое падало.
 
 Что делает миграция: добавляет в `orders` восемь колонок (`invoice_path`,
 `invoice_file_name`, `invoice_uploaded_at`, `invoice_total`, `payment_status`,
 `delivered_at`, `paid_at`, `paid_by_employee_id`), ставит `payment_status`
-значение по умолчанию `'paid'` и переводит в `'paid'` уже существующие заявки.
+значение по умолчанию `'paid'`, переводит в `'paid'` уже существующие заявки,
+а также снимает устаревшее CHECK-ограничение `orders_status_check` и ставит его
+заново со списком статусов, который знает код (`new`, `in_progress`,
+`delivered`, `closed`, `archived`).
 Отдельного бакета Storage не нужно: счета лежат в бакете чеков.
 
 Повторный запуск безопасен.
+
+### Если заявка не закрывается: `violates check constraint "orders_status_check"`
+
+Так выглядит вторая половина той же истории: колонки в базе уже есть, счёт
+сохраняется и уходит финансисту, а кнопка **«🚚 Доставлено на объект»** отвечает
+
+```
+Ошибка закрытия заявки: new row for relation "orders" violates check constraint "orders_status_check"
+```
+
+(SQLSTATE `23514`). Причина: на колонке `orders.status` с прежних версий висит
+CHECK-ограничение со списком статусов, где **нет** нового статуса `delivered`
+(в v2.4.0 закупка закрывается именно им). Приложение пишет `status = 'delivered'`
+— база отклоняет запись.
+
+Что делать: применить `database/migrate-v2.4.sql` **целиком** ещё раз. БЛОК 4
+этого файла снимает устаревшее ограничение и ставит новое:
+
+```sql
+check (status in ('new', 'in_progress', 'delivered', 'closed', 'archived'))
+```
+
+Проверить, что ограничение обновилось (БЛОК 4в — тот же запрос отдельно):
+
+```sql
+select coalesce(conname, '— ограничений на orders.status нет —') as constraint_name,
+       coalesce(pg_get_constraintdef(oid), 'status — обычный text') as definition,
+       case when oid is null or pg_get_constraintdef(oid) ~ '\ydelivered\y'
+            then 'ok' else 'MISSING — delivered запрещён: примените файл целиком' end as status
+from (select 1) as one
+left join lateral (
+    select conname, oid
+    from pg_constraint
+    where conrelid = 'orders'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ~ '\ystatus\y'
+) as k on true;
+```
+
+Ожидается `ok`. В приложении это же видно тостом: вместо английской строки
+Postgres приложение пишет «База отклонила запись: в таблице «orders» сработало
+ограничение «orders_status_check» — в списке статусов нет «Доставлено на
+объект». Примените database/migrate-v2.4.sql…» (`js/database.js` →
+`explainError()`).
+
+⚠️ Если будете добавлять новый статус заявки — допишите его и в это ограничение
+(иначе повторится та же ошибка). Список статусов живёт в `js/config.js`
+(`CONFIG.ORDER_STATUS`).
 
 ### Почему команды миграции «защищены» и это важно
 
@@ -163,6 +219,7 @@ PostgREST отвечает по-английски, поэтому в v2.4.0 т�
 | `column orders.delivered_at does not exist` (42703) | то же: в списке/реестре запрошена отсутствующая колонка |
 | `Could not find the 'delivered_at' column of 'orders' in the schema cache` (PGRST204) | запись — «Доставлено на объект» |
 | `Could not find the 'payment_status' column of 'orders' in the schema cache` (PGRST204) | запись — «Сохранить счёт» (именно это видно на боевой базе после половины миграции) |
+| `new row for relation "orders" violates check constraint "orders_status_check"` (23514) | запись `orders` — «🚚 Доставлено на объект»: устаревшее ограничение статусов без `delivered` (см. «Если заявка не закрывается») |
 
 Порядок действий в этом случае один: применить `migrate-v2.4.sql` целиком
 (см. «Если применилась только часть колонок») и обновить приложение (Ctrl+F5).

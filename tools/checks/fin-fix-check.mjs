@@ -41,6 +41,10 @@ const createdOrders = [];
 const createdOrderItems = [];
 const report = [];
 const log = (...a) => { const line = a.join(' '); report.push(line); console.log(line); };
+
+// Счётчик непройденных проверок. Объявлен на уровне модуля, потому что его
+// читает блок finally — им задаётся код возврата прогона (1 = есть замечания).
+let failed = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------- мок Supabase -------------------------------
@@ -374,7 +378,7 @@ try {
     }
 
     log('--- ИТОГ (' + FLOW + ', после исправления) ---');
-    let failed = 0;
+    // failed объявлен на уровне модуля — из него берётся код возврата в finally.
     const ok = (name, cond, extra = '') => {
         log((cond ? '  ok   ' : '  FAIL ') + name + (extra ? ' :: ' + extra : ''));
         if (!cond) failed += 1;
@@ -403,12 +407,14 @@ try {
     log('  ошибки/исключения в консоли: ' + (consoleErrors.length ? '\n    ' + consoleErrors.join('\n    ') : 'нет'));
 } catch (error) {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
+    failed += 1;
 } finally {
     try { if (chrome) chrome.kill(); } catch {}
     try { server.close(); } catch {}
     const outDir = path.join(os.tmpdir(), 'rsk-fin');
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'fin-fix-' + (process.env.FLOW || 'finance') + '.txt'), report.join('\r\n'), 'utf8');
-    process.exit(0);
+    // Код возврата 1, если есть непройденные проверки (удобно для автоматики).
+    process.exit(failed === 0 ? 0 : 1);
 }
 
