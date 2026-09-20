@@ -42,7 +42,12 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        заявки на материалы», блоки заявок сворачиваются (dashboard.js);
 //        директор деньги не выдаёт (кнопки «💵 Выдать» у него нет), а возврат
 //        «На доработку» подсказывает database/fix-cash-requests-status-check.sql.
-const SHELL_REVISION = 'r4';
+//   r5 — рабочий стол финансиста собран в один блок «💰 Финансовые заявки»:
+//        у счетов появилось меню «⏳ Ожидают оплату / ✅ Оплаченные», фильтр
+//        периода у истории оплат и выгрузка в Excel по этому фильтру
+//        (index.html, js/modules/invoices.js, js/modules/cash-requests.js,
+//        js/i18n.js).
+const SHELL_REVISION = 'r5';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

@@ -638,19 +638,30 @@ try {
         'const vis = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== "none"; };' +
         'return { invoices: vis("material-invoices-panel"),' +
         ' invoiceText: (document.getElementById("material-invoices-panel") || {}).innerText || "",' +
+        ' invoiceTabs: (document.getElementById("invoice-tabs") || {}).innerText || "",' +
+        ' invoiceExcel: vis("invoice-export-btn"),' +
+        ' desk: vis("financier-desk-head"),' +
+        ' deskText: (document.getElementById("financier-desk-head") || {}).innerText || "",' +
         ' blockHead: vis("financier-approved-head"),' +
         ' blockText: (document.getElementById("financier-approved-head") || {}).innerText || "",' +
         ' filters: vis("cashreq-filters"),' +
         ' tabs: Array.prototype.map.call(document.querySelectorAll("#financier-approved-head button"), (b) => b.id).join(",") }; })()');
-    ok('блок 1 рабочего стола — «🧾 Счета на материалы»',
+    ok('рабочий стол финансиста собран в один блок «💰 Финансовые заявки»',
+        finBlocks.desk === true && finBlocks.deskText.toLowerCase().includes('финансовые заявки'),
+        finBlocks.deskText.replace(/\n/g, ' | ').slice(0, 160));
+    ok('в блоке счетов — меню «⏳ Ожидают оплату / ✅ Оплаченные» и выгрузка в Excel',
+        finBlocks.invoiceTabs.includes('Ожидают оплату') && finBlocks.invoiceTabs.includes('Оплаченные') &&
+        finBlocks.invoiceExcel === true,
+        finBlocks.invoiceTabs.replace(/\n/g, ' | ') + ' :: excel=' + finBlocks.invoiceExcel);
+    ok('очередь 1 рабочего стола — «🧾 Счета на материалы»',
         finBlocks.invoices === true && finBlocks.invoiceText.includes('Счета на материалы'),
         finBlocks.invoiceText.replace(/\n/g, ' | ').slice(0, 140));
-    ok('блок 2 рабочего стола — «🟡 Одобренные заявки на выдачу»',
+    ok('очередь 2 рабочего стола — «🟡 Одобренные заявки на выдачу»',
         finBlocks.blockHead === true && finBlocks.blockText.includes('Одобренные заявки на выдачу'),
         finBlocks.blockText.replace(/\n/g, ' | ').slice(0, 160));
     ok('общие фильтры заявок финансисту скрыты', finBlocks.filters === false,
         'cashreq-filters виден: ' + finBlocks.filters);
-    ok('в блоке 2 два переключателя: «К выдаче» и «Выданные»',
+    ok('в очереди 2 два переключателя: «К выдаче» и «Выданные»',
         finBlocks.tabs === 'financier-view-approved,financier-view-issued', finBlocks.tabs);
 
     await evaluate('window.openCashRequestDetail(' + requestA.id + ')');

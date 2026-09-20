@@ -297,23 +297,28 @@ export function switchCashRequestsTab(filter) {
 }
 
 // =====================================================================
-// РАБОЧИЙ СТОЛ ФИНАНСИСТА: ДВА БЛОКА
+// РАБОЧИЙ СТОЛ ФИНАНСИСТА: ОДИН БЛОК «💰 ФИНАНСОВЫЕ ЗАЯВКИ»
 // =====================================================================
-// На рабочем столе финансиста ровно две рабочие очереди:
+// Рабочий стол финансиста собран в один блок (#financier-desk-block), внутри
+// него две рабочие очереди, и у каждой своё меню:
 //
-//   БЛОК 1 «🧾 Счета на материалы» (#material-invoices-panel) — счета,
-//     которые снабжение присылает на оплату: материалы уже на объекте,
-//     деньги перечисляет фирма (безнал). Рисует js/modules/invoices.js;
+//   1. «🧾 Счета на материалы» (#material-invoices-panel) — счета, которые
+//      снабжение присылает на оплату: материалы уже на объекте, деньги
+//      перечисляет фирма (безнал). Меню «⏳ Ожидают оплату / ✅ Оплаченные»,
+//      фильтр периода у истории и выгрузка в Excel по фильтру — внутри блока,
+//      рисует js/modules/invoices.js;
 //
-//   БЛОК 2 «🟡 Одобренные заявки на выдачу» (#financier-approved-block) —
-//     заявки, которые директор одобрил: деньги нужно выдать из подотчёта
-//     финансиста. Список — тот же общий контейнер (#cash-requests-container),
-//     но у финансиста общие фильтры раздела (#cashreq-filters) скрыты, а
-//     вместо них два переключателя: «К выдаче» и «Выданные» (история).
+//   2. «🟡 Одобренные заявки на выдачу» (#financier-approved-block) — заявки,
+//      которые директор одобрил: деньги нужно выдать из подотчёта финансиста.
+//      Список — тот же общий контейнер (#cash-requests-container), но у
+//      финансиста общие фильтры раздела (#cashreq-filters) скрыты, а вместо
+//      них два переключателя: «К выдаче» и «Выданные» (история).
 //
-// У остальных ролей (директор, администратор, главный инженер) раздел
-// выглядит как раньше: заголовка блока 2 нет, список идёт под общими
-// фильтрами, поэтому их фильтр (currentFilter) эти функции не меняют.
+// Заголовок «💰 Финансовые заявки» (#financier-desk-head) и рамку группы
+// показывает renderFinancierDeskHead() — тоже только финансисту. У остальных
+// ролей (директор, администратор, главный инженер) раздел выглядит как раньше:
+// заголовка группы нет, список идёт под общими фильтрами, поэтому их фильтр
+// (currentFilter) эти функции не меняют.
 
 /** Список блока 2: у финансиста в кэше только одобренные и выданные заявки. */
 function getFinancierBlockList() {
@@ -330,20 +335,36 @@ export function setFinancierView(view) {
 }
 
 /**
- * Приводит раздел к виду «глазами роли». Финансисту: две очереди отдельными
- * блоками — прячем общие фильтры и показываем заголовок блока 2. Остальным:
- * возвращаем прежний вид (фильтры + лента) на случай смены пользователя
- * без перезагрузки страницы.
+ * Приводит раздел к виду «глазами роли». Финансисту: один блок «💰 Финансовые
+ * заявки» с двумя очередями — прячем общие фильтры, показываем заголовок
+ * группы и заголовок блока с заявками на выдачу. Остальным: возвращаем прежний
+ * вид (фильтры + лента) на случай смены пользователя без перезагрузки страницы.
  */
 function applyFinancierDesktopLayout() {
     const filterBar = document.getElementById('cashreq-filters');
     const block = document.getElementById('financier-approved-block');
     const head = document.getElementById('financier-approved-head');
+    const desk = document.getElementById('financier-desk-block');
+    const deskHead = document.getElementById('financier-desk-head');
 
     // Рамка карточки — как у блока 1 и у остальных панелей раздела
     const blockCardClasses = ['bg-white', 'rounded-xl', 'shadow-sm', 'border', 'border-yellow-200', 'p-4'];
+    // Рамка группы: внутри неё обе очереди финансиста, поэтому фон серый —
+    // видно, что блок один, а белые панели внутри — его части
+    const deskCardClasses = ['bg-gray-50', 'rounded-xl', 'border', 'border-gray-200', 'p-3'];
+    const forFinancier = isFinancier();
 
-    if (isFinancier()) {
+    if (desk) {
+        if (forFinancier) desk.classList.add(...deskCardClasses);
+        else desk.classList.remove(...deskCardClasses);
+    }
+
+    if (deskHead) {
+        deskHead.classList.toggle('hidden', !forFinancier);
+        deskHead.innerHTML = forFinancier ? renderFinancierDeskHead() : '';
+    }
+
+    if (forFinancier) {
         filterBar?.classList.add('hidden');
         block?.classList.add(...blockCardClasses);
 
@@ -361,6 +382,20 @@ function applyFinancierDesktopLayout() {
         head.classList.add('hidden');
         head.innerHTML = '';
     }
+}
+
+/**
+ * Заголовок единого блока «💰 Финансовые заявки»: под ним на одной странице
+ * лежат обе очереди финансиста — счета на материалы (со своим меню) и
+ * одобренные заявки на выдачу (со своими переключателями).
+ */
+function renderFinancierDeskHead() {
+    return `
+        <div class="flex flex-wrap items-baseline gap-2 px-1">
+            <h3 class="text-sm font-bold text-gray-800 uppercase tracking-wider">${t('finDesktop.deskTitle')}</h3>
+            <p class="text-xs text-gray-500">${t('finDesktop.deskSubtitle')}</p>
+        </div>
+    `;
 }
 
 /** Заголовок блока 2 и переключатели «К выдаче» / «Выданные» с количеством. */

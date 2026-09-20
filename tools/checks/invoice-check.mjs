@@ -154,7 +154,9 @@ function rowsFor(table, params) {
                 project: store.projects.find((p) => p.id === row.project_id) || null,
                 section: store.sections.find((s) => s.id === row.section_id) || null,
                 created_by_emp: employee(row.created_by_employee_id),
-                payer: employee(row.payer_employee_id)
+                payer: employee(row.payer_employee_id),
+                // История оплат: карточка показывает, кто отметил счёт
+                paid_by: employee(row.paid_by_employee_id)
             }));
         }
         case 'order_items': {
@@ -244,7 +246,11 @@ function insertRows(table, payload) {
 // --------------------------------- мок Supabase ---------------------------------
 function handleMock(req, res, body) {
     const url = new URL(req.url, 'http://127.0.0.1');
-    const p = url.pathname;
+    // Приложение ходит в мок по адресу .../mock (подмена SUPABASE_URL в
+    // js/config.js), поэтому префикс прокси убираем сразу: иначе правила для
+    // Storage (они сверяются с начала пути) не срабатывали и приложение
+    // получало пустой ответ вместо подписанной ссылки на счёт.
+    const p = url.pathname.replace(/^\/mock/, '');
     const params = Object.fromEntries(url.searchParams.entries());
     const wantsObject = String(req.headers.accept || '').includes('vnd.pgrst.object');
     // Файлы в Storage приходят как multipart/form-data — JSON.parse на них падает
@@ -266,6 +272,8 @@ function handleMock(req, res, body) {
 
     // ---- Storage: загрузка файла и подписанная ссылка ----
     if (p.startsWith('/storage/v1/object/sign/')) {
+        // supabase-js сам собирает полный адрес: signedUrl = storageUrl + signedURL,
+        // поэтому в ответе нужно именно поле signedURL
         return sendJson(res, 200, { signedURL: '/mock/signed-file' });
     }
     if (p.startsWith('/storage/v1/object/')) {
@@ -618,7 +626,7 @@ async function main() {
         'return { invoices: vis("material-invoices-panel"), approved: vis("financier-approved-head"),' +
         ' filters: vis("cashreq-filters"),' +
         ' approvedText: (document.getElementById("financier-approved-head") || {}).innerText || "" }; })()');
-    ok('на рабочем столе финансиста два блока: счета и одобренные заявки',
+    ok('на рабочем столе финансиста две очереди одного блока: счета и одобренные заявки',
         finBlocks.invoices === true && finBlocks.approved === true &&
         finBlocks.approvedText.includes('Одобренные заявки на выдачу'),
         JSON.stringify({ invoices: finBlocks.invoices, approved: finBlocks.approved }) +
@@ -642,6 +650,74 @@ async function main() {
     const finPanelAfter = await evaluate(text('material-invoices-panel'));
     ok('очередь счетов опустела', finPanelAfter.includes('Счетов к оплате нет'),
         finPanelAfter.replace(/\n/g, ' | ').slice(0, 120));
+
+    // Блок «🧾 Счета на материалы» — меню из двух списков и выгрузка по фильтру
+    const invoiceMenu = await evaluate('(() => {' +
+        'const panel = document.getElementById("material-invoices-panel");' +
+        'const vis = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== "none"; };' +
+        'return { ids: Array.prototype.map.call(panel.querySelectorAll("button"), (b) => b.id).join(","),' +
+        ' tabs: (document.getElementById("invoice-tabs") || {}).innerText || "",' +
+        ' excel: vis("invoice-export-btn"), period: vis("invoice-period-filter") }; })()');
+    ok('в блоке счетов — меню «⏳ Ожидают оплату / ✅ Оплаченные» и кнопка Excel',
+        invoiceMenu.ids.includes('invoice-view-open') && invoiceMenu.ids.includes('invoice-view-paid') &&
+        invoiceMenu.excel === true && invoiceMenu.tabs.includes('Ожидают оплату (0)'),
+        invoiceMenu.ids + ' :: ' + invoiceMenu.tabs.replace(/\n/g, ' | '));
+    ok('в очереди счетов фильтра периода нет: долг видно целиком',
+        invoiceMenu.period === false, 'invoice-period-filter виден: ' + invoiceMenu.period);
+
+    // Оплаченный счёт ушёл в историю «✅ Оплаченные»: кто, когда и какой счёт
+    await evaluate('window.setInvoiceView("paid")');
+    await sleep(600);
+    const paidList = await evaluate(text('material-invoices-panel'));
+    const paidText = paidList.replace(/\s+/g, ' ');
+    ok('оплаченный счёт перешёл в историю «✅ Оплаченные»',
+        paidText.includes('З-1/26') && paidText.includes('Оплачено') &&
+        paidText.includes('Эпицентр') && paidText.includes('Тест Финансист') &&
+        paidText.includes('14 000'),
+        paidText.slice(0, 220));
+
+    const historyBar = await evaluate('(() => {' +
+        'const vis = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== "none"; };' +
+        'return { period: vis("invoice-period-filter"), excel: vis("invoice-export-btn") }; })()');
+    ok('у истории оплат есть фильтр периода и кнопка Excel',
+        historyBar.period === true && historyBar.excel === true, JSON.stringify(historyBar));
+
+    // «Скачать по фильтру»: выгрузку проверяем без скачивания — подменяем writeFile
+    const exportPaid = await evaluate('(() => {' +
+        'const original = XLSX.writeFile; let name = null;' +
+        'XLSX.writeFile = (workbook, fileName) => { name = fileName; };' +
+        'window.exportMaterialInvoicesToExcel();' +
+        'XLSX.writeFile = original; return name; })()');
+    ok('история оплат выгружается в Excel (.xlsx)',
+        typeof exportPaid === 'string' && exportPaid.includes('.xlsx'), String(exportPaid));
+
+    await evaluate('window.setInvoicePeriod("prev")');
+    await sleep(500);
+    const paidPrev = await evaluate(text('material-invoices-panel'));
+    ok('фильтр «📅 Прошлый месяц» убирает сегодняшнюю оплату из истории',
+        !paidPrev.includes('З-1/26') && paidPrev.includes('За выбранный период'),
+        paidPrev.replace(/\n/g, ' | ').slice(0, 160));
+
+    const exportEmpty = await evaluate('(() => {' +
+        'const original = XLSX.writeFile; let name = null;' +
+        'XLSX.writeFile = (workbook, fileName) => { name = fileName; };' +
+        'window.exportMaterialInvoicesToExcel();' +
+        'XLSX.writeFile = original; return name; })()');
+    ok('по пустому фильтру Excel не выгружается', exportEmpty === null, String(exportEmpty));
+
+    // Регрессия: файл счёта открывается и из истории оплат — счёт уже не в
+    // очереди, но документ нужен (иначе сотрудник читал бы «Файл счёта не
+    // загружен» и шёл за счётом к снабженцу).
+    const paidFileOpen = await evaluate('(() => {' +
+        'const original = window.open; let url = null;' +
+        'window.open = (target) => { url = target; return null; };' +
+        'return window.viewMaterialInvoice(900).then(() => { window.open = original; return url; }); })()');
+    ok('счёт из истории оплат открывается (запрошена подписанная ссылка)',
+        typeof paidFileOpen === 'string' && paidFileOpen.includes('signed'), String(paidFileOpen));
+
+    await evaluate('window.setInvoicePeriod("all")');
+    await evaluate('window.setInvoiceView("open")');
+    await sleep(500);
 
     // ------------------- 4. Директор: пополнение и ведомость -------------------
     await loginAs(8, 'Директор');
