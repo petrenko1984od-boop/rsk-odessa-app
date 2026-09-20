@@ -20,8 +20,10 @@
 //               остальные — только свои
 //   - Согласование (одобрить / на доработку / отклонить): process_cash_request
 //     (Админ, Директор, Гл. инженер)
-//   - Выдача «Выдано»: issue_cash_request (Финансист) либо process_cash_request
-//     (кассиры). У финансиста сумма списывается с ЕГО подотчёта.
+//   - Выдача «Выдано»: Финансист (issue_cash_request) и кассиры
+//     (Администратор, Главный инженер). ДИРЕКТОР денег не выдаёт: он только
+//     согласует и передаёт заявку на выдачу — см. canIssueCashRequest().
+//     У финансиста сумма списывается с ЕГО подотчёта.
 // =====================================================================
 
 import { db } from '../database.js';
@@ -59,10 +61,19 @@ function canProcessCashRequest() {
 
 /**
  * Может ли текущий пользователь выдавать деньги по одобренной заявке.
- * Финансист — по праву issue_cash_request, кассиры — как и раньше,
- * по process_cash_request (они согласуют и выдают сами).
+ *
+ * Выдаёт деньги ФИНАНСИСТ (право issue_cash_request): он единственный, с чьего
+ * подотчёта уходит сумма по заявке. ДИРЕКТОР заявки только согласует:
+ * одобрил — и заявка ушла в работу финансисту. Кнопки «💵 Выдать» у директора
+ * нет по бизнес-правилу (одобряет и выдаёт не один человек).
+ * Администратор и Главный инженер сохраняют прежнюю возможность — у них есть
+ * process_cash_request, они работают как касса.
+ *
+ * Проверка стоит и в интерфейсе (кнопка), и внутри issueCashRequest(),
+ * поэтому выдать деньги из консоли браузера тоже не получится.
  */
 function canIssueCashRequest() {
+    if (getRole() === 'Директор') return false;
     return can('issue_cash_request') || can('process_cash_request');
 }
 
@@ -439,6 +450,16 @@ function renderCashRequestActions(req) {
     if (req.status === 'approved' && canIssueCashRequest()) {
         const issueLabel = isFinancier() ? '💵 Выдано' : '💵 Выдать';
         buttonsHtml += `<button onclick="window.issueCashRequest(${req.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${issueLabel}</button>`;
+    }
+
+    // Директор одобрил — и на этом его работа закончена: деньги выдаёт
+    // финансист, у которого заявка уже стоит в списке «🟡 Одобрены».
+    // Без этой подписи карточка выглядела бы «без кнопок» и директор ждал бы
+    // от себя выдачи денег (раньше у него была кнопка «💵 Выдать»).
+    if (req.status === 'approved' && canProcessCashRequest() && !canIssueCashRequest()) {
+        buttonsHtml += `<span id="cash-request-awaiting-issue" class="text-xs font-semibold text-gray-500">` +
+            '🟡 Одобрено — деньги выдаёт финансист в разделе «💼 Рабочий стол».' +
+            '</span>';
     }
 
     // Автор: доработать заявку, которую директор вернул с причиной
@@ -1013,7 +1034,7 @@ async function updateCashRequest({ requestId, projectId, sectionId, comment, ite
 
     if (updateError) {
         log.error('Ошибка обновления заявки:', updateError.message);
-        toast('Не удалось отправить заявку повторно: ' + updateError.message, 'error');
+        toast(db.explainError(updateError), 'error');
         return false;
     }
 
@@ -1103,7 +1124,10 @@ export async function approveCashRequest(id) {
     }, { id });
 
     if (error) {
-        toast('Ошибка: ' + error.message, 'error');
+        // Ошибку базы показываем по-русски: чаще всего это устаревшее
+        // CHECK-ограничение на статусы или не применённая миграция
+        // (js/database.js → explainError подсказывает, какой файл запустить).
+        toast(db.explainError(error), 'error');
         return;
     }
 
@@ -1157,7 +1181,7 @@ export async function requestRevisionCashRequest(id) {
     }, { id });
 
     if (error) {
-        toast('Ошибка: ' + error.message, 'error');
+        toast(db.explainError(error), 'error');
         return;
     }
 
@@ -1205,7 +1229,7 @@ export async function rejectCashRequest(id) {
     }, { id });
 
     if (error) {
-        toast('Ошибка: ' + error.message, 'error');
+        toast(db.explainError(error), 'error');
         return;
     }
 
@@ -1284,7 +1308,7 @@ export async function issueCashRequest(id) {
 
     if (opError) {
         log.error('Ошибка создания операции:', opError.message);
-        toast('Ошибка выдачи: ' + opError.message, 'error');
+        toast(db.explainError(opError), 'error');
         return;
     }
 
@@ -1357,7 +1381,7 @@ export async function deleteCashRequest(id) {
     const { error } = await db.remove('cash_requests', { id });
 
     if (error) {
-        toast('Ошибка удаления: ' + error.message, 'error');
+        toast(db.explainError(error), 'error');
         return;
     }
 

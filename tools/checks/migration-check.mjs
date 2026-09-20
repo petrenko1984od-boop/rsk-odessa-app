@@ -184,6 +184,54 @@ function main() {
                 .map((line) => line.number + ': ' + line.code.trim().slice(0, 50)).join(' | '));
     }
 
+    // --- 3г. Отдельный файл быстрой правки ограничения заявок НА ФИНАНСЫ ---
+    // Вторая боевая жалоба того же рода: «директор отправляет заявку на
+    // доработку, а она не отправляется». Причина — старое CHECK-ограничение
+    // на cash_requests.status без статуса 'revision' (появился в v2.2.0).
+    const FIX_CASH = path.join(ROOT, 'database', 'fix-cash-requests-status-check.sql');
+    const CASH_STATUS_VALUES = ['pending', 'approved', 'revision', 'rejected', 'issued'];
+
+    if (!fs.existsSync(FIX_CASH)) {
+        ok('есть файл database/fix-cash-requests-status-check.sql', false, FIX_CASH);
+    } else {
+        const fixCash = fs.readFileSync(FIX_CASH, 'utf8');
+        const cashHandlers = (fixCash.match(/exception\s+when\s+others/gi) || []).length;
+
+        ok('fix-cash-requests-status-check.sql: снимает старое и ставит новое ограничение',
+            /cash_requests_status_check/.test(fixCash) && /drop constraint/i.test(fixCash) &&
+            /add constraint cash_requests_status_check/i.test(fixCash), 'drop + add');
+
+        const cashMissing = CASH_STATUS_VALUES.filter((value) => !new RegExp(`'${value}'`).test(fixCash));
+        ok('fix-cash-requests-status-check.sql: разрешает все статусы кода (включая revision)',
+            cashMissing.length === 0, cashMissing.join(', ') || CASH_STATUS_VALUES.join(' | '));
+
+        ok('fix-cash-requests-status-check.sql: шаги защищены и есть проверка результата',
+            cashHandlers >= 2 && /MISSING — revision запрещён/.test(fixCash),
+            'обработчиков exception when others: ' + cashHandlers);
+
+        // Колонок этот файл не добавляет: у cash_requests они есть с прошлых
+        // версий (в отличие от orders, где миграция v2.4.0 добавляет 8 колонок).
+        ok('fix-cash-requests-status-check.sql: колонки таблицы не трогает',
+            !/add column/i.test(fixCash));
+
+        const cashTypo = codeLines(fixCash).filter((line) => TYPOGRAPHIC.test(line.code));
+        const cashInvisible = codeLines(fixCash).filter((line) => INVISIBLE.test(line.code));
+        const cashStripped = linesOf(fixCash)
+            .map((line) => {
+                const comment = line.indexOf('--');
+                return comment === -1 ? line : line.slice(0, comment);
+            })
+            .join('\n')
+            .replace(/'(?:[^']|'')*'/g, "''");
+        const cashEven = (open, close) => cashStripped.split(open).length === cashStripped.split(close).length;
+
+        ok('fix-cash-requests-status-check.sql: чистый для копирования (кавычки, пробелы, скобки, $$)',
+            cashTypo.length === 0 && cashInvisible.length === 0 &&
+            cashEven('(', ')') && ((fixCash.match(/\$\$/g) || []).length % 2 === 0),
+            [...cashTypo, ...cashInvisible]
+                .map((line) => line.number + ': ' + line.code.trim().slice(0, 50)).join(' | '));
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'

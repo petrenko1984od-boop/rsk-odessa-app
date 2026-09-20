@@ -38,7 +38,11 @@ const CACHE_PREFIX = 'rsk-odessa';
 //   r3 — объяснение отказа базы по CHECK-ограничению статусов
 //        (js/database.js → explainError): «заявка не закрывается» теперь
 //        ведёт к database/migrate-v2.4.sql, а не показывает английскую строку.
-const SHELL_REVISION = 'r3';
+//   r4 — рабочий экран прораба: порядок «задачи → заявки на финансирование →
+//        заявки на материалы», блоки заявок сворачиваются (dashboard.js);
+//        директор деньги не выдаёт (кнопки «💵 Выдать» у него нет), а возврат
+//        «На доработку» подсказывает database/fix-cash-requests-status-check.sql.
+const SHELL_REVISION = 'r4';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

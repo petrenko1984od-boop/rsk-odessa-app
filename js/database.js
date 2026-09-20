@@ -57,8 +57,9 @@ function parseMissingColumn(error) {
  * Postgres: «new row for relation "orders" violates check constraint
  * "orders_status_check"» (SQLSTATE 23514). Так выглядит УСТАРЕВШЕЕ ограничение
  * на список значений: например, в базе список статусов заявки старее
- * приложения, и она запрещает новый статус 'delivered' — сотрудник видит
- * «заявка не закрывается» и не понимает, что делать.
+ * приложения, и она запрещает новый статус ('delivered' у заявок на материалы,
+ * 'revision' у заявок на финансы) — сотрудник видит «заявка не закрывается»
+ * или «на доработку не отправляется» и не понимает, что делать.
  * @returns {{ table: string|null, constraint: string }|null}
  */
 function parseCheckViolation(error) {
@@ -88,13 +89,26 @@ export function explainError(error) {
 
         const where = check.table ? `в таблице «${check.table}»` : 'в базе данных';
 
-        // Ограничение на список статусов заявки: оно обновляется миграцией
-        // v2.4.0 (БЛОК 4), потому что статус 'delivered' появился в v2.4.0.
+        // Ограничение на список СТАТУСОВ заявки. Их два, и лечатся они разными
+        // файлами:
+        //   orders_status_check        — заявки на материалы: статус 'delivered'
+        //                                появился в v2.4.0 (БЛОК 4 миграции);
+        //   cash_requests_status_check — заявки на финансы: статус 'revision'
+        //                                («✏️ На доработку») появился в v2.2.0.
+        // Подсказка зависит от таблицы: иначе директор, нажимая «На доработку»,
+        // читал бы про «Доставлено на объект» и правил не то ограничение.
+        if (/cash_request/i.test(`${check.table || ''} ${check.constraint}`)) {
+            log.error(`⚠ ${where} сработало ограничение «${check.constraint}»: в списке статусов нет «На доработке»`);
+            log.error('⚠ Выполните database/fix-cash-requests-status-check.sql в Supabase → SQL Editor: он разрешает статус revision.');
+            return `База отклонила запись: ${where} сработало ограничение «${check.constraint}» — в списке статусов нет «На доработке». ` +
+                'Примените database/fix-cash-requests-status-check.sql (Supabase → SQL Editor) и повторите действие.';
+        }
+
         if (/status/i.test(check.constraint)) {
             log.error(`⚠ ${where} сработало ограничение «${check.constraint}»: список статусов в базе старее приложения`);
             log.error('⚠ Выполните database/migrate-v2.4.sql в Supabase → SQL Editor: он обновляет это ограничение и добавляет статус «Доставлено на объект».');
             return `База отклонила запись: ${where} сработало ограничение «${check.constraint}» — в списке статусов нет «Доставлено на объект». ` +
-                'Примените database/migrate-v2.4.sql (Supabase → SQL Editor) и повторите действие.';
+                'Примените database/migrate-v2.4.sql (или короткий database/fix-orders-status-check.sql) в Supabase → SQL Editor и повторите действие.';
         }
 
         log.error(`⚠ ${where} сработало ограничение «${check.constraint}» — запись не прошла`);

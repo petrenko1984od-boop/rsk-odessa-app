@@ -331,10 +331,36 @@ function orderPaymentState(order) {
 }
 
 export async function openOrderDetail(id) {
-    const order = ordersCache.find(o => o.id === id);
+    let order = ordersCache.find(o => o.id === id);
+
+    // Карточку открывают и с «Рабочего экрана» прораба: там список заявок
+    // грузится своим запросом (только по объектам прораба) и в кэш модуля не
+    // попадает. Тогда заявку добираем из базы по id — карточка одна на всё
+    // приложение, второй такой же рисовать не нужно.
     if (!order) {
-        toast('Заявка не найдена', 'error');
-        return;
+        const { data, error } = await db.select('orders', {
+            select: `
+                *,
+                project:projects ( id, name ),
+                section:sections ( id, name ),
+                created_by_emp:employees!orders_created_by_employee_id_fkey ( id, name, position ),
+                payer:employees!orders_payer_employee_id_fkey ( id, name, position )
+            `,
+            filters: { id },
+            single: true
+        });
+
+        if (error || !data) {
+            log.error('Ошибка загрузки заявки для карточки:', error?.message || 'база не вернула заявку');
+            toast('Заявка не найдена', 'error');
+            return;
+        }
+
+        order = data;
+
+        const { data: items } = await db.select('order_items', { filters: { order_id: id } });
+        order._items = items || [];
+        ordersCache.push(order);
     }
 
     currentOrderId = id;

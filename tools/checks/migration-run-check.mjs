@@ -240,6 +240,58 @@ if (fs.existsSync(FIX)) {
     ok('есть файл database/fix-orders-status-check.sql', false, FIX);
 }
 
+// --- отдельный файл database/fix-cash-requests-status-check.sql ---------------
+// Та же боевая жалоба, но про заявки на финансы: «директор отправляет заявку на
+// доработку, а она не отправляется». В базе на cash_requests.status осталось
+// старое CHECK-ограничение без статуса 'revision'. Короткий файл должен сам
+// снять его и поставить новое — со всеми пятью статусами.
+const FIX_CASH = path.join(ROOT, 'database', 'fix-cash-requests-status-check.sql');
+
+if (fs.existsSync(FIX_CASH)) {
+    const db3 = new PGlite();
+    await db3.exec(`
+        create table cash_requests (
+            id bigint primary key,
+            request_number text not null unique,
+            status text not null default 'pending'
+        );
+        alter table cash_requests add constraint cash_requests_status_check
+            check (status in ('pending', 'approved', 'rejected', 'issued'));
+        insert into cash_requests (id, request_number, status) values (1, 'Ф-1/26', 'pending');
+    `);
+
+    let cashBefore = null;
+    try { await db3.exec("update cash_requests set status = 'revision' where id = 1"); }
+    catch (error) { cashBefore = error; }
+
+    let cashFixError = null;
+    try { await db3.exec(fs.readFileSync(FIX_CASH, 'utf8')); }
+    catch (error) { cashFixError = error; }
+
+    let cashAfter = null;
+    try { await db3.exec("update cash_requests set status = 'revision' where id = 1"); }
+    catch (error) { cashAfter = error; }
+
+    const cashConstraint = (await db3.query(`
+        select pg_get_constraintdef(oid) as def from pg_constraint
+        where conrelid = 'cash_requests'::regclass and conname = 'cash_requests_status_check'
+    `)).rows[0];
+
+    ok('fix-cash-requests-status-check.sql: до правки revision запрещён',
+        cashBefore !== null && /cash_requests_status_check/.test(cashBefore.message),
+        cashBefore ? cashBefore.message : 'запись прошла — тест не воспроизвёл ошибку');
+    ok('fix-cash-requests-status-check.sql: выполняется без ошибок', cashFixError === null,
+        cashFixError ? cashFixError.message : '');
+    ok('fix-cash-requests-status-check.sql: после правки заявка уходит на доработку', cashAfter === null,
+        cashAfter ? cashAfter.message : '');
+    ok('fix-cash-requests-status-check.sql: ограничение допускает revision',
+        /revision/.test(cashConstraint?.def || ''), String(cashConstraint?.def || 'ограничения нет'));
+
+    await db3.close();
+} else {
+    ok('есть файл database/fix-cash-requests-status-check.sql', false, FIX_CASH);
+}
+
 log('--- ИТОГ ---');
 log(failed === 0
     ? '  ВСЁ ВЕРНО: миграция применяется на настоящем Postgres и защищена от обрыва наполовину'

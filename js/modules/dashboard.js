@@ -9,6 +9,11 @@ import { can, getEmployee } from '../permissions.js';
 // с задачами. loadCashRequests() наполняет кэш модуля, из которого берём
 // свои заявки — карточки открываются тем же окном openCashRequestDetail().
 import { loadCashRequests, getCashRequestsCache } from './cash-requests.js';
+// Заявки на материалы: прораб видит их на рабочем экране — только по своим
+// объектам. Подписи статусов берём тем же словарём, что и раздел «Снабжение»
+// (getStatusInfo), а карточку открывает общая функция openOrderDetail
+// (window.openOrderDetail), в которую добавлен добор заявки из базы по id.
+import { getStatusInfo } from './orders.js';
 
 let materialOverrunRowsCache = [];
 
@@ -122,6 +127,92 @@ function renderForemanTasks(tasks, projects) {
 }
 
 // =====================================================================
+// СВОРАЧИВАЕМЫЕ БЛОКИ РАБОЧЕГО ЭКРАНА
+// =====================================================================
+// Прораб работает с телефона, и когда заявок много, они закрывают задачи.
+// Поэтому блоки «Мои заявки на финансирование» и «Мои заявки на материалы»
+// можно скрыть кнопкой в заголовке. Прячем ТОЛЬКО содержимое: заголовок с
+// цифрой и кнопкой «Показать» остаётся, иначе скрытый блок было бы не вернуть.
+// Выбор запоминается в localStorage (в браузере сотрудника), поэтому после
+// обновления страницы экран выглядит так, как его оставили.
+const DASHBOARD_HIDDEN_KEY = 'rsk.dashboard.hiddenBlocks';
+
+function readHiddenBlocks() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(DASHBOARD_HIDDEN_KEY) || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (err) {
+        log.warn('Состояние блоков рабочего экрана прочитать не удалось:', err?.message || err);
+        return {};
+    }
+}
+
+function isBlockHidden(blockId) {
+    return readHiddenBlocks()[blockId] === true;
+}
+
+/** Приводит блок к сохранённому состоянию: содержимое + подпись кнопки. */
+function applyBlockState(blockId, hidden) {
+    const body = document.getElementById(`dash-block-${blockId}-body`);
+    const button = document.getElementById(`dash-block-${blockId}-toggle`);
+
+    if (body) body.classList.toggle('hidden', hidden);
+    if (button) {
+        button.textContent = hidden ? 'Показать' : 'Скрыть';
+        button.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+    }
+}
+
+/**
+ * Свернуть/развернуть блок рабочего экрана. Перерисовка дашборда не нужна:
+ * состояние меняется прямо в DOM, а выбор сохраняется для следующего входа.
+ */
+export function toggleDashboardBlock(blockId) {
+    const state = readHiddenBlocks();
+    state[blockId] = !state[blockId];
+
+    try {
+        localStorage.setItem(DASHBOARD_HIDDEN_KEY, JSON.stringify(state));
+    } catch (err) {
+        log.warn('Состояние блоков рабочего экрана сохранить не удалось:', err?.message || err);
+    }
+
+    applyBlockState(blockId, state[blockId] === true);
+}
+
+/**
+ * Каркас блока рабочего экрана: заголовок с цифрой, кнопки в заголовке и
+ * содержимое, которое можно скрыть. Разметка одна на все блоки — прорабу
+ * одинаково понятно, что можно свернуть, а порядок блоков задаёт вызывающий
+ * код (задачи → финансы → материалы).
+ */
+function renderDashboardBlock({ id, title, badge, badgeClass = 'bg-emerald-100 text-emerald-800', actions = '', body }) {
+    const hidden = isBlockHidden(id);
+
+    return `
+        <section id="dash-block-${id}" class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+                <div class="flex flex-wrap items-center gap-2">
+                    <h3 class="text-sm font-bold text-gray-800">${title}</h3>
+                    <span class="rounded-full px-2 py-1 text-xs font-bold ${badgeClass}">${badge}</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    ${actions}
+                    <button type="button" id="dash-block-${id}-toggle" aria-expanded="${hidden ? 'false' : 'true'}"
+                            onclick="window.toggleDashboardBlock('${id}')"
+                            class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-100">
+                        ${hidden ? 'Показать' : 'Скрыть'}
+                    </button>
+                </div>
+            </div>
+            <div id="dash-block-${id}-body" class="mt-2 space-y-2${hidden ? ' hidden' : ''}">
+                ${body}
+            </div>
+        </section>
+    `;
+}
+
+// =====================================================================
 // МОИ ЗАЯВКИ НА ФИНАНСИРОВАНИЕ (рабочий экран прораба и ПТО)
 // =====================================================================
 // Заявка, которую директор вернул на доработку, появляется здесь вместе
@@ -195,20 +286,96 @@ function renderMyCashRequests(requests) {
                    class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">➕ Создать заявку</button>`
         : '';
 
-    return `
-        <section class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
-                <div class="flex items-center gap-2">
-                    <h3 class="text-sm font-bold text-gray-800">💰 Мои заявки на финансирование</h3>
-                    <span class="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-800">${activeCount}</span>
+    return renderDashboardBlock({
+        id: 'finance',
+        title: '💰 Мои заявки на финансирование',
+        badge: activeCount,
+        actions: createBtn,
+        body: cards || '<p class="py-3 text-sm text-gray-500">Заявок на финансирование нет. Нажмите «➕ Создать заявку», если нужны деньги на работы.</p>'
+    });
+}
+
+// =====================================================================
+// МОИ ЗАЯВКИ НА МАТЕРИАЛЫ (рабочий экран прораба)
+// =====================================================================
+// Показываем только заявки по СВОИМ объектам: фильтр project_id.in уходит в
+// базу, поэтому чужая закупка сюда не попадёт. Первыми идут те, что в работе
+// («🔴 Новая», «🟡 В обработке», «🚚 Доставлено на объект»), следом — последние
+// пять закрытых и архивных: это история, а не работа.
+const ORDER_STATUS_ORDER = ['new', 'in_progress', 'delivered', 'closed', 'archived'];
+const ORDER_ACTIVE_STATUSES = ['new', 'in_progress', 'delivered'];
+
+function renderMyMaterialOrders(orders, projects) {
+    const rows = (orders || []).filter(Boolean);
+    const projectMap = new Map((projects || []).map(project => [project.id, project.name]));
+
+    const byStatus = (a, b) => ORDER_STATUS_ORDER.indexOf(a.status) - ORDER_STATUS_ORDER.indexOf(b.status);
+    const byDate = (a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''));
+
+    const activeOrders = rows
+        .filter(order => ORDER_ACTIVE_STATUSES.includes(order.status))
+        .sort((a, b) => byStatus(a, b) || byDate(a, b));
+    const archiveOrders = rows
+        .filter(order => !ORDER_ACTIVE_STATUSES.includes(order.status))
+        .sort(byDate)
+        .slice(0, 5);
+
+    const cards = [...activeOrders, ...archiveOrders].map(order => {
+        const status = getStatusInfo(order.status);
+        const projectName = order.project?.name || projectMap.get(order.project_id) || 'Объект не указан';
+        const sectionName = order.section?.name || '';
+
+        return `
+            <div class="rounded-lg border ${status.border} p-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" onclick="window.openOrderDetail(${order.id})"
+                                class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(order.request_number)}</button>
+                        <span class="rounded px-1.5 py-0.5 text-[10px] font-bold ${status.bg} ${status.color}">${status.label}</span>
+                    </div>
+                    <span class="text-sm font-bold text-[#166534]">${order.total_sum ? formatMoney(order.total_sum) : ''}</span>
                 </div>
-                ${createBtn}
+                <p class="mt-1 text-[11px] text-gray-500">🏗 ${escapeHtml(projectName)}${sectionName ? ' · ' + escapeHtml(sectionName) : ''}${order.supplier ? ' · 🚚 ' + escapeHtml(order.supplier) : ''}${order.created_at ? ' · 📅 ' + formatDate(order.created_at) : ''}</p>
             </div>
-            <div class="mt-2 space-y-2">
-                ${cards || '<p class="py-3 text-sm text-gray-500">Заявок на финансирование нет. Нажмите «➕ Создать заявку», если нужны деньги на работы.</p>'}
-            </div>
-        </section>
-    `;
+        `;
+    }).join('');
+
+    const createBtn = can('create_order')
+        ? `<button type="button" onclick="window.openNewOrderForm()"
+                   class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">📦 Заказать материалы</button>`
+        : '';
+
+    return renderDashboardBlock({
+        id: 'materials',
+        title: '📦 Мои заявки на материалы',
+        badge: activeOrders.length,
+        actions: createBtn,
+        body: cards || '<p class="py-3 text-sm text-gray-500">Заявок на материалы нет. Нажмите «📦 Заказать материалы», если материалы нужны на объект.</p>'
+    });
+}
+
+/**
+ * Заявки на материалы по объектам прораба.
+ *
+ * Колонки берём только те, что есть с прошлых версий: экран должен
+ * открываться и до применения database/migrate-v2.4.sql (без payment_status,
+ * delivered_at и остальных колонок v2.4.0).
+ * Ошибку не пробрасываем: если таблица недоступна, рабочий экран всё равно
+ * покажет задачи и заявки на финансирование, а причина останется в консоли.
+ */
+async function loadForemanOrders(projectIds) {
+    const { data, error } = await db.select('orders', {
+        select: 'id, request_number, project_id, section_id, status, supplier, total_sum, created_at, section:sections ( id, name )',
+        filters: { 'project_id.in': projectIds },
+        orderBy: { column: 'created_at', asc: false }
+    });
+
+    if (error) {
+        log.error('Ошибка загрузки заявок на материалы с рабочего экрана:', error.message);
+        return [];
+    }
+
+    return data || [];
 }
 
 function renderEmployeeBalances(balances, employees) {
@@ -584,9 +751,16 @@ export async function loadDashboard() {
                 loadCashRequests()
             ]);
 
-            const projectIds = new Set((projectsResult.data || []).map(project => project.id));
+            const projects = projectsResult.data || [];
+            const projectIds = new Set(projects.map(project => project.id));
             const foremanTasks = (tasksResult.data || []).filter(task => projectIds.has(task.project_id));
             const myCashRequests = getCashRequestsCache().filter(req => req.employee_id === employee.id);
+
+            // Заявки на материалы — только по объектам прораба: фильтр уходит в
+            // базу (project_id.in), поэтому чужие закупки сюда не попадут.
+            const myOrders = projectIds.size
+                ? await loadForemanOrders([...projectIds])
+                : [];
 
             container.innerHTML = `
                 <div class="w-full min-w-0 space-y-4">
@@ -594,14 +768,20 @@ export async function loadDashboard() {
                         <div>
                             <p class="text-xs font-semibold uppercase tracking-widest text-emerald-700">Рабочий экран</p>
                             <h2 class="mt-1 text-2xl font-bold text-gray-800">Задания от руководства</h2>
-                            <p class="mt-1 text-sm text-gray-500">Только ваши задания по объектам, где вы ответственный</p>
+                            <p class="mt-1 text-sm text-gray-500">Только ваши задачи и заявки по объектам, где вы ответственный</p>
                         </div>
                         <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
                     </div>
-                    ${renderMyCashRequests(myCashRequests)}
+
+                    <!-- ПОРЯДОК БЛОКОВ РАБОЧЕГО ЭКРАНА: 1) задачи, 2) заявки на
+                         финансирование, 3) заявки на материалы. Второй и третий
+                         сворачиваются кнопкой в заголовке («Скрыть»), выбор
+                         запоминается в localStorage: см. toggleDashboardBlock(). -->
                     <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
-                        ${renderForemanTasks(foremanTasks, projectsResult.data || [])}
+                        ${renderForemanTasks(foremanTasks, projects)}
                     </div>
+                    ${renderMyCashRequests(myCashRequests)}
+                    ${renderMyMaterialOrders(myOrders, projects)}
                 </div>
             `;
             return;
@@ -742,4 +922,5 @@ export async function loadDashboard() {
 }
 
 window.loadDashboard = loadDashboard;
+window.toggleDashboardBlock = toggleDashboardBlock;
 window.openMaterialOverrunDetail = openMaterialOverrunDetail;
