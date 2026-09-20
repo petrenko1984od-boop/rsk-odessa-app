@@ -154,7 +154,11 @@
         <p class="note"><b>Администратору:</b> проверка «по-взрослому» — в браузере на компьютере открыть
             адрес приложения → <code>F12</code> → вкладка <b>Application</b>: в разделе <i>Manifest</i>
             должны быть имя, иконки и цвета без ошибок, в <i>Service Workers</i> — статус
-            <b>activated</b>, в <i>Cache Storage</i> — кэш <code>rsk-odessa-v2.1.0</code>.</p>
+            <b>activated</b>, в <i>Cache Storage</i> — один кэш <code>rsk-odessa-v2.4.0-r2</code>
+            (имя = <code>rsk-odessa-v&lt;версия приложения&gt;-&lt;ревизия оболочки&gt;</code>, обе части
+            берутся из <code>sw.js</code>; сейчас это версия <b>2.4.0</b> и ревизия <b>r2</b>).
+            Кэшей прошлых версий там быть не должно: старые удаляются автоматически при первом
+            запуске новой версии.</p>
     </section>
 
     <section class="sec">
