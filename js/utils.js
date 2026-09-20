@@ -169,6 +169,23 @@ export function isExtraSectionName(name) {
     return normalizeSectionName(name) === normalizeSectionName(CONFIG.EXTRA_SECTION?.NAME || '');
 }
 
+/**
+ * Это позиция доставки по заявке на материалы (CONFIG.DELIVERY_ITEM)?
+ *
+ * Доставку снабженец вписывает отдельной строкой в окне счёта
+ * (js/modules/orders.js → saveOrderInvoice), а живёт она в order_items —
+ * отдельной колонки в orders нет, миграция базы не нужна. По этому признаку:
+ *   * «📊 Реестр материалов» показывает строку категорией «🚚 Доставка»,
+ *     а не «📦 Материалы» (js/modules/registry.js);
+ *   * в списках и карточках заявок строке ставится иконка 🚚 вместо 📦
+ *     (js/modules/orders.js) — поэтому в `CONFIG.DELIVERY_ITEM.NAME` эмодзи нет.
+ * Имя — ключ сопоставления (его пишет приложение при сохранении доставки),
+ * поэтому сравниваем так же, как разделы сметы: без регистра и двойных пробелов.
+ */
+export function isDeliveryItem(item) {
+    return normalizeSectionName(item?.name) === normalizeSectionName(CONFIG.DELIVERY_ITEM?.NAME || '');
+}
+
 // =====================================================================
 // БЕЗОПАСНОСТЬ — ЭКРАНИРОВАНИЕ HTML
 // =====================================================================

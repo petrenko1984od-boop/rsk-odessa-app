@@ -18,12 +18,15 @@
 //       * заявка сотрудником → из cash_operations
 //       * прямой расход → из cash_operations
 //   - Дата: для заявок — delivered_at (closed_at у старых), для расходов — operation_date
+//   - Доставка по заявке — отдельная позиция заявки (CONFIG.DELIVERY_ITEM, её
+//     вписывает снабженец в окне счёта): показывается категорией «🚚 Доставка»,
+//     поэтому фильтр «Категория → 🚚 Доставка» видит реальные суммы доставки.
 // =====================================================================
 
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, formatMoney,
-    formatDate, roundMoney
+    formatDate, roundMoney, isDeliveryItem
 } from '../utils.js';
 
 // =====================================================================
@@ -125,7 +128,10 @@ export async function loadRegistry() {
                 qty: it.qty,
                 unitPrice: it.unit_price || 0,
                 sum: it.total_price || 0,
-                category: 'materials',
+                // Доставка приходит отдельной позицией заявки: показываем её
+                // категорией «🚚 Доставка», а не «📦 Материалы» — тогда фильтр
+                // «Категория» показывает, сколько стоила доставка.
+                category: isDeliveryItem(it) ? 'delivery' : 'materials',
                 supplier: order.supplier || '—',
                 project: order.project?.name || '—',
                 projectId: order.project_id,
@@ -198,7 +204,10 @@ export async function loadRegistry() {
                         qty: it.qty,
                         unitPrice: it.price || 0,
                         sum: it.sum || 0,
-                        category: exp.category,
+                        // Заявку оплатил снабженец из подотчёта — позиции пришли
+                        // из cash_operation (category там одна на операцию),
+                        // поэтому доставку тоже показываем её категорией.
+                        category: isDeliveryItem(it) ? 'delivery' : exp.category,
                         supplier: supplier,
                         project: exp.project?.name || '—',
                         projectId: exp.project_id,

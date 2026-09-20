@@ -901,8 +901,10 @@
             </div>
 
             <p class="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg p-2.5" data-i18n="order.invoiceHint">
-                Загрузите фото или скан счёта и заполните цены по позициям. После сохранения счёт появится
-                на рабочем столе финансиста в блоке «Счета на материалы», а заявка перейдёт в «Ожидает оплаты».
+                Загрузите фото или скан счёта, заполните цены по позициям и укажите стоимость доставки:
+                она входит в итог счёта и попадает в «Реестр материалов» отдельной строкой. После сохранения
+                счёт появится на рабочем столе финансиста в блоке «Счета на материалы», а заявка перейдёт
+                в «Ожидает оплаты».
             </p>
 
             <form id="order-invoice-form" class="space-y-4" onsubmit="saveOrderInvoice(event)">
@@ -923,8 +925,20 @@
 
                 <div class="border-t border-b py-3 space-y-2">
                     <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="order.invoicePrices">💰 Цены по позициям (по счёту)</p>
-                    <!-- Строки позиций рисует js/modules/orders.js → openOrderInvoiceModal() -->
+                    <!-- Строки позиций рисует js/modules/orders.js → openOrderInvoiceModal().
+                         Позиция доставки (CONFIG.DELIVERY_ITEM) сюда не попадает: у неё
+                         отдельное поле ниже — она приходит из счёта одной суммой. -->
                     <div id="order-invoice-items" class="space-y-2"></div>
+                </div>
+
+                <!-- Доставка — отдельной строкой счёта: уходит в заявку (order_items),
+                     оттуда в «Реестр материалов» категорией «🚚 Доставка». -->
+                <div class="bg-gray-50 rounded-lg p-3 border space-y-1.5">
+                    <label class="block text-xs font-semibold text-gray-600" for="order-invoice-delivery" data-i18n="order.invoiceDelivery">🚚 Стоимость доставки (грн)</label>
+                    <input type="number" step="0.01" min="0" id="order-invoice-delivery" placeholder="0"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
+                           oninput="window.recalcOrderInvoiceTotal()">
+                    <p class="text-[11px] text-gray-500" data-i18n="order.invoiceDeliveryHint">Если поставщик привёз материалы за отдельную плату — впишите сумму. Строка «🚚 Доставка» появится в заявке и в «Реестре материалов» отдельной категорией. Пусто — доставки нет.</p>
                 </div>
 
                 <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
@@ -963,6 +977,12 @@
                 <div class="border-t border-b py-3 space-y-3">
                     <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💰 Цены по позициям:</p>
                     <div id="close-order-items" class="space-y-2"></div>
+                    <!-- Строку «🚚 Доставка» рисует js/modules/orders.js →
+                         openCloseOrderModal(): она идёт из заявки (позиция
+                         CONFIG.DELIVERY_ITEM) и уходит в реестр отдельной категорией. -->
+                    <p class="text-[11px] text-gray-500">🚚 Строка «Доставка» — это стоимость доставки из счёта:
+                        при необходимости укажите фактическую сумму, и она попадёт в «📊 Реестр материалов»
+                        отдельной категорией, а не в цены материалов.</p>
                 </div>
                 <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
                     <span class="text-xs font-bold text-gray-600 uppercase">Итого:</span>

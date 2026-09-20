@@ -58,7 +58,7 @@ const store = {
     cash_operations: [],
     cash_requests: [],
     cash_request_items: [],
-    ids: { order: 901, orderItem: 5100, operation: 7000 }
+    ids: { order: 901, orderItem: 5100, order_items: 6000, operation: 7000 }
 };
 
 const requests = [];
@@ -220,6 +220,30 @@ function updateRows(table, params, payload) {
     return updated;
 }
 
+/**
+ * Удаление строк таблицы по фильтрам (id / order_id / employee_id / request_id).
+ * Нужно там, где приложение удаляет строку по-настоящему: например, позицию
+ * доставки, когда снабженец очистил поле «🚚 Стоимость доставки» в окне счёта.
+ */
+function removeRows(table, params) {
+    const rows = store[table] || [];
+    const filters = ['id', 'order_id', 'employee_id', 'request_id']
+        .filter((key) => params[key] !== undefined)
+        .map((key) => [key, String(params[key]).replace(/^eq\./, '')]);
+
+    if (filters.length === 0) return 0;
+
+    const keep = rows.filter((row) => !filters.every(([key, value]) => String(row[key]) === value));
+    const removed = rows.length - keep.length;
+
+    if (table === 'order_items' && removed > 0) {
+        log('    [мок] DELETE order_items: удалено строк — ' + removed);
+    }
+
+    store[table] = keep;
+    return removed;
+}
+
 /** Вставка строк (одной или списком) с автоинкрементом id. */
 function insertRows(table, payload) {
     const rows = Array.isArray(payload) ? payload : [payload];
@@ -342,6 +366,9 @@ function handleMock(req, res, body) {
     }
 
     if (req.method === 'DELETE') {
+        // Удаление строк (позиция доставки, когда поле в счёте очистили):
+        // фильтры те же, что у PATCH — id / order_id / employee_id / request_id.
+        removeRows(table, params);
         res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
         res.end();
         return;
@@ -525,6 +552,7 @@ async function main() {
         'const rows = document.querySelectorAll(".order-invoice-item");' +
         'rows[0].querySelector(".order-invoice-price").value = "5";' +
         'rows[1].querySelector(".order-invoice-price").value = "180";' +
+        'document.getElementById("order-invoice-delivery").value = "1500";' +
         'window.recalcOrderInvoiceTotal();' +
         'const dt = new DataTransfer();' +
         'dt.items.add(new File(["%PDF-1.4 тестовый счёт"], "schet-123.pdf", { type: "application/pdf" }));' +
@@ -535,14 +563,57 @@ async function main() {
 
     const order = store.orders.find((row) => row.id === 900);
     const items = store.order_items.filter((row) => row.order_id === 900);
+    const deliveryRow = items.find((row) => row.name.includes('Доставка'));
 
-    ok('счёт сохранён: файл, поставщик и сумма 14 000',
+    ok('счёт сохранён: файл, поставщик и сумма 15 500 (14 000 материалы + 1 500 доставка)',
         order.invoice_path && order.invoice_file_name === 'schet-123.pdf' &&
-        order.supplier === 'Эпицентр' && Number(order.invoice_total) === 14000,
-        JSON.stringify({ path: order.invoice_path, supplier: order.supplier, total: order.invoice_total }));
+        order.supplier === 'Эпицентр' && Number(order.invoice_total) === 15500 &&
+        Number(order.total_sum) === 15500,
+        JSON.stringify({ path: order.invoice_path, supplier: order.supplier, invoice: order.invoice_total, total: order.total_sum }));
     ok('цены позиций записаны (5 и 180)', Number(items[0].unit_price) === 5 && Number(items[1].unit_price) === 180,
         JSON.stringify(items.map((i) => i.unit_price)));
+    ok('доставка легла отдельной позицией заявки (1 × 1 500), а не ценой материала',
+        !!deliveryRow && Number(deliveryRow.qty) === 1 && deliveryRow.unit === 'усл.' &&
+        Number(deliveryRow.unit_price) === 1500 &&
+        Number(deliveryRow.total_price) === 1500 && !deliveryRow.payment_status,
+        deliveryRow ? JSON.stringify(deliveryRow) : 'позиции нет: ' + JSON.stringify(items.map((i) => i.name)));
     ok('заявка ждёт оплаты (payment_status = debt)', order.payment_status === 'debt', order.payment_status);
+
+    // Регрессия «доставку убрали / вписали заново»: строка доставки (CONFIG.DELIVERY_ITEM,
+    // в интерфейсе — «🚚 Доставка») одна на заявку. Повторное сохранение счёта
+    // обновляет её сумму, а пустое поле убирает её из заявки и из итога (иначе
+    // лишняя сумма осталась бы в реестре и у финансиста).
+    log('--- доставка: подстановка в окне счёта, удаление и возврат ---');
+    await evaluate('window.openOrderInvoiceModal(900)');
+    await sleep(700);
+
+    const prefilledDelivery = await evaluate('document.getElementById("order-invoice-delivery").value');
+    ok('в окне счёта видна уже сохранённая доставка (1 500)', prefilledDelivery === '1500', String(prefilledDelivery));
+
+    const saveInvoiceWithDelivery = async (value) => {
+        await evaluate('(() => {' +
+            'document.getElementById("order-invoice-delivery").value = "' + value + '";' +
+            'document.getElementById("order-invoice-form").dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));' +
+            'return true; })()');
+        await sleep(2200);
+    };
+
+    await saveInvoiceWithDelivery('');
+    const afterClear = store.order_items.filter((row) => row.order_id === 900);
+    ok('пустое поле убирает доставку из заявки и из итога счёта',
+        !afterClear.some((row) => row.name.includes('Доставка')) &&
+        Number(order.invoice_total) === 14000 && Number(order.total_sum) === 14000,
+        'итог=' + order.invoice_total + ', позиции: ' + JSON.stringify(afterClear.map((i) => i.name)));
+
+    await evaluate('window.openOrderInvoiceModal(900)');
+    await sleep(700);
+    await saveInvoiceWithDelivery('1500');
+    const afterReturn = store.order_items.filter((row) => row.order_id === 900);
+    ok('доставку вернули: строка одна, итог снова 15 500',
+        afterReturn.filter((row) => row.name.includes('Доставка')).length === 1 &&
+        Number(order.invoice_total) === 15500,
+        'итог=' + order.invoice_total + ', строк доставки: ' +
+        afterReturn.filter((row) => row.name.includes('Доставка')).length);
 
     // ------------------- 2. Доставка на объект -------------------
     await evaluate('window.openOrderDetail(900)');
@@ -586,9 +657,12 @@ async function main() {
     ok('статус «Доставлено на объект» с датой',
         order.status === 'delivered' && !!order.delivered_at,
         'status=' + order.status + ', delivered_at=' + order.delivered_at);
-    ok('позиции ушли в реестр со статусом «Ожидает оплаты»',
-        items.every((row) => row.payment_status === 'debt'),
-        JSON.stringify(items.map((i) => i.payment_status)));
+    const deliveredItems = store.order_items.filter((row) => row.order_id === 900);
+    ok('позиции ушли в реестр со статусом «Ожидает оплаты» (включая доставку)',
+        deliveredItems.length === 3 && deliveredItems.every((row) => row.payment_status === 'debt'),
+        JSON.stringify(deliveredItems.map((i) => i.name + ' = ' + i.payment_status)));
+    ok('итог заявки сложился с доставкой: 5 000 + 9 000 + 1 500',
+        Number(order.total_sum) === 15500, 'total_sum=' + order.total_sum);
     ok('безнал: расход в подотчёт не создан', store.cash_operations.length === 0,
         'операций: ' + store.cash_operations.length);
 
@@ -606,17 +680,37 @@ async function main() {
     await evaluate('window.switchTab("registry")');
     await sleep(1600);
     const registryText = await evaluate(text('registry-tbody'));
+    // Суммы formatMoney() печатает с неразрывным пробелом между тысячами, поэтому
+    // перед поиском суммы пробелы нормализуем (как в остальных проверках).
+    const registryFlat = registryText.replace(/\s+/g, ' ');
     ok('реестр показывает материал заявки и «Ожидает оплаты»',
         registryText.includes('Кирпич') && registryText.includes('Ожидает оплаты'),
         registryText.replace(/\n/g, ' | ').slice(0, 160));
+    ok('доставка попала в реестр отдельной строкой и категорией «🚚 Доставка»',
+        registryFlat.includes('🚚 Доставка') && registryFlat.includes('1 500,00'),
+        registryFlat.slice(0, 260));
+
+    // Фильтр «Категория → 🚚 Доставка» теперь действительно что-то находит:
+    // раньше этот пункт в фильтре был, а строк с такой категорией не появлялось.
+    const deliveryOnly = await evaluate('(() => {' +
+        'const sel = document.getElementById("reg-filter-category");' +
+        'sel.value = "delivery";' +
+        'window.applyRegistryFilters();' +
+        'return document.getElementById("registry-tbody").innerText; })()');
+    ok('фильтр реестра «🚚 Доставка» оставляет только строку доставки',
+        deliveryOnly.includes('Доставка') && !deliveryOnly.includes('Кирпич'),
+        deliveryOnly.replace(/\n/g, ' | ').slice(0, 160));
+
+    await evaluate('window.resetRegistryFilters()');
+    await sleep(400);
 
     // ------------------- 3. Финансист: оплата счёта -------------------
     await loginAs(9, 'Финансист');
 
     const finPanel = await evaluate(text('material-invoices-panel'));
-    ok('счёт на материалы виден на рабочем столе финансиста',
+    ok('счёт на материалы виден на рабочем столе финансиста (с доставкой в сумме)',
         finPanel.includes('Счета на материалы') && finPanel.includes('З-1/26') &&
-        finPanel.replace(/\s+/g, ' ').includes('14 000'),
+        finPanel.replace(/\s+/g, ' ').includes('15 500'),
         finPanel.replace(/\n/g, ' | ').slice(0, 160));
 
     // Рабочий стол финансиста — два блока на одной странице (не вкладки):
@@ -673,7 +767,7 @@ async function main() {
     ok('оплаченный счёт перешёл в историю «✅ Оплаченные»',
         paidText.includes('З-1/26') && paidText.includes('Оплачено') &&
         paidText.includes('Эпицентр') && paidText.includes('Тест Финансист') &&
-        paidText.includes('14 000'),
+        paidText.includes('15 500'),
         paidText.slice(0, 220));
 
     const historyBar = await evaluate('(() => {' +

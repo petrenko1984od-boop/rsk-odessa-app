@@ -18,7 +18,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatDateTime, formatMoney, roundMoney
+    formatDate, formatDateTime, formatMoney, roundMoney, isDeliveryItem
 } from '../utils.js';
 import {
     can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
@@ -271,7 +271,7 @@ function renderOrderCard(order) {
                 ${items.length > 0 
                     ? items.slice(0, 3).map(it => `
                         <div class="flex justify-between text-gray-700">
-                            <span>📦 ${escapeHtml(it.name)} — ${it.qty} ${escapeHtml(it.unit || '')}</span>
+                            <span>${isDeliveryItem(it) ? '🚚' : '📦'} ${escapeHtml(it.name)} — ${it.qty} ${escapeHtml(it.unit || '')}</span>
                             ${it.total_price ? `<span class="text-gray-500 font-semibold">${formatMoney(it.total_price)}</span>` : ''}
                         </div>
                     `).join('') + (items.length > 3 ? `<p class="text-[10px] text-gray-400 italic pt-1">и ещё ${items.length - 3}...</p>` : '')
@@ -381,7 +381,7 @@ export async function openOrderDetail(id) {
         ? items.map(it => `
             <div class="flex justify-between items-center bg-white border rounded-lg p-2 text-xs">
                 <div class="flex-1 min-w-0">
-                    <p class="font-semibold text-gray-800">📦 ${escapeHtml(it.name)}</p>
+                    <p class="font-semibold text-gray-800">${isDeliveryItem(it) ? '🚚' : '📦'} ${escapeHtml(it.name)}</p>
                     <p class="text-[11px] text-gray-500">${it.qty} ${escapeHtml(it.unit || '')} ${it.unit_price ? `× ${formatMoney(it.unit_price)}` : ''}</p>
                 </div>
                 <div class="text-right shrink-0">
@@ -918,7 +918,7 @@ export async function openCloseOrderModal(id) {
              data-item-unit="${escapeHtml(it.unit || 'шт')}">
             <div class="flex justify-between items-start gap-2">
                 <div class="flex-1">
-                    <p class="font-semibold text-gray-800 text-xs">📦 ${escapeHtml(it.name)}</p>
+                    <p class="font-semibold text-gray-800 text-xs">${isDeliveryItem(it) ? '🚚' : '📦'} ${escapeHtml(it.name)}</p>
                     <p class="text-[11px] text-gray-500">${it.qty} ${escapeHtml(it.unit || 'шт')}</p>
                 </div>
             </div>
@@ -1156,6 +1156,13 @@ export async function closeOrder(event) {
 //     «материалы приезжают раньше, чем их оплатят».
 // Заявка при загрузке счёта остаётся «В обработке» и получает
 // payment_status = 'debt' («Ожидает оплаты»).
+//
+// Доставка водится здесь же, отдельным полем «🚚 Стоимость доставки»:
+// она приходит из счёта одной суммой (не зависит от количества), поэтому
+// хранится отдельной позицией заявки (CONFIG.DELIVERY_ITEM), а не ценой
+// материала. Пустое поле — доставки нет, позицию удаляем. Так доставка
+// сама попадает в итог счёта, в заявку, в «📊 Реестр материалов»
+// (категория «🚚 Доставка») и в план-факт объекта.
 
 /** Короткое безопасное имя файла для Storage: кириллица → «_», расширение сохраняем. */
 function invoiceFileName(originalName) {
@@ -1201,7 +1208,17 @@ export async function openOrderInvoiceModal(orderId) {
             : '';
     }
 
-    const items = order._items || [];
+    const items = (order._items || []).filter(it => !isDeliveryItem(it));
+    const deliveryItem = (order._items || []).find(isDeliveryItem) || null;
+
+    // Доставка — своё поле в окне счёта: показываем уже сохранённую сумму.
+    // Саму строку ищем в позициях заявки: есть — обновим, нет — создадим.
+    const deliveryInput = document.getElementById('order-invoice-delivery');
+    if (deliveryInput) {
+        const saved = deliveryItem ? Number(deliveryItem.total_price) || 0 : 0;
+        deliveryInput.value = saved > 0 ? String(saved) : '';
+    }
+
     const container = document.getElementById('order-invoice-items');
     if (container) {
         container.innerHTML = items.length === 0
@@ -1227,7 +1244,9 @@ export async function openOrderInvoiceModal(orderId) {
     showModal('order-invoice-modal');
 }
 
-/** Итого по счёту = сумма (кол-во × цена) по всем позициям. */
+/**
+ * Итого по счёту = сумма (кол-во × цена) по всем позициям + стоимость доставки.
+ */
 export function recalcOrderInvoiceTotal() {
     const rows = document.querySelectorAll('.order-invoice-item');
     let total = 0;
@@ -1238,8 +1257,46 @@ export function recalcOrderInvoiceTotal() {
         total = roundMoney(total + qty * price);
     });
 
+    // Доставка — отдельная строка счёта (CONFIG.DELIVERY_ITEM): входит в итог
+    // наравне с позициями, иначе финансист увидел бы сумму меньше счёта.
+    const delivery = parseFloat(document.getElementById('order-invoice-delivery')?.value) || 0;
+    total = roundMoney(total + delivery);
+
     const totalEl = document.getElementById('order-invoice-total');
     if (totalEl) totalEl.textContent = formatMoney(total);
+}
+
+/**
+ * Сохраняет стоимость доставки отдельной позицией заявки (CONFIG.DELIVERY_ITEM).
+ *
+ *   amount > 0 — строку создаём (если её ещё нет) или обновляем её сумму;
+ *   amount = 0 — строку удаляем: пустое поле и значит «доставки нет».
+ *
+ * Возвращает null при успехе и текст ошибки — при сбое. Ошибку не глотаем
+ * молча: без строки доставки итог счёта и «Реестр материалов» разойдутся.
+ */
+async function saveDeliveryItem(orderId, deliveryItem, amount) {
+    if (amount > 0) {
+        const payload = {
+            order_id: orderId,
+            name: CONFIG.DELIVERY_ITEM.NAME,
+            unit: CONFIG.DELIVERY_ITEM.UNIT,
+            qty: 1,
+            unit_price: amount,
+            total_price: amount
+        };
+
+        const { error } = deliveryItem
+            ? await db.update('order_items', payload, { id: deliveryItem.id })
+            : await db.insert('order_items', payload);
+
+        return error ? error.message : null;
+    }
+
+    if (!deliveryItem) return null;   // доставки не было и не появилось
+
+    const { error } = await db.remove('order_items', { id: deliveryItem.id });
+    return error ? error.message : null;
 }
 
 /** Сохраняет счёт: файл в Storage + цены позиций + сумма заявки. */
@@ -1289,6 +1346,13 @@ export async function saveOrderInvoice(event) {
         return;
     }
 
+    // Доставка из счёта — отдельная позиция заявки (CONFIG.DELIVERY_ITEM),
+    // а не цена материала: приходит одной суммой и сохраняется отдельно.
+    const deliveryItem = (order._items || []).find(isDeliveryItem) || null;
+    const deliveryAmount = roundMoney(Math.max(
+        0, parseFloat(document.getElementById('order-invoice-delivery')?.value) || 0
+    ));
+
     const file = document.getElementById('order-invoice-file')?.files?.[0] || null;
     const submitBtn = event.target.querySelector('button[type="submit"]');
     const initialLabel = submitBtn.textContent;
@@ -1326,7 +1390,18 @@ export async function saveOrderInvoice(event) {
             if (error) log.error('Ошибка обновления цены позиции:', error.message);
         }
 
-        const totalSum = roundMoney(prices.reduce((sum, item) => sum + item.totalPrice, 0));
+        // Доставку сохраняем отдельной позицией заявки: так она попадает
+        // в «📊 Реестр материалов» отдельной строкой (категория «🚚 Доставка»)
+        // и в план-факт — без ручного пересчёта сумм в двух местах.
+        const deliveryError = await saveDeliveryItem(orderId, deliveryItem, deliveryAmount);
+        if (deliveryError) {
+            log.error('Ошибка сохранения доставки:', deliveryError);
+            toast(t('order.invoiceDeliveryFailed'), 'warning');
+        }
+
+        const totalSum = roundMoney(
+            prices.reduce((sum, item) => sum + item.totalPrice, 0) + deliveryAmount
+        );
 
         const payload = {
             supplier,
