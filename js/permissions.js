@@ -66,6 +66,7 @@ const ROLE_PERMISSIONS = {
         'cash_issue',
         'cash_view_all',
         'process_cash_request',
+        'pay_material_invoice',       // отметить счёт снабжения оплаченным (безнал)
         'view_projects_all',
         'view_registry',
         'create_task',
@@ -143,6 +144,8 @@ const ROLE_PERMISSIONS = {
         'cash_view_all',             // видит заявки всех сотрудников
         'issue_cash_request',        // выдача денег по одобренной заявке
         'cash_return_self',          // может вернуть остаток подотчёта в кассу
+        'pay_material_invoice',      // оплата счетов снабжения (безнал фирмы):
+                                     // деньги НЕ списываются с его подотчёта
         'view_projects_all',
         'view_registry',
         'view_employees',

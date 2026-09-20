@@ -1,0 +1,196 @@
+/* =====================================================================
+   RSK ODESSA — ЦВЕТОВЫЕ СХЕМЫ (перекраска интерфейса)
+   =====================================================================
+   Интерфейс написан классами Tailwind с «фирменным» цветом
+   (bg-[#15803d], text-emerald-700, border-emerald-200 …). Переписывать
+   тысячи классов ради смены цвета нельзя, поэтому здесь эти классы
+   перекрашиваются через CSS-переменные:
+
+     * переменные темы — в html[data-theme="…"];
+     * ниже — ОДИН набор правил для всех тем (значения берутся из
+       переменных), поэтому новая тема = только новый блок переменных.
+
+   Селекторы вида [class~="bg-[#15803d]"] сравнивают класс целиком, поэтому
+   скобки и решётку экранировать не нужно. !important нужен, чтобы правило
+   перебило утилиту Tailwind (она тоже подгружается как обычный CSS).
+
+   js/theme.js ставит data-theme на <html>; по умолчанию — зелёная.
+   ===================================================================== */
+
+:root,
+html[data-theme='green'] {
+    --brand: #15803d;
+    --brand-dark: #166534;
+    --brand-darker: #14532d;
+    --brand-light: #16a34a;
+    --brand-badge: #22c55e;
+    --brand-50: #ecfdf5;
+    --brand-100: #d1fae5;
+    --brand-200: #a7f3d0;
+    --brand-600: #059669;
+    --brand-700: #047857;
+    --brand-800: #065f46;
+    --brand-900: #064e3b;
+    --brand-rgb: 21, 128, 61;
+    --brand-light-rgb: 22, 163, 74;
+    --brand-50-rgb: 236, 253, 245;
+    --brand-600-rgb: 5, 150, 105;
+}
+
+html[data-theme='blue'] {
+    --brand: #1d4ed8;
+    --brand-dark: #1e40af;
+    --brand-darker: #1e3a8a;
+    --brand-light: #2563eb;
+    --brand-badge: #3b82f6;
+    --brand-50: #eff6ff;
+    --brand-100: #dbeafe;
+    --brand-200: #bfdbfe;
+    --brand-600: #2563eb;
+    --brand-700: #1d4ed8;
+    --brand-800: #1e40af;
+    --brand-900: #1e3a8a;
+    --brand-rgb: 29, 78, 216;
+    --brand-light-rgb: 37, 99, 235;
+    --brand-50-rgb: 239, 246, 255;
+    --brand-600-rgb: 37, 99, 235;
+}
+
+html[data-theme='indigo'] {
+    --brand: #6d28d9;
+    --brand-dark: #5b21b6;
+    --brand-darker: #4c1d95;
+    --brand-light: #7c3aed;
+    --brand-badge: #8b5cf6;
+    --brand-50: #f5f3ff;
+    --brand-100: #ede9fe;
+    --brand-200: #ddd6fe;
+    --brand-600: #7c3aed;
+    --brand-700: #6d28d9;
+    --brand-800: #5b21b6;
+    --brand-900: #4c1d95;
+    --brand-rgb: 109, 40, 217;
+    --brand-light-rgb: 124, 58, 237;
+    --brand-50-rgb: 245, 243, 255;
+    --brand-600-rgb: 124, 58, 237;
+}
+
+html[data-theme='teal'] {
+    --brand: #0f766e;
+    --brand-dark: #115e59;
+    --brand-darker: #134e4a;
+    --brand-light: #0d9488;
+    --brand-badge: #14b8a6;
+    --brand-50: #f0fdfa;
+    --brand-100: #ccfbf1;
+    --brand-200: #99f6e4;
+    --brand-600: #0d9488;
+    --brand-700: #0f766e;
+    --brand-800: #115e59;
+    --brand-900: #134e4a;
+    --brand-rgb: 15, 118, 110;
+    --brand-light-rgb: 13, 148, 136;
+    --brand-50-rgb: 240, 253, 250;
+    --brand-600-rgb: 13, 148, 136;
+}
+
+html[data-theme='amber'] {
+    --brand: #b45309;
+    --brand-dark: #92400e;
+    --brand-darker: #78350f;
+    --brand-light: #d97706;
+    --brand-badge: #f59e0b;
+    --brand-50: #fffbeb;
+    --brand-100: #fef3c7;
+    --brand-200: #fde68a;
+    --brand-600: #d97706;
+    --brand-700: #b45309;
+    --brand-800: #92400e;
+    --brand-900: #78350f;
+    --brand-rgb: 180, 83, 9;
+    --brand-light-rgb: 217, 119, 6;
+    --brand-50-rgb: 255, 251, 235;
+    --brand-600-rgb: 217, 119, 6;
+}
+
+html[data-theme='graphite'] {
+    --brand: #374151;
+    --brand-dark: #1f2937;
+    --brand-darker: #111827;
+    --brand-light: #4b5563;
+    --brand-badge: #6b7280;
+    --brand-50: #f9fafb;
+    --brand-100: #f3f4f6;
+    --brand-200: #e5e7eb;
+    --brand-600: #4b5563;
+    --brand-700: #374151;
+    --brand-800: #1f2937;
+    --brand-900: #111827;
+    --brand-rgb: 55, 65, 81;
+    --brand-light-rgb: 75, 85, 99;
+    --brand-50-rgb: 249, 250, 251;
+    --brand-600-rgb: 75, 85, 99;
+}
+
+/* ---------------------------------------------------------------------
+   ПРАВИЛА ПЕРЕКРАСКИ (один набор для всех тем)
+   --------------------------------------------------------------------- */
+
+/* Основной цвет: кнопки, активные вкладки, номера заявок */
+[class~="bg-[#15803d]"]                    { background-color: var(--brand) !important; }
+[class~="hover:bg-[#15803d]"]:hover        { background-color: var(--brand) !important; }
+[class~="text-[#15803d]"]                  { color: var(--brand) !important; }
+[class~="border-[#15803d]"]                { border-color: var(--brand) !important; }
+[class~="focus:ring-[#15803d]"]:focus      { --tw-ring-color: var(--brand) !important; }
+
+/* Тёмный оттенок: заголовки, суммы, ховер кнопок */
+[class~="bg-[#166534]"]                    { background-color: var(--brand-dark) !important; }
+[class~="hover:bg-[#166534]"]:hover        { background-color: var(--brand-dark) !important; }
+[class~="text-[#166534]"]                  { color: var(--brand-dark) !important; }
+[class~="hover:bg-[#14532d]"]:hover        { background-color: var(--brand-darker) !important; }
+
+/* Светлый оттенок: кнопки действий в шапке, прогресс */
+[class~="bg-[#16a34a]"]                    { background-color: var(--brand-light) !important; }
+[class~="hover:bg-[#16a34a]"]:hover        { background-color: var(--brand-light) !important; }
+[class~="border-[#16a34a]"]                { border-color: var(--brand-light) !important; }
+[class~="bg-[#16a34a]/70"]                 { background-color: rgba(var(--brand-light-rgb), 0.7) !important; }
+[class~="bg-[#22c55e]"]                    { background-color: var(--brand-badge) !important; }
+
+/* Мягкие фоны (emerald-50…200) — плашки, подсказки, ховер карточек */
+[class~="bg-emerald-50"]                   { background-color: var(--brand-50) !important; }
+[class~="hover:bg-emerald-50"]:hover       { background-color: var(--brand-50) !important; }
+[class~="hover:bg-emerald-50/40"]:hover    { background-color: rgba(var(--brand-50-rgb), 0.4) !important; }
+[class~="hover:bg-emerald-50/50"]:hover    { background-color: rgba(var(--brand-50-rgb), 0.5) !important; }
+[class~="hover:bg-emerald-50/60"]:hover    { background-color: rgba(var(--brand-50-rgb), 0.6) !important; }
+[class~="bg-emerald-100"]                  { background-color: var(--brand-100) !important; }
+[class~="hover:bg-emerald-100"]:hover      { background-color: var(--brand-100) !important; }
+[class~="hover:bg-emerald-200"]:hover      { background-color: var(--brand-200) !important; }
+[class~="border-emerald-100"]              { border-color: var(--brand-100) !important; }
+[class~="border-emerald-200"]              { border-color: var(--brand-200) !important; }
+
+/* Насыщенные оттенки 600–900: кнопки экспорта, ссылки, текст на плашках */
+[class~="bg-emerald-600"]                  { background-color: var(--brand-600) !important; }
+[class~="bg-emerald-700"]                  { background-color: var(--brand-700) !important; }
+[class~="hover:bg-emerald-700"]:hover      { background-color: var(--brand-700) !important; }
+[class~="hover:bg-emerald-800"]:hover      { background-color: var(--brand-800) !important; }
+[class~="text-emerald-100"]                { color: var(--brand-100) !important; }
+[class~="text-emerald-600"]                { color: var(--brand-600) !important; }
+[class~="text-emerald-700"]                { color: var(--brand-700) !important; }
+[class~="text-emerald-800"]                { color: var(--brand-800) !important; }
+[class~="hover:text-emerald-900"]:hover    { color: var(--brand-900) !important; }
+[class~="focus:ring-emerald-500/50"]:focus { --tw-ring-color: rgba(var(--brand-600-rgb), 0.5) !important; }
+
+/* ---------------------------------------------------------------------
+   ГРАФИК РАБОТ (Gantt)
+   ---------------------------------------------------------------------
+   Цвета полос заданы в <style> внутри index.html с !important, поэтому
+   здесь специфичность выше (html[data-theme] + классы) — так тема
+   перекрашивает и график. Факт-полосы (синяя/красная) не трогаем: это не
+   фирменный цвет, а смысловой (в срок / с опозданием).
+   --------------------------------------------------------------------- */
+html[data-theme] .gantt .bar                       { fill: var(--brand) !important; }
+html[data-theme] .gantt .bar-progress              { fill: var(--brand-light) !important; }
+html[data-theme] .gantt .bar-wrapper:hover .bar    { fill: var(--brand-dark) !important; }
+html[data-theme] .gantt-bar-plan .bar              { fill: var(--brand) !important; }
+html[data-theme] .gantt-bar-plan .bar-progress     { fill: var(--brand-light) !important; }
+

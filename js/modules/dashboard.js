@@ -277,7 +277,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
         .sort((a, b) => (Number(b.balance) || 0) - (Number(a.balance) || 0))
         .slice(0, 8);
 
-    const validOrderIds = new Set((orders || []).filter(order => ['closed', 'archived'].includes(order.status)).map(order => order.id));
+    const validOrderIds = new Set((orders || []).filter(order => ['delivered', 'closed', 'archived'].includes(order.status)).map(order => order.id));
     const unpaidDebt = (orderItems || [])
         .filter(item => validOrderIds.has(item.order_id) && (item.payment_status || 'paid') === 'debt')
         .reduce((sum, item) => sum + (Number(item.total_price) || 0), 0);
@@ -328,7 +328,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
     });
 
     const closedOrderIds = new Set((orders || [])
-        .filter(order => ['closed', 'archived'].includes(order.status) && order.payment_source === 'company')
+        .filter(order => ['delivered', 'closed', 'archived'].includes(order.status) && order.payment_source === 'company')
         .map(order => order.id));
     const orderIdsWithCashOperation = new Set((cashOperations || [])
         .map(operation => operation.order_id ? String(operation.order_id) : null)
@@ -475,7 +475,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                     <div class="border-t border-gray-200 p-5">
                     <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                     ${renderMetric('💸', 'Сумма задолженности', formatMoney(unpaidDebt), 'закрытые заявки', unpaidDebt > 0 ? 'amber' : 'emerald')}
-                    ${renderMetric('📦', 'Позиции в долгу', unpaidItemsCount, 'неоплаченные позиции', unpaidItemsCount > 0 ? 'red' : 'emerald')}
+                    ${renderMetric('📦', 'Позиции ожидают оплаты', unpaidItemsCount, 'неоплаченные позиции', unpaidItemsCount > 0 ? 'red' : 'emerald')}
                 </div>
                 <div class="mt-4">
                     <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">Рейтинг не оплаченных материалов по поставщикам</p>

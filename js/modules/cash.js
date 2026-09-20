@@ -12,11 +12,12 @@
 import { db } from '../database.js';
 import {
     log, toast, formatMoney, formatDate, escapeHtml,
-    parseNumber, roundMoney, isExtraSectionName
+    parseNumber, roundMoney, isExtraSectionName, todayISO
 } from '../utils.js';
-import { can, getEmployee, requirePermission } from '../permissions.js';
+import { can, getEmployee, getRole, requirePermission } from '../permissions.js';
 import { getCurrentUser } from '../auth.js';
 import { CONFIG } from '../config.js';
+import { t } from '../i18n.js';
 import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
@@ -192,9 +193,9 @@ export async function loadExpensesForProject(projectId) {
         log.error('Ошибка загрузки заявок:', ordersError.message);
     }
 
-    // Фильтруем: closed + archived + нужный объект
+    // Фильтруем: delivered + closed + archived + нужный объект
     const firmOrders = (allOrders || []).filter(o =>
-        (o.status === 'closed' || o.status === 'archived') &&
+        (o.status === 'delivered' || o.status === 'closed' || o.status === 'archived') &&
         o.project_id === projectId
     );
 
@@ -287,8 +288,13 @@ export async function loadExpensesForProject(projectId) {
 
 /**
  * Выдача подотчёта (для будущего интерфейса кассира).
+ * @param {number} employeeId — кому выдаём
+ * @param {number} amount — сумма
+ * @param {string} comment — комментарий
+ * @param {string|null} source — пометка операции (например 'financier_topup'):
+ *   по ней ведомость отличает пополнение подотчёта финансиста от обычной выдачи.
  */
-export async function addIssue(employeeId, amount, comment = '') {
+export async function addIssue(employeeId, amount, comment = '', source = null) {
     if (!requirePermission('cash_issue')) return { success: false };
 
     const sum = Number(amount);
@@ -301,7 +307,9 @@ export async function addIssue(employeeId, amount, comment = '') {
         employee_id: employeeId,
         operation_type: 'issue',
         amount: sum,
-        description: comment || 'Выдача подотчёта'
+        description: comment || 'Выдача подотчёта',
+        // Пометка нужна ведомости пополнений финансиста, см. ниже
+        source: source || null
     });
 }
 
@@ -554,7 +562,12 @@ export async function saveTopUpBalance(event) {
     submitBtn.textContent = 'Сохраняем...';
 
     try {
-        const { success, error } = await addIssue(employeeId, amount, comment || 'Пополнение подотчёта финансиста');
+        const { success, error } = await addIssue(
+            employeeId,
+            amount,
+            comment || 'Пополнение подотчёта финансиста',
+            'financier_topup'   // пометка: попадёт в ведомость пополнений
+        );
 
         if (!success) {
             if (error) toast('Не удалось пополнить баланс: ' + error.message, 'error');
@@ -577,6 +590,212 @@ export async function saveTopUpBalance(event) {
         submitBtn.disabled = false;
         submitBtn.textContent = '💼 Пополнить';
     }
+}
+
+// =====================================================================
+// ВЕДОМОСТЬ ПОПОЛНЕНИЙ ПОДОТЧЁТА ФИНАНСИСТА
+// =====================================================================
+// Документ для директора и финансиста: когда и сколько денег передали в
+// подотчёт финансиста (открывают из «💰 Финансы» и с рабочего стола).
+//
+// Пополнения помечаются source = 'financier_topup' (см. saveTopUpBalance),
+// поэтому в ведомость не попадают выдачи по заявкам и расходы финансиста.
+// Пополнения, сделанные до v2.4.0, помечает миграция
+// database/migrate-v2.4.sql (блок 3) — без неё они в ведомость не войдут.
+
+const TOPUP_SOURCE = 'financier_topup';
+
+let statementRows = [];
+
+/**
+ * Пополнение подотчёта финансиста — это оно или обычная выдача?
+ * Пометка source надёжнее, но для строк, созданных до v2.4.0, оставлен
+ * запасной признак — комментарий по умолчанию.
+ */
+function isFinancierTopUp(op) {
+    if (op.source === TOPUP_SOURCE) return true;
+    return /пополнени/i.test(op.description || '');
+}
+
+/** Читает пополнения подотчёта финансистов (свежие сверху). */
+async function loadFinancierTopUps() {
+    const { financiers, error } = await loadFinanciers();
+    if (error) return { rows: [], financiers: [], error };
+    if (financiers.length === 0) return { rows: [], financiers, error: null };
+
+    const namesById = {};
+    financiers.forEach(emp => { namesById[emp.id] = emp.name; });
+
+    const { data, error: operationsError } = await db.select('cash_operations', {
+        select: 'id, employee_id, operation_type, amount, description, source, operation_date, created_at',
+        filters: {
+            'employee_id.in': financiers.map(emp => emp.id),
+            operation_type: 'issue'
+        },
+        orderBy: { column: 'created_at', asc: false },
+        limit: 500
+    });
+
+    if (operationsError) return { rows: [], financiers, error: operationsError };
+
+    const rows = (data || [])
+        .filter(isFinancierTopUp)
+        .map(op => ({
+            date: op.operation_date || op.created_at,
+            amount: Number(op.amount) || 0,
+            comment: op.description || '',
+            financier: namesById[op.employee_id] || '—'
+        }));
+
+    return { rows, financiers, error: null };
+}
+
+/**
+ * Открывает окно ведомости. Доступно кассирам (cash_issue) и финансисту:
+ * первый передаёт деньги, второй их получает — ведомость у них одна и та же,
+ * отличаются только кнопки в разных разделах.
+ */
+export async function openFinancierTopUpStatement() {
+    if (!can('cash_issue') && getRole() !== 'Финансист') {
+        toast('Недостаточно прав для этого действия', 'error');
+        return;
+    }
+
+    showModal('financier-statement-modal');
+    await renderFinancierTopUpStatement();
+}
+
+/** Рисует строки ведомости (дата, кто передал, сумма, комментарий) и итоги. */
+export async function renderFinancierTopUpStatement() {
+    const body = document.getElementById('financier-statement-body');
+    if (!body) return;
+
+    body.innerHTML = `<p class="text-sm text-gray-500 py-4 text-center">${t('common.loading')}</p>`;
+
+    const { rows, financiers, error } = await loadFinancierTopUps();
+    statementRows = rows;
+
+    if (error) {
+        body.innerHTML = `<p class="text-sm text-red-600 py-4 text-center">
+            Не удалось загрузить ведомость: ${escapeHtml(error.message)}</p>`;
+        renderStatementSummary(0, 0);
+        return;
+    }
+
+    if (financiers.length === 0 || rows.length === 0) {
+        const hint = financiers.length === 0
+            ? 'Сотрудника с должностью «Финансист» нет в штате'
+            : t('statement.empty');
+
+        body.innerHTML = `<p class="text-sm text-gray-500 py-6 text-center">${escapeHtml(hint)}</p>`;
+        renderStatementSummary(0, 0);
+        return;
+    }
+
+    const total = roundMoney(rows.reduce((sum, row) => sum + row.amount, 0));
+
+    body.innerHTML = `
+        <div class="overflow-x-auto border rounded-lg">
+            <table class="w-full text-xs">
+                <thead class="bg-gray-50 text-gray-500 uppercase text-[10px]">
+                    <tr>
+                        <th class="text-left px-2 py-2">${t('common.date')}</th>
+                        <th class="text-left px-2 py-2">${t('statement.counterparty')}</th>
+                        <th class="text-right px-2 py-2">${t('common.sum')}</th>
+                        <th class="text-left px-2 py-2">${t('common.comment')}</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y">
+                    ${rows.map(row => `
+                        <tr>
+                            <td class="px-2 py-1.5 whitespace-nowrap">${formatDate(row.date)}</td>
+                            <td class="px-2 py-1.5 text-gray-600">${escapeHtml(row.financier)}</td>
+                            <td class="px-2 py-1.5 text-right font-semibold text-[#166534] whitespace-nowrap">${formatMoney(row.amount)}</td>
+                            <td class="px-2 py-1.5 text-gray-600">${escapeHtml(row.comment || '—')}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    renderStatementSummary(total, rows.length);
+}
+
+/** Итоги ведомости: сколько всего передано и сколько было пополнений. */
+function renderStatementSummary(total, count) {
+    const summary = document.getElementById('financier-statement-summary');
+    if (!summary) return;
+
+    summary.innerHTML = `
+        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+            <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">${t('statement.total')}</p>
+            <p class="text-lg font-bold text-[#166534]">${formatMoney(total)}</p>
+        </div>
+        <div class="bg-gray-50 border rounded-lg p-3">
+            <p class="text-[11px] font-bold uppercase tracking-wide text-gray-500">${t('statement.count')}</p>
+            <p class="text-lg font-bold text-gray-800">${count}</p>
+        </div>
+    `;
+}
+
+/**
+ * Выгружает ведомость в Excel (SheetJS — как в других выгрузках приложения).
+ * Суммы пишутся числами с денежным форматом, поэтому в Excel по колонке
+ * «Сумма» можно считать, а не только читать.
+ */
+export function exportFinancierTopUpStatement() {
+    if (typeof XLSX === 'undefined') {
+        toast('Библиотека XLSX не загружена', 'error');
+        return;
+    }
+
+    if (statementRows.length === 0) {
+        toast('В ведомости нет строк для выгрузки', 'warning');
+        return;
+    }
+
+    const sumHeader = t('common.sum');
+
+    const rows = statementRows.map(row => ({
+        [t('common.date')]: formatDate(row.date),
+        [sumHeader]: row.amount,
+        [t('statement.counterparty')]: row.financier,
+        [t('common.comment')]: row.comment || ''
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const columns = Object.keys(rows[0]);
+
+    worksheet['!cols'] = columns.map(header => {
+        const maxLen = rows.reduce((max, row) => {
+            const value = row[header];
+            return Math.max(max, String(value ?? '').length);
+        }, header.length);
+
+        return { wch: Math.max(12, Math.min(maxLen + 2, 60)) };
+    });
+
+    // Колонка суммы: числа + формат «два знака после запятой»
+    const sumColumn = columns.indexOf(sumHeader);
+    if (sumColumn > -1) {
+        rows.forEach((row, index) => {
+            const cell = worksheet[XLSX.utils.encode_cell({ r: index + 1, c: sumColumn })];
+            if (!cell) return;
+            const num = Number(cell.v);
+            if (isNaN(num)) return;
+            cell.t = 'n';
+            cell.v = num;
+            cell.z = '#,##0.00';
+            delete cell.w;
+        });
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, t('statement.sheet').slice(0, 31));
+    XLSX.writeFile(workbook, `${t('statement.fileName')}_${todayISO()}.xlsx`);
+
+    toast(`Выгружено строк: ${rows.length}`, 'success');
 }
 
 async function createOperation(payload) {
@@ -1485,3 +1704,5 @@ window.loadSectionsForExpense = loadSectionsForExpense;
 window.myOpenExpense = myOpenExpense;
 window.myOpenReturn = myOpenReturn;
 window.openTopUpBalanceModal = openTopUpBalanceModal;
+window.openFinancierTopUpStatement = openFinancierTopUpStatement;
+window.exportFinancierTopUpStatement = exportFinancierTopUpStatement;

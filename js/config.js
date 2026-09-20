@@ -14,7 +14,11 @@ export const CONFIG = {
     STORAGE: {
         ESTIMATES_BUCKET: 'estimates',      // Excel-файлы смет
         TASK_PHOTOS_BUCKET: 'task-photos',  // Фотографии задач
-        RECEIPTS_BUCKET: 'receipts'         // Фото чеков / накладных
+        RECEIPTS_BUCKET: 'receipts',        // Фото чеков / накладных
+        // Счета поставщиков по заявкам на материалы. Лежат в бакете чеков
+        // (подпапка invoices/) — так фича работает без настройки Storage.
+        // Если заведёте отдельный бакет «invoices» — поменяйте здесь строку.
+        INVOICES_BUCKET: 'receipts'
     },
 
     // ----- СЛУЖЕБНЫЙ РАЗДЕЛ «ДОП. РАСХОДЫ» (вне сметы) -----
@@ -35,7 +39,7 @@ export const CONFIG = {
     // ----- ПРИЛОЖЕНИЕ -----
     APP: {
         NAME: 'RSK Odessa',
-        VERSION: '2.2.3',
+        VERSION: '2.4.0',
         DEFAULT_REQUEST_PREFIX: 'З-',
         // true — печатать в консоль все SQL-запросы (log.db) и подробный лог.
         // В продакшене держим false, чтобы не светить данные и не тормозить приложение.
@@ -91,13 +95,30 @@ export const CONFIG = {
     ORDER_STATUS: {
         NEW:         'new',
         IN_PROGRESS: 'in_progress',
-        CLOSED:      'closed',
+        DELIVERED:   'delivered',   // материалы приехали на объект (закупка закрыта)
+        CLOSED:      'closed',      // legacy: до v2.4 закрытие закупки
         ARCHIVED:    'archived'
     },
 
+    // Статус оплаты заявки фирмой (безнал): 'debt' показываем как
+    // «Ожидает оплаты» — задолженность перед поставщиком ещё не закрыта.
     PAYMENT_STATUS: {
         PAID: 'paid',
         DEBT: 'debt'
+    },
+
+    STATUS_LABELS: {
+        ORDERS: {
+            new:         '🔴 Новая',
+            in_progress: '🟡 В обработке',
+            delivered:   '🚚 Доставлено на объект',
+            closed:      '🟢 Закрыта',
+            archived:    '📥 Архив'
+        },
+        PAYMENT: {
+            paid: '✅ Оплачено',
+            debt: '⏳ Ожидает оплаты'
+        }
     },
 
     EMPLOYEE_STATUS: {

@@ -58,6 +58,11 @@
 .gantt-bar-fact-late .bar { fill: #ef4444 !important; }
 .gantt-bar-fact-late .bar-progress { fill: #dc2626 !important; }
     </style>
+
+    <!-- ЦВЕТОВЫЕ СХЕМЫ: перекраска интерфейса под выбор сотрудника.
+         Подключается последней, чтобы перебить и утилиты Tailwind, и цвета
+         графика выше (см. css/theme.css, js/theme.js). -->
+    <link rel="stylesheet" href="./css/theme.css">
 </head>
 <body class="bg-gray-100 font-sans min-h-screen overflow-x-hidden">
 
@@ -159,6 +164,8 @@
                             <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Авансовый отчёт</span></button>
                             <button onclick="openMyRequests()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span>Мои заявки</span></button>
                             <button onclick="openMyTasks()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📌 <span>Мои задачи</span></button>
+                            <!-- Язык интерфейса и цветовая схема: каждый сотрудник выбирает сам -->
+                            <button onclick="openSettings()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">⚙ <span>Настройки</span></button>
                             <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
                         </div>
                     </div>
@@ -313,7 +320,8 @@
                 <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
                     <button onclick="switchOrdersTab('active')" id="orders-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
                     <button onclick="switchOrdersTab('new')" id="orders-filter-new" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Новые</button>
-                    <button onclick="switchOrdersTab('in_progress')" id="orders-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 В работе</button>
+                    <button onclick="switchOrdersTab('in_progress')" id="orders-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 В обработке</button>
+                    <button onclick="switchOrdersTab('delivered')" id="orders-filter-delivered" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🚚 Доставлено</button>
                     <button onclick="switchOrdersTab('closed')" id="orders-filter-closed" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Закрытые</button>
                     <button onclick="switchOrdersTab('archived')" id="orders-filter-archived" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📥 Архив</button>
                     <button onclick="switchOrdersTab('all')" id="orders-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
@@ -340,12 +348,20 @@
                              Кнопку показывает main.js (applyPermissionsToUI), поэтому по умолчанию скрыта. -->
                         <button onclick="openTopUpBalanceModal()" id="btn-topup-financier"
                                 class="hidden bg-white hover:bg-emerald-50 text-[#15803d] border border-[#15803d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition">💼 Пополнить баланс финансиста</button>
+                        <!-- Ведомость пополнений подотчёта: директор/кассиры (право cash_issue).
+                             Показывает main.js, поэтому по умолчанию скрыта. -->
+                        <button onclick="openFinancierTopUpStatement()" id="btn-financier-statement"
+                                class="hidden bg-white hover:bg-emerald-50 text-[#15803d] border border-[#15803d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition" data-i18n="statement.button">📄 Ведомость пополнений</button>
                         <button onclick="openNewCashRequestForm()" id="create-cash-request-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
                     </div>
                 </div>
 
                 <!-- Рабочий стол финансиста: подотчёт и сумма к выдаче (остальным ролям скрыт) -->
                 <div id="financier-balance-panel" class="hidden space-y-3"></div>
+
+                <!-- Счета на материалы: очередь оплаты финансиста. Наполняет
+                     js/modules/invoices.js (грузится вместе с разделом). -->
+                <div id="material-invoices-panel" class="hidden space-y-3"></div>
 
                 <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
                     <button onclick="switchCashRequestsTab('active')" id="cashreq-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
@@ -391,7 +407,7 @@
                         <select id="reg-filter-payment" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">Все оплаты</option>
                             <option value="paid">✅ Оплачено</option>
-                            <option value="debt">⏳ В долг</option>
+                            <option value="debt">⏳ Ожидает оплаты</option>
                         </select>
                         <select id="reg-filter-employee" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все сотрудники</option></select>
                         <input type="date" id="reg-filter-date-from" onchange="applyRegistryFilters()" placeholder="Дата с" class="border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
@@ -431,6 +447,44 @@
     <!-- ============================================================ -->
     <!-- МОДАЛКИ                                                       -->
     <!-- ============================================================ -->
+
+    <!-- НАСТРОЙКИ ПРИЛОЖЕНИЯ (язык + цветовая схема) -->
+    <div id="settings-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="settings.title">⚙ Настройки приложения</h3>
+                <button onclick="hideModal('settings-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <p class="text-xs text-gray-500" data-i18n="settings.subtitle">
+                Язык интерфейса и цветовая схема. Настройки сохраняются для этого устройства.
+            </p>
+
+            <div class="space-y-2">
+                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="settings.language">Язык интерфейса</p>
+                <!-- Кнопки языков рисует js/settings.js → renderLanguages() -->
+                <div id="settings-languages" class="flex gap-2"></div>
+            </div>
+
+            <div class="space-y-2 border-t pt-3">
+                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="settings.theme">Цветовая схема</p>
+                <!-- Кружки цветов рисует js/settings.js → renderThemes() -->
+                <div id="settings-themes" class="flex flex-wrap gap-3"></div>
+                <p class="text-[11px] text-gray-500" data-i18n="settings.themeHint">
+                    Каждый сотрудник выбирает оформление сам — на других это не влияет.
+                </p>
+            </div>
+
+            <div class="bg-gray-50 border rounded-lg p-3 flex justify-between items-center text-xs text-gray-600">
+                <span data-i18n="settings.version">Версия приложения</span>
+                <span id="settings-version" class="font-semibold text-gray-800">RSK Odessa</span>
+            </div>
+
+            <button type="button" onclick="hideModal('settings-modal')"
+                    class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                    data-i18n="common.close">Закрыть</button>
+        </div>
+    </div>
 
     <!-- НОВЫЙ ОБЪЕКТ -->
     <div id="project-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -790,13 +844,68 @@
         </div>
     </div>
 
+    <!-- СЧЁТ ПОСТАВЩИКА (снабженец): файл счёта + цены по позициям.
+         Счёт сразу уходит на рабочий стол финансиста в блок «Счета на
+         материалы», а материалы могут приехать на объект раньше оплаты. -->
+    <div id="order-invoice-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[75]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" id="order-invoice-title" data-i18n="order.invoiceTitle">🧾 Счёт поставщика по заявке</h3>
+                <button onclick="hideModal('order-invoice-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <p class="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg p-2.5" data-i18n="order.invoiceHint">
+                Загрузите фото или скан счёта и заполните цены по позициям. После сохранения счёт появится
+                на рабочем столе финансиста в блоке «Счета на материалы», а заявка перейдёт в «Ожидает оплаты».
+            </p>
+
+            <form id="order-invoice-form" class="space-y-4" onsubmit="saveOrderInvoice(event)">
+                <input type="hidden" id="order-invoice-id">
+
+                <div class="space-y-2">
+                    <label class="block text-xs font-semibold text-gray-600" data-i18n="order.invoiceSupplier">Поставщик / магазин / база</label>
+                    <input type="text" id="order-invoice-supplier" required placeholder="Эпицентр / База на Мельницкой"
+                           class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </div>
+
+                <div class="space-y-2">
+                    <label class="block text-xs font-semibold text-gray-600" data-i18n="order.invoiceFile">Файл счёта (фото, скрин, PDF)</label>
+                    <input type="file" id="order-invoice-file" accept="image/*,.pdf"
+                           class="w-full border rounded-lg p-2.5 text-xs text-gray-800 bg-white outline-none focus:ring-2 focus:ring-[#15803d]">
+                    <p class="text-[11px] text-gray-500" id="order-invoice-current"></p>
+                </div>
+
+                <div class="border-t border-b py-3 space-y-2">
+                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="order.invoicePrices">💰 Цены по позициям (по счёту)</p>
+                    <!-- Строки позиций рисует js/modules/orders.js → openOrderInvoiceModal() -->
+                    <div id="order-invoice-items" class="space-y-2"></div>
+                </div>
+
+                <div class="bg-emerald-50 rounded-lg p-3 flex justify-between items-center border border-emerald-200">
+                    <span class="text-xs font-bold text-gray-600 uppercase" data-i18n="order.invoiceTotal">Итого по счёту</span>
+                    <span class="text-lg font-bold text-[#166534]" id="order-invoice-total">0,00 грн</span>
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить счёт</button>
+                    <button type="button" onclick="hideModal('order-invoice-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition" data-i18n="common.cancel">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- ЗАКРЫТИЕ ЗАЯВКИ НА МАТЕРИАЛЫ -->
     <div id="close-order-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
         <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800" id="close-order-title">✅ Закрытие заявки</h3>
+                <h3 class="text-lg font-bold text-gray-800" id="close-order-title">🚚 Доставлено на объект</h3>
                 <button onclick="hideModal('close-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
+            <p class="text-xs text-gray-500 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
+                💡 Закрывая закупку, вы подтверждаете, что материалы приехали на объект. Позиции сразу попадут
+                в «📊 Реестр материалов» — независимо от того, оплачен счёт или нет. Оплату по счёту отмечает
+                финансист в блоке «🧾 Счета на материалы».
+            </p>
             <form id="close-order-form" class="space-y-4">
                 <input type="hidden" id="close-order-id">
                 <div id="close-order-info"></div>
@@ -814,14 +923,14 @@
                     <span class="text-lg font-bold text-[#166534]" id="close-order-total">0,00 грн</span>
                 </div>
                 <div class="bg-gray-50 rounded-lg p-3 border space-y-2">
-                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💳 Способ оплаты: *</p>
+                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💳 Кто платит: *</p>
                     <label class="flex items-center gap-2 cursor-pointer text-sm">
                         <input type="radio" name="close-order-payment-source" value="company" id="close-order-payment-company" checked class="w-4 h-4">
-                        <span>🏢 <b>Фирма</b> (по счёту / безнал)</span>
+                        <span>🏢 <b>Фирма</b> (по счёту / безнал) — позиции будут «Ожидает оплаты» до отметки финансиста</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer text-sm">
                         <input type="radio" name="close-order-payment-source" value="employee" class="w-4 h-4">
-                        <span>💵 <b>Снабженец</b> (наличными из подотчёта)</span>
+                        <span>💵 <b>Снабженец</b> (наличными из подотчёта) — позиции сразу «Оплачено»</span>
                     </label>
                 </div>
                 <div>
@@ -830,7 +939,7 @@
                            class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 </div>
                 <div class="flex gap-2 pt-2">
-                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Закрыть заявку</button>
+                    <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Подтвердить доставку</button>
                     <button type="button" onclick="hideModal('close-order-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
@@ -939,6 +1048,35 @@
                     <button type="button" onclick="hideModal('topup-balance-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ВЕДОМОСТЬ ПОПОЛНЕНИЙ ПОДОТЧЁТА ФИНАНСИСТА
+         Открывают: директор и другие кассиры — из раздела «💰 Финансы»,
+         финансист — со своего рабочего стола. Данные — операции issue с
+         пометкой source='financier_topup' (js/modules/cash.js). -->
+    <div id="financier-statement-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[75]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-800" data-i18n="statement.title">📄 Ведомость пополнений подотчёта финансиста</h3>
+                    <p class="text-xs text-gray-500 mt-0.5" data-i18n="statement.subtitle">Кто, когда и сколько передал денег в подотчёт финансиста.</p>
+                </div>
+                <button onclick="hideModal('financier-statement-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <div id="financier-statement-summary" class="grid grid-cols-2 gap-2"></div>
+
+            <div id="financier-statement-body" class="space-y-2"></div>
+
+            <div class="flex gap-2 pt-2 border-t">
+                <button type="button" onclick="exportFinancierTopUpStatement()"
+                        class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="common.export">📥 Excel</button>
+                <button type="button" onclick="hideModal('financier-statement-modal')"
+                        class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="common.close">Закрыть</button>
+            </div>
         </div>
     </div>
 

@@ -4,17 +4,20 @@
 // Сводная таблица всех закупок и расходов.
 //
 // Источники данных (не хранит, а собирает):
-//   1. Заявки с payment_source = 'company' (closed + archived)
+//   1. Заявки с payment_source = 'company' (delivered + closed + archived)
 //   2. Расходы из cash_operations (source = 'manual')
 //   3. Заявки с payment_source = 'employee' (уже в cash_operations)
 //
 // ⚠️ ВАЖНО: 
 //   - Архивные заявки ТОЖЕ попадают в реестр (архив ≠ удаление)
+//   - Материалы попадают в реестр сразу после «Доставлено на объект», даже
+//     если счёт ещё не оплачен: тогда оплата = 'debt' («Ожидает оплаты»),
+//     а отметку «Оплачено» ставит финансист (js/modules/invoices.js).
 //   - Избегаем двойного учёта:
 //       * заявка фирмой → из order_items
 //       * заявка сотрудником → из cash_operations
 //       * прямой расход → из cash_operations
-//   - Дата: для заявок — closed_at, для расходов — operation_date
+//   - Дата: для заявок — delivered_at (closed_at у старых), для расходов — operation_date
 // =====================================================================
 
 import { db } from '../database.js';
@@ -62,14 +65,15 @@ export async function loadRegistry() {
     const { data: allOrders, error: ordersError } = await db.select('orders', {
         select: `
             id, request_number, project_id, section_id, 
-            supplier, payment_source, closed_at, status, created_at,
+            supplier, payment_source, payment_status, closed_at, delivered_at,
+            invoice_path, status, created_at,
             project:projects ( id, name ),
             section:sections ( id, name ),
             created_by_emp:employees!orders_created_by_employee_id_fkey ( id, name )
         `,
         filters: {
             payment_source: 'company',
-            'status.in': ['closed', 'archived']   // фильтруем на сервере, а не в JS
+            'status.in': ['delivered', 'closed', 'archived']   // фильтруем на сервере, а не в JS
         }
     });
 
@@ -77,9 +81,9 @@ export async function loadRegistry() {
         log.error('Ошибка загрузки заявок для реестра:', ordersError.message);
     }
 
-    // Фильтруем только closed + archived
-    const firmOrders = (allOrders || []).filter(o => 
-        o.status === 'closed' || o.status === 'archived'
+    // Фильтруем только delivered + closed + archived
+    const firmOrders = (allOrders || []).filter(o =>
+        o.status === 'delivered' || o.status === 'closed' || o.status === 'archived'
     );
 
     if (firmOrders.length > 0) {
@@ -106,7 +110,7 @@ export async function loadRegistry() {
                 _source: 'order',
                 _orderNumber: order.request_number,
                 _orderId: order.id,
-                date: order.closed_at || order.created_at,
+                date: order.delivered_at || order.closed_at || order.created_at,
                 name: it.name,
                 unit: it.unit || 'шт',
                 qty: it.qty,
@@ -119,7 +123,9 @@ export async function loadRegistry() {
                 section: order.section?.name || '—',
                 sectionId: order.section_id,
                 employee: order.created_by_emp?.name || '—',
-                payment: it.payment_status || 'paid'
+                // Статус оплаты берём у заявки: «Ожидает оплаты» держится до
+                // отметки финансиста по счёту, а не по каждой позиции.
+                payment: order.payment_status || it.payment_status || 'paid'
             });
         });
     }
@@ -354,7 +360,7 @@ function renderRegistryRow(item) {
     const categoryLabel = CATEGORY_LABELS[item.category] || item.category || '—';
 
     const paymentBadge = item.payment === 'debt'
-        ? `<span class="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold text-[10px]">В долг</span>`
+        ? `<span class="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold text-[10px]">Ожидает оплаты</span>`
         : `<span class="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-bold text-[10px]">Оплачено</span>`;
 
     return `
@@ -424,7 +430,7 @@ export function exportRegistryToExcel() {
         'Цена за ед.': money(item.unitPrice),
         'Сумма': money(item.sum),
         'Категория': CATEGORY_LABELS[item.category] || item.category || '—',
-        'Оплата': item.payment === 'debt' ? 'В долг' : 'Оплачено',
+        'Оплата': item.payment === 'debt' ? 'Ожидает оплаты' : 'Оплачено',
         'Поставщик': item.supplier,
         'Объект': item.project,
         'Раздел': item.section,

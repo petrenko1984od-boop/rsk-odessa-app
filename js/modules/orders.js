@@ -18,11 +18,13 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatMoney, roundMoney
+    formatDate, formatDateTime, formatMoney, roundMoney
 } from '../utils.js';
 import {
     can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
 } from '../permissions.js';
+import { CONFIG } from '../config.js';
+import { t } from '../i18n.js';
 import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
@@ -133,7 +135,7 @@ function getFilteredOrders() {
 export function switchOrdersTab(filter) {
     currentFilter = filter;
 
-    const filters = ['active', 'new', 'in_progress', 'closed', 'archived', 'all'];
+    const filters = ['active', 'new', 'in_progress', 'delivered', 'closed', 'archived', 'all'];
     filters.forEach(f => {
         const btn = document.getElementById(`orders-filter-${f}`);
         if (!btn) return;
@@ -198,7 +200,7 @@ function renderOrderCard(order) {
     const payerName = order.payer?.name || null;
     const totalSum = Number(order.total_sum) || 0;
 
-    // Бейдж оплаты
+    // Бейджи оплаты и счёта
     let paymentBadge = '';
     if (order.status === 'closed' || order.status === 'archived') {
         if (order.payment_source === 'company') {
@@ -208,6 +210,18 @@ function renderOrderCard(order) {
         }
     }
 
+    // Счёт загружен / оплата ещё не прошла — видно прямо в списке
+    const invoiceBadge = order.invoice_path
+        ? `<span class="text-[10px] bg-white border border-amber-300 text-amber-800 px-2 py-0.5 rounded font-bold">🧾 ${t('invoice.of')}</span>`
+        : '';
+
+    let payBadge = '';
+    if (order.payment_status === 'debt') {
+        payBadge = `<span class="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">${t('order.paymentPending')}</span>`;
+    } else if (order.payment_status === 'paid' && order.invoice_path) {
+        payBadge = `<span class="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">${t('order.paymentPaid')}</span>`;
+    }
+
     return `
         <button onclick="window.openOrderDetail(${order.id})"
                 class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex flex-col gap-3 border-l-4 ${statusInfo.border} hover:bg-emerald-50/50 transition cursor-pointer group">
@@ -215,6 +229,8 @@ function renderOrderCard(order) {
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="font-bold text-[#15803d] font-mono text-sm bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">${escapeHtml(order.request_number)}</span>
                     <span class="text-xs font-bold px-2 py-0.5 rounded ${statusInfo.bg} ${statusInfo.color}">${statusInfo.label}</span>
+                    ${invoiceBadge}
+                    ${payBadge}
                     ${paymentBadge}
                 </div>
                 ${totalSum > 0 ? `<span class="text-sm font-bold text-[#166534] whitespace-nowrap">${formatMoney(totalSum)}</span>` : ''}
@@ -274,7 +290,7 @@ export async function openOrderDetail(id) {
                 </div>
                 <div class="text-right shrink-0">
                     ${it.total_price ? `<p class="font-bold text-[#166534]">${formatMoney(it.total_price)}</p>` : ''}
-                    ${it.payment_status ? `<span class="text-[10px] px-1.5 py-0.5 rounded ${it.payment_status === 'debt' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-700'} font-bold">${it.payment_status === 'debt' ? 'В долг' : 'Оплачено'}</span>` : ''}
+                    ${it.payment_status ? `<span class="text-[10px] px-1.5 py-0.5 rounded ${it.payment_status === 'debt' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-700'} font-bold">${it.payment_status === 'debt' ? t('order.paymentPending') : t('order.paymentPaid')}</span>` : ''}
                 </div>
             </div>
         `).join('')
@@ -318,6 +334,18 @@ export async function openOrderDetail(id) {
             ${order.desired_date ? `<p><strong>⏳ Желаемая поставка:</strong> ${formatDate(order.desired_date)}</p>` : ''}
             ${order.supplier ? `<p><strong>🏬 Поставщик:</strong> <span class="font-semibold text-gray-800">${escapeHtml(order.supplier)}</span></p>` : ''}
             ${order.purchase_notes ? `<p><strong>📝 Комментарий:</strong> ${escapeHtml(order.purchase_notes)}</p>` : ''}
+            ${order.invoice_path ? `
+                <p><strong>🧾 ${t('invoice.of')}:</strong>
+                   ${escapeHtml(order.invoice_file_name || '—')}
+                   ${order.invoice_total ? `· <b>${formatMoney(order.invoice_total)}</b>` : ''}
+                   ${order.invoice_uploaded_at ? `· ${formatDate(order.invoice_uploaded_at)}` : ''}
+                   <button onclick="window.viewOrderInvoice(${order.id})"
+                           class="text-[#15803d] font-semibold hover:underline ml-1">${t('common.open')}</button>
+                </p>
+            ` : ''}
+            ${order.payment_status === 'debt' ? `<p class="text-amber-700 font-semibold">${t('order.paymentPending')}</p>` : ''}
+            ${order.paid_at ? `<p><strong>${t('invoice.paidAt')}:</strong> ${formatDateTime(order.paid_at)}</p>` : ''}
+            ${order.delivered_at ? `<p><strong>🚚 ${t('invoice.delivered')}:</strong> ${formatDate(order.delivered_at)}</p>` : ''}
             ${order.closed_at ? `<p><strong>✅ Закрыто:</strong> ${formatDate(order.closed_at)}</p>` : ''}
         </div>
 
@@ -342,15 +370,21 @@ function renderOrderActions(order) {
     let buttonsHtml = '';
 
     if (order.status === 'new' && canProcessOrder()) {
-        buttonsHtml += `<button onclick="window.takeOrderToWork(${order.id})" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">▶ Взять в работу</button>`;
+        buttonsHtml += `<button onclick="window.takeOrderToWork(${order.id})" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.takeToWork')}</button>`;
+    }
+
+    // Счёт можно загрузить и до доставки, и после: материалы приезжают
+    // раньше оплаты, а счёт иногда присылают позже накладной.
+    if ((order.status === 'in_progress' || order.status === 'delivered') && canProcessOrder()) {
+        buttonsHtml += `<button onclick="window.openOrderInvoiceModal(${order.id})" class="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.invoiceButton')}</button>`;
     }
 
     if (order.status === 'in_progress' && canProcessOrder()) {
-        buttonsHtml += `<button onclick="window.openCloseOrderModal(${order.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✅ Закрыть закупку</button>`;
+        buttonsHtml += `<button onclick="window.openCloseOrderModal(${order.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.deliveredButton')}</button>`;
     }
 
-    if (order.status === 'closed' && canProcessOrder()) {
-        buttonsHtml += `<button onclick="window.archiveOrder(${order.id})" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">📥 В архив</button>`;
+    if ((order.status === 'delivered' || order.status === 'closed') && canProcessOrder()) {
+        buttonsHtml += `<button onclick="window.archiveOrder(${order.id})" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.toArchive')}</button>`;
     }
 
     // Удаление — только Админ + только new
@@ -366,11 +400,13 @@ function renderOrderActions(order) {
 // =====================================================================
 
 export function getStatusInfo(status) {
+    const labels = CONFIG.STATUS_LABELS.ORDERS;
     const map = {
-        'new':         { label: '🔴 Новая',      bg: 'bg-red-100',    color: 'text-red-700',    border: 'border-red-400' },
-        'in_progress': { label: '🟡 В работе',   bg: 'bg-yellow-100', color: 'text-yellow-800', border: 'border-yellow-400' },
-        'closed':      { label: '🟢 Закрыта',    bg: 'bg-green-100',  color: 'text-green-700',  border: 'border-[#15803d]' },
-        'archived':    { label: '📥 Архив',      bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-400' }
+        'new':         { label: labels.new,         bg: 'bg-red-100',    color: 'text-red-700',    border: 'border-red-400' },
+        'in_progress': { label: labels.in_progress, bg: 'bg-yellow-100', color: 'text-yellow-800', border: 'border-yellow-400' },
+        'delivered':   { label: labels.delivered,   bg: 'bg-emerald-100', color: 'text-emerald-800', border: 'border-[#15803d]' },
+        'closed':      { label: labels.closed,      bg: 'bg-green-100',  color: 'text-green-700',  border: 'border-[#15803d]' },
+        'archived':    { label: labels.archived,    bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-400' }
     };
     return map[status] || { label: status, bg: 'bg-gray-100', color: 'text-gray-700', border: 'border-gray-300' };
 }
@@ -746,10 +782,11 @@ export async function openCloseOrderModal(id) {
     hideModal('order-detail-modal');
 
     const titleEl = document.getElementById('close-order-title');
-    if (titleEl) titleEl.textContent = `✅ Закрытие заявки ${order.request_number}`;
+    if (titleEl) titleEl.textContent = `${t('order.deliveredTitle')} — ${order.request_number}`;
 
     document.getElementById('close-order-id').value = id;
-    document.getElementById('close-order-supplier').value = '';
+    // Поставщика подставляем из счёта, если снабженец его уже загрузил
+    document.getElementById('close-order-supplier').value = order.supplier || '';
     document.getElementById('close-order-notes').value = '';
     document.getElementById('close-order-payment-company').checked = true;
 
@@ -785,15 +822,15 @@ export async function openCloseOrderModal(id) {
                     <p class="text-[11px] text-gray-500">${it.qty} ${escapeHtml(it.unit || 'шт')}</p>
                 </div>
             </div>
-            <div class="grid grid-cols-2 gap-2">
+            <div class="grid grid-cols-2 gap-2 items-center">
                 <input type="number" step="0.01" placeholder="Цена за ед., грн" 
                        class="close-order-price w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
+                       value="${it.unit_price || ''}"
                        oninput="window.recalcCloseOrderTotal()"
                        required>
-                <select class="close-order-payment w-full border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                    <option value="paid">✅ Оплачено</option>
-                    <option value="debt">⏳ В долг</option>
-                </select>
+                <!-- Статус оплаты позиции вычисляется по способу оплаты заявки
+                     (см. closeOrder): фирма → «Ожидает оплаты», подотчёт → «Оплачено» -->
+                <span class="text-[10px] text-gray-500 text-center">${t('order.paymentPending')} / ${t('order.paymentPaid')}</span>
             </div>
         </div>
     `).join('');
@@ -850,13 +887,20 @@ export async function closeOrder(event) {
     const updatedItems = [];
     let totalSum = 0;
 
+    // Оплата фирмой — по счёту (безнал): до отметки финансиста позиции
+    // «Ожидает оплаты». Признак оплаты — paid_at (его ставит финансист),
+    // а не payment_status: у новой заявки статус может быть любым.
+    // Если платит снабженец из подотчёта — позиции сразу «Оплачено».
+    const companyUnpaid = paymentSource === 'company' && !order.paid_at;
+    const itemPaymentStatus = companyUnpaid ? 'debt' : 'paid';
+
     for (const row of rows) {
         const itemId = parseInt(row.dataset.itemId, 10);
         const name = row.dataset.itemName;
         const qty = parseFloat(row.dataset.itemQty) || 0;
         const unit = row.dataset.itemUnit;
         const unitPrice = parseFloat(row.querySelector('.close-order-price')?.value) || 0;
-        const paymentStatus = row.querySelector('.close-order-payment')?.value || 'paid';
+        const paymentStatus = itemPaymentStatus;
 
         if (unitPrice <= 0) {
             toast(`Укажи цену для позиции «${name}»`, 'error');
@@ -904,13 +948,15 @@ export async function closeOrder(event) {
     const closeTimestamp = new Date().toISOString();
 
     const { error: orderError } = await db.update('orders', {
-        status: 'closed',
+        status: 'delivered',          // материалы на объекте → позиции в «Реестр материалов»
         supplier: supplier,
         total_sum: totalSum,
         purchase_notes: notes || null,
         payment_source: paymentSource,
         payer_employee_id: paymentSource === 'employee' ? emp.id : null,
-        closed_at: closeTimestamp
+        payment_status: itemPaymentStatus,
+        closed_at: closeTimestamp,
+        delivered_at: closeTimestamp
     }, { id: orderId });
 
     if (orderError) {
@@ -950,8 +996,8 @@ export async function closeOrder(event) {
         }
     }
 
-    log.info('✅ Заявка закрыта:', order.request_number);
-    toast(`Заявка ${order.request_number} закрыта на ${formatMoney(totalSum)}`, 'success');
+    log.info('✅ Заявка доставлена на объект:', order.request_number);
+    toast(`${t('order.deliveredToast', { number: order.request_number })} · ${formatMoney(totalSum)}`, 'success');
 
     hideModal('close-order-modal');
     await loadOrders();
@@ -969,6 +1015,244 @@ export async function closeOrder(event) {
 }
 
 // =====================================================================
+// СЧЁТ ПОСТАВЩИКА (снабженец)
+// =====================================================================
+// Снабженец связывается с поставщиком, получает счёт, загружает файл (фото,
+// скрин, PDF) и заполняет цены по позициям. С этого момента:
+//   * счёт виден финансисту в блоке «🧾 Счета на материалы»
+//     (js/modules/invoices.js) — деньги фирмы, безнал;
+//   * материалы могут ехать на объект раньше оплаты: главное правило
+//     «материалы приезжают раньше, чем их оплатят».
+// Заявка при загрузке счёта остаётся «В обработке» и получает
+// payment_status = 'debt' («Ожидает оплаты»).
+
+/** Короткое безопасное имя файла для Storage: кириллица → «_», расширение сохраняем. */
+function invoiceFileName(originalName) {
+    const lastDot = originalName.lastIndexOf('.');
+    const ext = lastDot > 0 ? originalName.slice(lastDot).toLowerCase().slice(0, 10) : '';
+    const base = (lastDot > 0 ? originalName.slice(0, lastDot) : originalName)
+        .replace(/[^a-zA-Z0-9._-]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 60);
+
+    return (base || 'invoice') + ext;
+}
+
+/** Открывает окно загрузки счёта по заявке. */
+export async function openOrderInvoiceModal(orderId) {
+    if (!canProcessOrder()) {
+        toast('Нет прав', 'error');
+        return;
+    }
+
+    const order = ordersCache.find(o => o.id === orderId);
+    if (!order) {
+        toast('Заявка не найдена', 'error');
+        return;
+    }
+
+    const titleEl = document.getElementById('order-invoice-title');
+    if (titleEl) titleEl.textContent = `${t('order.invoiceTitle')} ${order.request_number}`;
+
+    document.getElementById('order-invoice-id').value = String(orderId);
+    document.getElementById('order-invoice-supplier').value = order.supplier || '';
+
+    const fileInput = document.getElementById('order-invoice-file');
+    if (fileInput) fileInput.value = '';
+
+    const currentEl = document.getElementById('order-invoice-current');
+    if (currentEl) {
+        currentEl.innerHTML = order.invoice_path
+            ? `${t('order.invoiceFileCurrent')}: <b>${escapeHtml(order.invoice_file_name || '—')}</b>
+               <button type="button" onclick="window.viewOrderInvoice(${orderId})"
+                       class="text-[#15803d] font-semibold hover:underline ml-1">${t('common.open')}</button>`
+            : '';
+    }
+
+    const items = order._items || [];
+    const container = document.getElementById('order-invoice-items');
+    if (container) {
+        container.innerHTML = items.length === 0
+            ? '<p class="text-xs text-gray-500">У заявки нет позиций</p>'
+            : items.map(it => `
+                <div class="order-invoice-item flex items-center gap-2 bg-gray-50 border rounded-lg p-2"
+                     data-item-id="${it.id}"
+                     data-item-name="${escapeHtml(it.name)}"
+                     data-item-qty="${it.qty}">
+                    <div class="flex-1 min-w-0">
+                        <p class="text-xs font-semibold text-gray-800 truncate">📦 ${escapeHtml(it.name)}</p>
+                        <p class="text-[11px] text-gray-500">${it.qty} ${escapeHtml(it.unit || 'шт')}</p>
+                    </div>
+                    <input type="number" step="0.01" min="0" placeholder="Цена, грн"
+                           value="${it.unit_price || ''}"
+                           class="order-invoice-price w-24 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
+                           oninput="window.recalcOrderInvoiceTotal()">
+                </div>
+            `).join('');
+    }
+
+    recalcOrderInvoiceTotal();
+    showModal('order-invoice-modal');
+}
+
+/** Итого по счёту = сумма (кол-во × цена) по всем позициям. */
+export function recalcOrderInvoiceTotal() {
+    const rows = document.querySelectorAll('.order-invoice-item');
+    let total = 0;
+
+    rows.forEach(row => {
+        const qty = parseFloat(row.dataset.itemQty) || 0;
+        const price = parseFloat(row.querySelector('.order-invoice-price')?.value) || 0;
+        total = roundMoney(total + qty * price);
+    });
+
+    const totalEl = document.getElementById('order-invoice-total');
+    if (totalEl) totalEl.textContent = formatMoney(total);
+}
+
+/** Сохраняет счёт: файл в Storage + цены позиций + сумма заявки. */
+export async function saveOrderInvoice(event) {
+    event.preventDefault();
+
+    if (!canProcessOrder()) {
+        toast('Нет прав', 'error');
+        return;
+    }
+
+    const orderId = parseInt(document.getElementById('order-invoice-id').value, 10);
+    const order = ordersCache.find(o => o.id === orderId);
+    if (!order) {
+        toast('Заявка не найдена', 'error');
+        return;
+    }
+
+    const supplier = document.getElementById('order-invoice-supplier').value.trim();
+    if (!supplier) {
+        toast(t('order.invoiceNeedSupplier'), 'error');
+        return;
+    }
+
+    const rows = document.querySelectorAll('.order-invoice-item');
+    const prices = [];
+
+    for (const row of rows) {
+        const name = row.dataset.itemName;
+        const qty = parseFloat(row.dataset.itemQty) || 0;
+        const unitPrice = parseFloat(row.querySelector('.order-invoice-price')?.value) || 0;
+
+        if (!unitPrice || unitPrice <= 0) {
+            toast(t('order.invoiceNeedPrices', { name }), 'error');
+            return;
+        }
+
+        prices.push({
+            id: parseInt(row.dataset.itemId, 10),
+            unitPrice,
+            totalPrice: roundMoney(qty * unitPrice)
+        });
+    }
+
+    if (prices.length === 0) {
+        toast('У заявки нет позиций', 'error');
+        return;
+    }
+
+    const file = document.getElementById('order-invoice-file')?.files?.[0] || null;
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const initialLabel = submitBtn.textContent;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = t('common.loading');
+
+    try {
+        let invoicePath = order.invoice_path || null;
+        let invoiceFileNameSaved = order.invoice_file_name || null;
+
+        if (file) {
+            const path = `invoices/${orderId}-${Date.now()}-${invoiceFileName(file.name)}`;
+            const { path: uploaded, error: uploadError } = await db.uploadFile(
+                CONFIG.STORAGE.INVOICES_BUCKET, path, file
+            );
+
+            if (uploadError || !uploaded) {
+                log.error('Ошибка загрузки файла счёта:', uploadError?.message || 'нет пути');
+                toast(`${t('order.invoiceUploadFailed')}: ${uploadError?.message || ''}`, 'error');
+                return;
+            }
+
+            invoicePath = uploaded;
+            invoiceFileNameSaved = file.name;
+        }
+
+        // Цены по позициям — из них собирается «📊 Реестр материалов»
+        for (const item of prices) {
+            const { error } = await db.update('order_items', {
+                unit_price: item.unitPrice,
+                total_price: item.totalPrice
+            }, { id: item.id });
+
+            if (error) log.error('Ошибка обновления цены позиции:', error.message);
+        }
+
+        const totalSum = roundMoney(prices.reduce((sum, item) => sum + item.totalPrice, 0));
+
+        const payload = {
+            supplier,
+            total_sum: totalSum,
+            invoice_total: totalSum,
+            invoice_path: invoicePath,
+            invoice_file_name: invoiceFileNameSaved,
+            invoice_uploaded_at: new Date().toISOString()
+        };
+
+        // Счёт загружен → заявка ждёт оплаты. Исключение — счёт уже оплачен
+        // финансистом (есть paid_at): тогда статус не откатываем назад.
+        if (!order.paid_at) payload.payment_status = 'debt';
+
+        const { error } = await db.update('orders', payload, { id: orderId });
+
+        if (error) {
+            toast('Не удалось сохранить счёт: ' + error.message, 'error');
+            return;
+        }
+
+        log.info('🧾 Счёт сохранён по заявке', order.request_number, `на ${formatMoney(totalSum)}`);
+        toast(t('order.invoiceSaved', { number: order.request_number }), 'success');
+
+        hideModal('order-invoice-modal');
+        await loadOrders();
+        await openOrderDetail(orderId);   // карточка сразу покажет счёт и статус оплаты
+
+    } catch (err) {
+        log.error('Исключение при сохранении счёта:', err);
+        toast('Не удалось сохранить счёт: ' + (err?.message || 'неизвестная ошибка'), 'error');
+
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = initialLabel;
+    }
+}
+
+/** Открывает файл счёта по заявке (подписанная ссылка). */
+export async function viewOrderInvoice(orderId) {
+    const order = ordersCache.find(o => o.id === orderId);
+    if (!order || !order.invoice_path) {
+        toast('Файл счёта не загружен', 'warning');
+        return;
+    }
+
+    const { url, error } = await db.getFileUrl(CONFIG.STORAGE.INVOICES_BUCKET, order.invoice_path);
+
+    if (error || !url) {
+        toast('Не удалось получить ссылку на счёт', 'error');
+        return;
+    }
+
+    window.open(url, '_blank');
+}
+
+// =====================================================================
 // АРХИВ
 // =====================================================================
 
@@ -981,8 +1265,8 @@ export async function archiveOrder(id) {
     const order = ordersCache.find(o => o.id === id);
     if (!order) return;
 
-    if (order.status !== 'closed') {
-        toast('В архив можно отправить только закрытые заявки', 'warning');
+    if (order.status !== 'delivered' && order.status !== 'closed') {
+        toast('В архив можно отправить только доставленные заявки', 'warning');
         return;
     }
 
@@ -1048,6 +1332,10 @@ window.addOrderItemRow = addOrderItemRow;
 window.removeOrderItemRow = removeOrderItemRow;
 window.recalcOrderTotal = recalcOrderTotal;
 window.takeOrderToWork = takeOrderToWork;
+window.openOrderInvoiceModal = openOrderInvoiceModal;
+window.recalcOrderInvoiceTotal = recalcOrderInvoiceTotal;
+window.saveOrderInvoice = saveOrderInvoice;
+window.viewOrderInvoice = viewOrderInvoice;
 window.openCloseOrderModal = openCloseOrderModal;
 window.recalcCloseOrderTotal = recalcCloseOrderTotal;
 window.archiveOrder = archiveOrder;

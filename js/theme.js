@@ -1,0 +1,100 @@
+// =====================================================================
+// RSK ODESSA — ЦВЕТОВЫЕ СХЕМЫ
+// =====================================================================
+// Приложение по умолчанию зелёное. В «Настройках» сотрудник выбирает свой
+// цвет: выбор хранится в localStorage устройства и ни на кого не влияет.
+//
+// Как это работает: css/theme.css перекрашивает «фирменные» классы Tailwind
+// (bg-[#15803d], text-emerald-700 и т.п.) через CSS-переменные, а тема — это
+// набор значений этих переменных для html[data-theme="..."]. Поэтому новая
+// тема = несколько строк в theme.css, код модулей трогать не нужно.
+//
+// Модуль ничего не импортирует (его подключают и utils.js, и main.js).
+// =====================================================================
+
+export const THEMES = [
+    { id: 'green',    label: 'Зелёная',   labelUk: 'Зелена',     swatch: '#15803d' },
+    { id: 'blue',     label: 'Синяя',     labelUk: 'Синя',       swatch: '#1d4ed8' },
+    { id: 'indigo',   label: 'Индиго',    labelUk: 'Індиго',     swatch: '#6d28d9' },
+    { id: 'teal',     label: 'Бирюзовая', labelUk: 'Бірюзова',   swatch: '#0f766e' },
+    { id: 'amber',    label: 'Янтарная',  labelUk: 'Бурштинова', swatch: '#b45309' },
+    { id: 'graphite', label: 'Графит',    labelUk: 'Графіт',     swatch: '#374151' }
+];
+
+export const DEFAULT_THEME = 'green';
+
+const STORAGE_KEY = 'rsk.theme';
+
+let currentTheme = DEFAULT_THEME;
+let observers = [];
+
+export function getThemes() {
+    return THEMES;
+}
+
+export function getTheme() {
+    return currentTheme;
+}
+
+export function isDefaultTheme() {
+    return currentTheme === DEFAULT_THEME;
+}
+
+/**
+ * Применяет тему к документу: атрибут data-theme на <html> включает нужный
+ * набор переменных, а цвет строки браузера (theme-color) подкрашивается под
+ * выбранный цвет — иначе на телефоне останется зелёная полоса.
+ */
+export function applyTheme(id) {
+    const theme = THEMES.find(item => item.id === id) || THEMES[0];
+    currentTheme = theme.id;
+
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme.id);
+
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', theme.swatch);
+
+    return theme;
+}
+
+/** Смена темы с сохранением выбора этого устройства. */
+export function setTheme(id) {
+    const theme = applyTheme(id);
+
+    try {
+        localStorage.setItem(STORAGE_KEY, theme.id);
+    } catch {
+        // Приватный режим — просто не запоминаем выбор
+    }
+
+    observers.forEach(fn => {
+        try { fn(theme.id); } catch (err) { console.warn('[theme] подписчик упал:', err); }
+    });
+
+    return theme.id;
+}
+
+export function onThemeChange(fn) {
+    if (typeof fn === 'function') observers.push(fn);
+}
+
+/** Вызывается один раз при старте приложения (js/main.js). */
+export function initTheme() {
+    let saved = null;
+
+    try {
+        saved = localStorage.getItem(STORAGE_KEY);
+    } catch {
+        // Хранилище недоступно — тема по умолчанию
+    }
+
+    applyTheme(THEMES.some(item => item.id === saved) ? saved : DEFAULT_THEME);
+
+    return currentTheme;
+}
+
+// Отладка через консоль: theme.setTheme('blue')
+if (typeof window !== 'undefined') {
+    window.theme = { setTheme, getTheme, applyTheme, initTheme, THEMES };
+}

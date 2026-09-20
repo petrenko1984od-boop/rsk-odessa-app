@@ -30,7 +30,9 @@ import {
     formatDate, formatMoney, parseNumber, roundMoney
 } from '../utils.js';
 import { can, getEmployee, getRole, canSeeTab, canSeeHeaderButton } from '../permissions.js';
+import { t } from '../i18n.js';
 import { loadBalance, formatBalance, renderFinancierBalanceHint } from './cash.js';
+import { renderMaterialInvoices } from './invoices.js';
 import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
@@ -161,6 +163,9 @@ export async function loadCashRequests() {
     // Баланс финансиста рядом с кнопкой пополнения (директор и другие кассиры):
     // цифра тянется тем же открытием раздела, поэтому всегда свежая.
     await renderFinancierBalanceHint();
+
+    // Счета на материалы — очередь оплаты финансиста (директор видит её тоже)
+    await renderMaterialInvoices();
 }
 
 /**
@@ -228,6 +233,9 @@ async function renderFinancierPanel() {
                 <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">🟡 К выдаче</p>
                 <p class="text-2xl font-bold text-gray-800">${formatMoney(toIssue)}</p>
                 <p class="mt-1 text-[11px] text-gray-500">Одобренных заявок: ${approved.length}</p>
+                <!-- Ведомость пополнений подотчёта: кто, когда и сколько передал -->
+                <button onclick="window.openFinancierTopUpStatement()"
+                        class="mt-2 bg-white hover:bg-emerald-50 text-[#15803d] border border-[#15803d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition">${t('statement.buttonFinancier')}</button>
             </div>
         </div>
     `;

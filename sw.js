@@ -21,7 +21,7 @@
 // а сотрудники увидят карточку «Доступна новая версия».
 // =====================================================================
 
-const APP_VERSION = '2.2.3';
+const APP_VERSION = '2.4.0';
 const CACHE_PREFIX = 'rsk-odessa';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}`;
 
@@ -33,9 +33,13 @@ const APP_SHELL = [
     './manifest.json',
     './logo.png',
     './css/style.css',
+    './css/theme.css',
     './js/main.js',
     './js/config.js',
     './js/utils.js',
+    './js/i18n.js',
+    './js/theme.js',
+    './js/settings.js',
     './js/auth.js',
     './js/permissions.js',
     './js/database.js',
@@ -47,6 +51,7 @@ const APP_SHELL = [
     './js/modules/estimate.js',
     './js/modules/gantt.js',
     './js/modules/orders.js',
+    './js/modules/invoices.js',
     './js/modules/cash.js',
     './js/modules/cash-requests.js',
     './js/modules/registry.js',

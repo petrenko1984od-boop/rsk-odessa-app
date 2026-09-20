@@ -462,11 +462,13 @@ export const log = {
  * Возвращает бейдж статуса заявки (HTML).
  */
 export function getOrderStatusBadge(status) {
+    const labels = CONFIG.STATUS_LABELS.ORDERS;
     const map = {
-        new:         { text: '🔴 Новая',       cls: 'bg-red-100 text-red-700' },
-        in_progress: { text: '🟡 В работе',    cls: 'bg-yellow-100 text-yellow-700' },
-        closed:      { text: '🟢 Закрыта',     cls: 'bg-green-100 text-green-700' },
-        archived:    { text: '📥 Архив',       cls: 'bg-gray-200 text-gray-600' }
+        new:         { text: labels.new,         cls: 'bg-red-100 text-red-700' },
+        in_progress: { text: labels.in_progress, cls: 'bg-yellow-100 text-yellow-700' },
+        delivered:   { text: labels.delivered,   cls: 'bg-emerald-100 text-emerald-800' },
+        closed:      { text: labels.closed,      cls: 'bg-green-100 text-green-700' },
+        archived:    { text: labels.archived,    cls: 'bg-gray-200 text-gray-600' }
     };
     const item = map[status] || { text: status, cls: 'bg-gray-100 text-gray-700' };
     return `<span class="px-2 py-0.5 text-xs font-bold rounded ${item.cls}">${item.text}</span>`;
@@ -477,7 +479,7 @@ export function getOrderStatusBadge(status) {
  */
 export function getPaymentStatusBadge(status) {
     if (status === 'debt') {
-        return `<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold text-[10px]">В долг</span>`;
+        return `<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold text-[10px]">Ожидает оплаты</span>`;
     }
     return `<span class="bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold text-[10px]">Оплачено</span>`;
 }

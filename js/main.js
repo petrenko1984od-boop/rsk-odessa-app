@@ -6,10 +6,23 @@ import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
 import { initPWA } from './pwa.js';   // установка приложения и обновление версии
+import { initI18n, onLangChange } from './i18n.js';   // язык интерфейса (ru/uk)
+import { initTheme } from './theme.js';               // цветовая схема
+import './settings.js';   // окно «⚙ Настройки»: язык интерфейса и цветовая схема
 import {
     loadPermissions, canSeeTab, canSeeHeaderButton, getNavLabel, getNavOrder,
     getStartTab, getEmployee, can
 } from './permissions.js';
+
+// =====================================================================
+// НАСТРОЙКИ ВНЕШНЕГО ВИДА — ДО ПЕРВОГО РЕНДЕРА
+// =====================================================================
+// Тема и язык применяются сразу при загрузке модуля: если сделать это позже,
+// сотрудник успеет увидеть зелёную вспышку и русский текст, а потом они
+// «моргнут» на выбранные. Обе настройки читаются из localStorage устройства
+// (js/theme.js, js/i18n.js) — в базе они не хранятся.
+initTheme();
+initI18n();
 
 // Модули разделов
 import {
@@ -242,10 +255,14 @@ function applyPermissionsToUI() {
     // прораб/финансист её не видят. Баланс рядом с кнопкой рисует
     // renderFinancierBalanceHint() при открытии раздела (js/modules/cash.js).
     const topUpBtn = document.getElementById('btn-topup-financier');
-    if (topUpBtn) {
+    const statementBtn = document.getElementById('btn-financier-statement');
+    if (topUpBtn || statementBtn) {
         const allowed = can('cash_issue');
-        topUpBtn.classList.toggle('hidden', !allowed);
-        topUpBtn.style.display = allowed ? '' : 'none';
+        [topUpBtn, statementBtn].forEach(btn => {
+            if (!btn) return;
+            btn.classList.toggle('hidden', !allowed);
+            btn.style.display = allowed ? '' : 'none';
+        });
     }
 
     // Свой порядок разделов в шапке (финансист: «Рабочий стол» — первым).
@@ -253,6 +270,20 @@ function applyPermissionsToUI() {
     // скрытые у роли просто не видны.
     applyNavOrder(getNavOrder());
 }
+
+// =====================================================================
+// СМЕНА ЯЗЫКА НА ЛЕТУ
+// =====================================================================
+// Статичные надписи и фразы старых модулей переводит js/i18n.js прямо в DOM,
+// но строки, собранные новыми модулями через t(), уже лежат в разметке
+// украинскими — фразовый переводчик их назад не вернёт. Поэтому открытый
+// раздел просто перерисовывается: switchTab() заново запрашивает данные.
+onLangChange(() => {
+    if (!AppState.isReady) return;
+
+    const tab = AppState.currentTab;
+    if (tab && tab !== 'welcome') switchTab(tab);
+});
 
 // =====================================================================
 // ПРОФИЛЬ В ШАПКЕ
