@@ -27,7 +27,7 @@ Chrome** и убеждается, что интерфейс делает име�
 
 ```powershell
 node invoice-check.mjs         # счёт → доставка → реестр → оплата (меню «ожидают / оплаченные», Excel)
-node fin-workflow-check.mjs    # согласование заявок на финансы: прораб → директор → финансист
+node fin-workflow-check.mjs    # заявки финансов (прораб → директор → финансист) и фильтры рабочего экрана
 $env:SCENARIO='A'; node fin-fix-check.mjs              # заявка финансов, сценарий A (успех)
 $env:FLOW='order'; node fin-fix-check.mjs              # то же для заявки на материалы
 

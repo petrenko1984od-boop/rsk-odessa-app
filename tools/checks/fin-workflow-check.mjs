@@ -40,6 +40,14 @@ const store = {
     ],
     projects: [{ id: 3, name: 'Тестовый объект', foreman_id: 7 }],
     sections: [{ id: 5, name: 'Кладочные работы', project_id: 3, plan_total: 100000 }],
+    // Заявки на материалы прораба — три этапа закупки. На них проверяются
+    // фильтры блока «📦 Мои заявки на материалы»: «поданы в снабжение»
+    // (новые и взятые в работу) и «доставлено на объект».
+    orders: [
+        { id: 901, request_number: 'З-11/26', project_id: 3, section_id: 5, status: 'new', supplier: null, total_sum: null, created_at: '2026-09-17T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } },
+        { id: 902, request_number: 'З-12/26', project_id: 3, section_id: 5, status: 'in_progress', supplier: null, total_sum: null, created_at: '2026-09-18T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } },
+        { id: 903, request_number: 'З-13/26', project_id: 3, section_id: 5, status: 'delivered', supplier: 'Стройбаза Одесса', total_sum: 25000, created_at: '2026-09-19T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } }
+    ],
     cashRequests: [],
     cashRequestItems: [],
     cashOperations: [],
@@ -106,6 +114,7 @@ function rowsFor(table, params) {
         }
         case 'projects': return store.projects;
         case 'sections': return store.sections;
+        case 'orders': return store.orders;
         case 'cash_requests': return byEq(cashRequestRows(), 'id');
         case 'cash_request_items': return byEq(store.cashRequestItems, 'request_id');
         case 'cash_operations': {
@@ -722,11 +731,93 @@ try {
         requestB.status === 'rejected' && requestB.rejection_reason === 'Дублирует заявку Ф-1/26',
         'status=' + requestB.status + ', причина=' + requestB.rejection_reason);
 
-    // ---------------------- 8. Прораб видит результат ----------------------
+    // ---------------------- 8. Прораб видит результат и фильтры ----------------------
     await loginAs(7, 'Прораб');
     dash = await blockText();
     ok('прораб видит, что деньги выданы', dash.includes('Выдано') && dash.includes('Ф-1/26'));
-    ok('отклонённая заявка ушла с рабочего экрана', !dash.includes('Ф-2/26'));
+
+    // Фильтры блока «💰 Мои заявки на финансирование». Раньше отклонённая заявка
+    // просто исчезала с рабочего экрана, и прораб не понимал, куда она делась.
+    // Теперь у каждой стадии свой фильтр, а в нём — заявка и причина отказа.
+    const financeFilterUi = await evaluate('(() => {' +
+        'const chips = Array.prototype.filter.call(document.querySelectorAll(\"#dash-block-finance-body button\"),' +
+        ' (b) => b.id.indexOf(\"dash-block-finance-filter-\") === 0)' +
+        ' .map((b) => b.id.replace(\"dash-block-finance-filter-\", \"\") + \"=\" + b.innerText.trim());' +
+        'return { chips: chips.join(\", \"),' +
+        ' body: (document.getElementById(\"dash-block-finance-body\") || {}).innerText || \"\" }; })()');
+    ok('у блока заявок на финансирование есть фильтры по всем статусам',
+        ['pending', 'approved', 'revision', 'rejected', 'issued']
+            .every((id) => financeFilterUi.chips.includes(id + '=')),
+        financeFilterUi.chips);
+    ok('в фильтре «Все» видна и отклонённая заявка (со статусом директора)',
+        financeFilterUi.body.includes('Ф-2/26') && financeFilterUi.body.includes('Отклонено директором'),
+        financeFilterUi.body.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyFinanceFilter(\"rejected\")');
+    await sleep(400);
+    const financeRejected = await evaluate('(document.getElementById(\"dash-block-finance-body\") || {}).innerText || \"\"');
+    ok('фильтр «❌ Отклонены» показывает заявку с причиной отказа и не показывает выданную',
+        financeRejected.includes('Ф-2/26') && financeRejected.includes('Дублирует заявку Ф-1/26') &&
+        !financeRejected.includes('🟢 Выдано'),
+        financeRejected.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyFinanceFilter(\"issued\")');
+    await sleep(400);
+    const financeIssued = await evaluate('(document.getElementById(\"dash-block-finance-body\") || {}).innerText || \"\"');
+    ok('фильтр «🟢 Выданы» показывает выданную заявку и не показывает отклонённую',
+        financeIssued.includes('Ф-1/26') && financeIssued.includes('🟢 Выдано') &&
+        !financeIssued.includes('Ф-2/26'),
+        financeIssued.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyFinanceFilter(\"pending\")');
+    await sleep(400);
+    const financePending = await evaluate('(document.getElementById(\"dash-block-finance-body\") || {}).innerText || \"\"');
+    ok('фильтр «⏳ Поданы» пуст: директор уже обработал обе заявки',
+        financePending.includes('Заявок на согласовании у директора нет'),
+        financePending.replace(/\n/g, ' | ').slice(0, 160));
+
+    await evaluate('window.setMyFinanceFilter(\"all\")');
+    await sleep(300);
+
+    // Фильтры блока «📦 Мои заявки на материалы»: у прораба три закупки —
+    // З-11/26 (🔴 Новая) и З-12/26 (🟡 В обработке) поданы в снабжение,
+    // З-13/26 (🚚 Доставлено на объект) уже привезли.
+    const materialsFilterUi = await evaluate('(() => {' +
+        'const chips = Array.prototype.filter.call(document.querySelectorAll(\"#dash-block-materials-body button\"),' +
+        ' (b) => b.id.indexOf(\"dash-block-materials-filter-\") === 0)' +
+        ' .map((b) => b.id.replace(\"dash-block-materials-filter-\", \"\") + \"=\" + b.innerText.trim());' +
+        'return chips.join(\", \"); })()');
+    ok('у блока заявок на материалы есть фильтры «Поданы в снабжение» и «Доставлено на объект»',
+        materialsFilterUi.includes('supply=📤 Поданы в снабжение') &&
+        materialsFilterUi.includes('delivered=🚚 Доставлено на объект'),
+        materialsFilterUi);
+    ok('счётчики фильтров посчитаны по своим этапам закупки',
+        materialsFilterUi.includes('Поданы в снабжение (2)') && materialsFilterUi.includes('Доставлено на объект (1)'),
+        materialsFilterUi);
+
+    const materialsAll = await evaluate('(document.getElementById(\"dash-block-materials-body\") || {}).innerText || \"\"');
+    ok('в фильтре «Все» видны все три заявки на материалы',
+        ['З-11/26', 'З-12/26', 'З-13/26'].every((number) => materialsAll.includes(number)),
+        materialsAll.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyMaterialsFilter(\"supply\")');
+    await sleep(400);
+    const materialsSupply = await evaluate('(document.getElementById(\"dash-block-materials-body\") || {}).innerText || \"\"');
+    ok('фильтр «📤 Поданы в снабжение» показывает новые и взятые в работу, но не доставленные',
+        materialsSupply.includes('З-11/26') && materialsSupply.includes('З-12/26') &&
+        !materialsSupply.includes('З-13/26'),
+        materialsSupply.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyMaterialsFilter(\"delivered\")');
+    await sleep(400);
+    const materialsDelivered = await evaluate('(document.getElementById(\"dash-block-materials-body\") || {}).innerText || \"\"');
+    ok('фильтр «🚚 Доставлено на объект» показывает только доставленную заявку',
+        materialsDelivered.includes('З-13/26') && materialsDelivered.includes('🚚 Доставлено на объект') &&
+        !materialsDelivered.includes('З-11/26'),
+        materialsDelivered.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyMaterialsFilter(\"all\")');
+    await sleep(300);
 
     log('--- ИТОГ ---');
     log(failed === 0 ? '  ВСЁ ВЕРНО: согласование, доработка, выдача и балансы сходятся' : '  не прошло проверок: ' + failed);

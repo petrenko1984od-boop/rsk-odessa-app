@@ -213,73 +213,115 @@ function renderDashboardBlock({ id, title, badge, badgeClass = 'bg-emerald-100 t
 }
 
 // =====================================================================
+// ФИЛЬТРЫ БЛОКОВ РАБОЧЕГО ЭКРАНА (деньги и материалы)
+// =====================================================================
+// Заявок со временем становится много, и сотруднику нужны две разные «линзы»:
+//   💰 по деньгам — на какой стадии заявка: подана, одобрена, на пересмотре,
+//      отклонена, выдана;
+//   📦 по материалам — что уже подано в снабжение, а что привезли на объект.
+//
+// Кнопки-фильтры не ходят в базу: данные последнего рендера лежат в
+// переменных модуля ниже, поэтому нажатие перерисовывает ТОЛЬКО содержимое
+// блока (#dash-block-<id>-body) — экран не мигает, лишних запросов нет.
+// Выбор действует до перезагрузки страницы: у рабочего экрана нет своего
+// адреса, а свёрнутость блоков — отдельный случай (DASHBOARD_HIDDEN_KEY выше).
+let financeFilter = 'all';
+let materialsFilter = 'all';
+// Что показано в блоках: заявки на финансирование, заявки на материалы и
+// объекты (из них берём названия объектов в карточках материалов)
+let blockCashRequests = [];
+let blockOrders = [];
+let blockProjects = [];
+
+/** Фильтры блока «💰 Мои заявки на финансирование» — по статусу заявки. */
+const FINANCE_FILTERS = [
+    { id: 'all',      label: '📋 Все' },
+    { id: 'pending',  label: '⏳ Поданы' },        // ждут решения директора
+    { id: 'approved', label: '🟡 Одобрены' },      // деньги выдаёт финансист
+    { id: 'revision', label: '✏️ На пересмотр' },  // директор вернул с причиной
+    { id: 'rejected', label: '❌ Отклонены' },     // директор отказал
+    { id: 'issued',   label: '🟢 Выданы' }         // деньги уже в подотчёте
+];
+
+/** Подпись пустого списка: у каждого фильтра она своя. */
+const FINANCE_EMPTY = {
+    all: 'Заявок на финансирование нет. Нажмите «➕ Создать заявку», если нужны деньги на работы.',
+    pending: 'Заявок на согласовании у директора нет.',
+    approved: 'Одобренных заявок нет — выдавать пока нечего.',
+    revision: 'Заявок на пересмотре нет.',
+    rejected: 'Отклонённых заявок нет.',
+    issued: 'Выданных заявок нет.'
+};
+
+/** Фильтры блока «📦 Мои заявки на материалы» — по этапу закупки. */
+const MATERIAL_FILTERS = [
+    { id: 'all',       label: '📋 Все',                  statuses: null },
+    { id: 'supply',    label: '📤 Поданы в снабжение',   statuses: ['new', 'in_progress'] },
+    { id: 'delivered', label: '🚚 Доставлено на объект', statuses: ['delivered'] }
+];
+
+const MATERIAL_EMPTY = {
+    all: 'Заявок на материалы нет. Нажмите «📦 Заказать материалы», если материалы нужны на объект.',
+    supply: 'Пока ни одна заявка не подана в снабжение.',
+    delivered: 'Доставленных на объект заявок нет.'
+};
+
+/** Попадает ли заявка на материалы в фильтр (у «Все» статусов нет). */
+function matchesMaterialFilter(order, filterId) {
+    const filter = MATERIAL_FILTERS.find(item => item.id === filterId) || MATERIAL_FILTERS[0];
+    return !filter.statuses || filter.statuses.includes(order.status);
+}
+
+/**
+ * Кнопки-фильтры одного блока: активная — зелёная, остальные серые (как
+ * фильтры разделов приложения). Цифра считается по всем загруженным заявкам,
+ * поэтому она не зависит от выбранного фильтра.
+ */
+function renderBlockFilters(blockId, filters, active, handler) {
+    return `
+        <div class="flex flex-wrap gap-2 border-b border-gray-100 pb-3">
+            ${filters.map(filter => {
+                const isActive = filter.id === active;
+                const cls = isActive
+                    ? 'bg-[#15803d] text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200';
+
+                return `<button type="button" id="${blockId}-filter-${filter.id}"
+                                onclick="window.${handler}('${filter.id}')"
+                                class="px-3 py-1.5 rounded-lg text-xs font-semibold transition ${cls}">${filter.label} (${filter.count})</button>`;
+            }).join('')}
+        </div>
+    `;
+}
+
+// =====================================================================
 // МОИ ЗАЯВКИ НА ФИНАНСИРОВАНИЕ (рабочий экран прораба и ПТО)
 // =====================================================================
 // Заявка, которую директор вернул на доработку, появляется здесь вместе
 // с причиной — прораб правит её и отправляет снова. Одобренные заявки тоже
-// видны: сотрудник знает, что деньги уже на пути к нему.
+// видны: сотрудник знает, что деньги уже на пути к нему. Отклонённые и
+// выданные — история: её показывает свой фильтр (FINANCE_FILTERS выше).
 
 const CASH_REQUEST_BADGES = {
     'revision': { label: '✏️ Требует доработки', cls: 'bg-orange-100 text-orange-800', border: 'border-orange-300' },
     'approved': { label: '🟡 Одобрено — ожидает выдачи', cls: 'bg-yellow-100 text-yellow-800', border: 'border-yellow-300' },
     'pending':  { label: '⏳ На согласовании у директора', cls: 'bg-red-100 text-red-700', border: 'border-gray-200' },
-    'issued':   { label: '🟢 Выдано', cls: 'bg-green-100 text-green-700', border: 'border-emerald-200' }
+    'issued':   { label: '🟢 Выдано', cls: 'bg-green-100 text-green-700', border: 'border-emerald-200' },
+    'rejected': { label: '❌ Отклонено директором', cls: 'bg-red-100 text-red-700', border: 'border-red-200' }
 };
 
 /** Порядок вывода: сначала то, что требует внимания сотрудника. */
-const CASH_REQUEST_ORDER = ['revision', 'approved', 'pending', 'issued'];
+const CASH_REQUEST_ORDER = ['revision', 'approved', 'pending', 'rejected', 'issued'];
 
-function renderMyCashRequests(requests) {
-    const mine = (requests || []).filter(Boolean);
+/**
+ * Сколько карточек показывает фильтр «Все». Рабочие статусы — целиком,
+ * история — хвостом: остальное видно в своём фильтре, там ограничений нет.
+ */
+const CASH_REQUEST_ALL_LIMITS = { revision: 20, approved: 20, pending: 20, rejected: 5, issued: 5 };
 
-    const groups = CASH_REQUEST_ORDER.map(status => ({
-        status,
-        // Выданные показываем только последние — это история, а не работа
-        items: mine.filter(req => req.status === status).slice(0, status === 'issued' ? 5 : 20)
-    })).filter(group => group.items.length > 0);
-
+function renderMyCashRequests() {
+    const mine = (blockCashRequests || []).filter(Boolean);
     const activeCount = mine.filter(req => ['revision', 'approved', 'pending'].includes(req.status)).length;
-
-    const cards = groups.flatMap(group => group.items.map(req => {
-        const badge = CASH_REQUEST_BADGES[group.status];
-        const projectName = req.project?.name || '—';
-        const approverName = req.approver?.name || '';
-
-        const hint = req.status === 'revision'
-            ? (req.rejection_reason
-                ? `<p class="mt-2 rounded-lg border border-orange-200 bg-orange-50 p-2 text-[11px] font-semibold text-orange-800">✏️ Причина доработки: ${escapeHtml(req.rejection_reason)}</p>`
-                : '<p class="mt-2 text-[11px] text-gray-500">✏️ Директор вернул заявку — исправьте её и отправьте снова.</p>')
-            : req.status === 'approved'
-                ? `<p class="mt-2 text-[11px] text-gray-500">💰 Одобрил${approverName ? ' ' + escapeHtml(approverName) : ''} — деньги выдаёт финансист.</p>`
-                : req.status === 'issued'
-                    ? '<p class="mt-2 text-[11px] text-gray-500">Деньги зачислены в ваш подотчёт (см. «Авансовый отчёт»).</p>'
-                    : '<p class="mt-2 text-[11px] text-gray-500">Ждёт решения директора.</p>';
-
-        const editBtn = req.status === 'revision'
-            ? `<div class="mt-2 flex justify-end">
-                    <button type="button" onclick="window.openCashRequestEdit(${req.id})"
-                            class="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-600">
-                        ✏️ Исправить и отправить
-                    </button>
-               </div>`
-            : '';
-
-        return `
-            <div class="rounded-lg border ${badge.border} p-3">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button type="button" onclick="window.openCashRequestDetail(${req.id})"
-                                class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(req.request_number)}</button>
-                        <span class="rounded px-1.5 py-0.5 text-[10px] font-bold ${badge.cls}">${badge.label}</span>
-                    </div>
-                    <span class="text-sm font-bold text-[#166534]">${formatMoney(req.total_sum)}</span>
-                </div>
-                <p class="mt-1 text-[11px] text-gray-500">🏗 ${escapeHtml(projectName)}${req.section?.name ? ' · ' + escapeHtml(req.section.name) : ''}${req.created_at ? ' · 📅 ' + formatDate(req.created_at) : ''}</p>
-                ${hint}
-                ${editBtn}
-            </div>
-        `;
-    })).join('');
 
     const createBtn = can('cash_expense_self')
         ? `<button type="button" onclick="window.openNewCashRequestForm()"
@@ -291,23 +333,134 @@ function renderMyCashRequests(requests) {
         title: '💰 Мои заявки на финансирование',
         badge: activeCount,
         actions: createBtn,
-        body: cards || '<p class="py-3 text-sm text-gray-500">Заявок на финансирование нет. Нажмите «➕ Создать заявку», если нужны деньги на работы.</p>'
+        body: renderMyCashRequestsBody()
     });
+}
+
+/** Содержимое блока: фильтры + карточки. Перерисовывается при смене фильтра. */
+function renderMyCashRequestsBody() {
+    const mine = (blockCashRequests || []).filter(Boolean);
+    const visible = financeFilter === 'all' ? mine : mine.filter(req => req.status === financeFilter);
+
+    // «Все» — прежний порядок (сначала то, что требует внимания); в конкретном
+    // статусе — как отдаёт база: свежие сверху.
+    const groups = financeFilter === 'all'
+        ? CASH_REQUEST_ORDER
+            .map(status => ({
+                status,
+                items: visible.filter(req => req.status === status).slice(0, CASH_REQUEST_ALL_LIMITS[status] || 20)
+            }))
+            .filter(group => group.items.length > 0)
+        : [{ status: financeFilter, items: visible }];
+
+    const cards = groups
+        .flatMap(group => group.items.map(req => renderMyCashRequestCard(req, group.status)))
+        .join('');
+
+    const chips = renderBlockFilters('dash-block-finance', FINANCE_FILTERS.map(filter => ({
+        ...filter,
+        count: filter.id === 'all' ? mine.length : mine.filter(req => req.status === filter.id).length
+    })), financeFilter, 'setMyFinanceFilter');
+
+    return `${chips}
+        <div class="space-y-2">
+            ${cards || `<p class="py-3 text-sm text-gray-500">${FINANCE_EMPTY[financeFilter] || FINANCE_EMPTY.all}</p>`}
+        </div>
+    `;
+}
+
+/** Карточка заявки: статус, объект, сумма и подсказка, что делать дальше. */
+function renderMyCashRequestCard(req, status) {
+    const badge = CASH_REQUEST_BADGES[status] || CASH_REQUEST_BADGES.pending;
+    const projectName = req.project?.name || '—';
+    const approverName = req.approver?.name || '';
+
+    const hint = req.status === 'revision'
+        ? (req.rejection_reason
+            ? `<p class="mt-2 rounded-lg border border-orange-200 bg-orange-50 p-2 text-[11px] font-semibold text-orange-800">✏️ Причина доработки: ${escapeHtml(req.rejection_reason)}</p>`
+            : '<p class="mt-2 text-[11px] text-gray-500">✏️ Директор вернул заявку — исправьте её и отправьте снова.</p>')
+        : req.status === 'approved'
+            ? `<p class="mt-2 text-[11px] text-gray-500">💰 Одобрил${approverName ? ' ' + escapeHtml(approverName) : ''} — деньги выдаёт финансист.</p>`
+            : req.status === 'issued'
+                ? '<p class="mt-2 text-[11px] text-gray-500">Деньги зачислены в ваш подотчёт (см. «Авансовый отчёт»).</p>'
+                : req.status === 'rejected'
+                    ? (req.rejection_reason
+                        ? `<p class="mt-2 rounded-lg border border-red-200 bg-red-50 p-2 text-[11px] font-semibold text-red-700">❌ Причина отказа: ${escapeHtml(req.rejection_reason)}</p>`
+                        : '<p class="mt-2 text-[11px] text-gray-500">❌ Директор отклонил заявку — деньги по ней не выдаются.</p>')
+                    : '<p class="mt-2 text-[11px] text-gray-500">Ждёт решения директора.</p>';
+
+    const editBtn = req.status === 'revision'
+        ? `<div class="mt-2 flex justify-end">
+                <button type="button" onclick="window.openCashRequestEdit(${req.id})"
+                        class="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-600">
+                    ✏️ Исправить и отправить
+                </button>
+           </div>`
+        : '';
+
+    return `
+        <div class="rounded-lg border ${badge.border} p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" onclick="window.openCashRequestDetail(${req.id})"
+                            class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(req.request_number)}</button>
+                    <span class="rounded px-1.5 py-0.5 text-[10px] font-bold ${badge.cls}">${badge.label}</span>
+                </div>
+                <span class="text-sm font-bold text-[#166534]">${formatMoney(req.total_sum)}</span>
+            </div>
+            <p class="mt-1 text-[11px] text-gray-500">🏗 ${escapeHtml(projectName)}${req.section?.name ? ' · ' + escapeHtml(req.section.name) : ''}${req.created_at ? ' · 📅 ' + formatDate(req.created_at) : ''}</p>
+            ${hint}
+            ${editBtn}
+        </div>
+    `;
+}
+
+/**
+ * Переключение фильтра блока заявок на финансирование
+ * (`window.setMyFinanceFilter`): список пересобирается из уже загруженных
+ * данных, поэтому запроса в базу нет.
+ */
+export function setMyFinanceFilter(filter) {
+    financeFilter = FINANCE_FILTERS.some(item => item.id === filter) ? filter : 'all';
+
+    const body = document.getElementById('dash-block-finance-body');
+    if (body) body.innerHTML = renderMyCashRequestsBody();
 }
 
 // =====================================================================
 // МОИ ЗАЯВКИ НА МАТЕРИАЛЫ (рабочий экран прораба)
 // =====================================================================
 // Показываем только заявки по СВОИМ объектам: фильтр project_id.in уходит в
-// базу, поэтому чужая закупка сюда не попадёт. Первыми идут те, что в работе
-// («🔴 Новая», «🟡 В обработке», «🚚 Доставлено на объект»), следом — последние
-// пять закрытых и архивных: это история, а не работа.
+// базу, поэтому чужая закупка сюда не попадёт. Фильтр «Все» — прежний порядок:
+// сначала те, что в работе («🔴 Новая», «🟡 В обработке», «🚚 Доставлено на
+// объект»), следом последние пять закрытых и архивных. Фильтры «Поданы в
+// снабжение» и «Доставлено на объект» отвечают на два ежедневных вопроса
+// прораба: что уже заказано и что привезли (см. MATERIAL_FILTERS выше).
 const ORDER_STATUS_ORDER = ['new', 'in_progress', 'delivered', 'closed', 'archived'];
 const ORDER_ACTIVE_STATUSES = ['new', 'in_progress', 'delivered'];
 
-function renderMyMaterialOrders(orders, projects) {
-    const rows = (orders || []).filter(Boolean);
-    const projectMap = new Map((projects || []).map(project => [project.id, project.name]));
+function renderMyMaterialOrders() {
+    const rows = (blockOrders || []).filter(Boolean);
+    const activeOrders = rows.filter(order => ORDER_ACTIVE_STATUSES.includes(order.status));
+
+    const createBtn = can('create_order')
+        ? `<button type="button" onclick="window.openNewOrderForm()"
+                   class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">📦 Заказать материалы</button>`
+        : '';
+
+    return renderDashboardBlock({
+        id: 'materials',
+        title: '📦 Мои заявки на материалы',
+        badge: activeOrders.length,
+        actions: createBtn,
+        body: renderMyMaterialOrdersBody()
+    });
+}
+
+/** Содержимое блока: фильтры + карточки. Перерисовывается при смене фильтра. */
+function renderMyMaterialOrdersBody() {
+    const rows = (blockOrders || []).filter(Boolean);
+    const projectMap = new Map((blockProjects || []).map(project => [project.id, project.name]));
 
     const byStatus = (a, b) => ORDER_STATUS_ORDER.indexOf(a.status) - ORDER_STATUS_ORDER.indexOf(b.status);
     const byDate = (a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''));
@@ -320,7 +473,15 @@ function renderMyMaterialOrders(orders, projects) {
         .sort(byDate)
         .slice(0, 5);
 
-    const cards = [...activeOrders, ...archiveOrders].map(order => {
+    // В конкретном фильтре «архивного хвоста» нет: это ответ на вопрос
+    // «что ушло в снабжение / что привезли», а не обзор всей истории.
+    const matched = materialsFilter === 'supply'
+        ? rows.filter(order => matchesMaterialFilter(order, 'supply')).sort((a, b) => byStatus(a, b) || byDate(a, b))
+        : rows.filter(order => matchesMaterialFilter(order, materialsFilter)).sort(byDate);
+
+    const shown = materialsFilter === 'all' ? [...activeOrders, ...archiveOrders] : matched;
+
+    const cards = shown.map(order => {
         const status = getStatusInfo(order.status);
         const projectName = order.project?.name || projectMap.get(order.project_id) || 'Объект не указан';
         const sectionName = order.section?.name || '';
@@ -340,18 +501,28 @@ function renderMyMaterialOrders(orders, projects) {
         `;
     }).join('');
 
-    const createBtn = can('create_order')
-        ? `<button type="button" onclick="window.openNewOrderForm()"
-                   class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">📦 Заказать материалы</button>`
-        : '';
+    const chips = renderBlockFilters('dash-block-materials', MATERIAL_FILTERS.map(filter => ({
+        ...filter,
+        count: rows.filter(order => matchesMaterialFilter(order, filter.id)).length
+    })), materialsFilter, 'setMyMaterialsFilter');
 
-    return renderDashboardBlock({
-        id: 'materials',
-        title: '📦 Мои заявки на материалы',
-        badge: activeOrders.length,
-        actions: createBtn,
-        body: cards || '<p class="py-3 text-sm text-gray-500">Заявок на материалы нет. Нажмите «📦 Заказать материалы», если материалы нужны на объект.</p>'
-    });
+    return `${chips}
+        <div class="space-y-2">
+            ${cards || `<p class="py-3 text-sm text-gray-500">${MATERIAL_EMPTY[materialsFilter] || MATERIAL_EMPTY.all}</p>`}
+        </div>
+    `;
+}
+
+/**
+ * Переключение фильтра блока заявок на материалы
+ * (`window.setMyMaterialsFilter`): список пересобирается из уже загруженных
+ * данных, поэтому запроса в базу нет.
+ */
+export function setMyMaterialsFilter(filter) {
+    materialsFilter = MATERIAL_FILTERS.some(item => item.id === filter) ? filter : 'all';
+
+    const body = document.getElementById('dash-block-materials-body');
+    if (body) body.innerHTML = renderMyMaterialOrdersBody();
 }
 
 /**
@@ -762,6 +933,13 @@ export async function loadDashboard() {
                 ? await loadForemanOrders([...projectIds])
                 : [];
 
+            // Данные последнего рендера: из них работают фильтры блоков
+            // (window.setMyFinanceFilter / window.setMyMaterialsFilter) —
+            // список пересобирается без нового запроса в базу.
+            blockCashRequests = myCashRequests;
+            blockOrders = myOrders;
+            blockProjects = projects;
+
             container.innerHTML = `
                 <div class="w-full min-w-0 space-y-4">
                     <div class="flex min-w-0 flex-wrap items-end justify-between gap-3 rounded-xl bg-white px-4 py-4 shadow-sm sm:px-5">
@@ -780,8 +958,8 @@ export async function loadDashboard() {
                     <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
                         ${renderForemanTasks(foremanTasks, projects)}
                     </div>
-                    ${renderMyCashRequests(myCashRequests)}
-                    ${renderMyMaterialOrders(myOrders, projects)}
+                    ${renderMyCashRequests()}
+                    ${renderMyMaterialOrders()}
                 </div>
             `;
             return;
@@ -880,6 +1058,11 @@ export async function loadDashboard() {
     const activeProjects = projects.filter(isActiveProject);
     const scopeLabel = isForeman ? 'по вашим объектам' : 'по компании';
 
+    // Свои заявки на финансирование — блок на рабочем экране. Список кладём
+    // в переменную модуля: из неё же фильтр блока собирает список после
+    // нажатия кнопки (window.setMyFinanceFilter), без запроса в базу.
+    blockCashRequests = getCashRequestsCache().filter(req => req.employee_id === employee.id);
+
     container.innerHTML = `
         <div class="w-full min-w-0 space-y-4">
             <div class="flex min-w-0 flex-wrap items-end justify-between gap-3 rounded-xl bg-white px-4 py-4 shadow-sm sm:px-5">
@@ -898,7 +1081,7 @@ export async function loadDashboard() {
                 ${renderMetric('⏰', 'Просроченные задачи', overdueTasks.length, `Всего задач: ${tasks.length}`, overdueTasks.length ? 'red' : 'emerald')}
             </div>
 
-            ${renderMyCashRequests(getCashRequestsCache().filter(req => req.employee_id === employee.id))}
+            ${renderMyCashRequests()}
 
             <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
                 <div class="min-w-0 rounded-xl bg-white p-5 shadow-sm lg:col-span-1">
@@ -924,3 +1107,8 @@ export async function loadDashboard() {
 window.loadDashboard = loadDashboard;
 window.toggleDashboardBlock = toggleDashboardBlock;
 window.openMaterialOverrunDetail = openMaterialOverrunDetail;
+// Фильтры блоков рабочего экрана: «💰 Мои заявки на финансирование»
+// (все / поданы / одобрены / на пересмотр / отклонены / выданы) и
+// «📦 Мои заявки на материалы» (все / поданы в снабжение / доставлено).
+window.setMyFinanceFilter = setMyFinanceFilter;
+window.setMyMaterialsFilter = setMyMaterialsFilter;
