@@ -393,6 +393,11 @@
                     </div>
                 </div>
 
+                <!-- Предупреждение о неполных данных: заявки не загрузились
+                     (например, в базе нет колонок v2.4.0 — не применена
+                     миграция). Заполняет js/modules/registry.js → renderRegistry() -->
+                <div id="registry-warning" class="hidden rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900"></div>
+
                 <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
                     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
                         <select id="reg-filter-project" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все объекты</option></select>
@@ -925,11 +930,13 @@
                 <div class="bg-gray-50 rounded-lg p-3 border space-y-2">
                     <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💳 Кто платит: *</p>
                     <label class="flex items-center gap-2 cursor-pointer text-sm">
-                        <input type="radio" name="close-order-payment-source" value="company" id="close-order-payment-company" checked class="w-4 h-4">
+                        <input type="radio" name="close-order-payment-source" value="company" id="close-order-payment-company" checked class="w-4 h-4"
+                               onchange="window.updateCloseOrderPaymentHints()">
                         <span>🏢 <b>Фирма</b> (по счёту / безнал) — позиции будут «Ожидает оплаты» до отметки финансиста</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer text-sm">
-                        <input type="radio" name="close-order-payment-source" value="employee" class="w-4 h-4">
+                        <input type="radio" name="close-order-payment-source" value="employee" class="w-4 h-4"
+                               onchange="window.updateCloseOrderPaymentHints()">
                         <span>💵 <b>Снабженец</b> (наличными из подотчёта) — позиции сразу «Оплачено»</span>
                     </label>
                 </div>

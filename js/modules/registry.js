@@ -31,6 +31,9 @@ import {
 // =====================================================================
 
 let registryCache = [];
+// Текст предупреждения, если заявки не загрузились (например, в базе нет
+// колонок v2.4.0 — не применена миграция). Показывается над таблицей.
+let registryWarning = '';
 let filters = {
     project: '',
     section: '',
@@ -78,7 +81,13 @@ export async function loadRegistry() {
     });
 
     if (ordersError) {
+        // Без объяснения реестр просто оказался бы без заявок (а расходы на
+        // месте) — сотрудник решил бы, что данные пропали. db.explainError()
+        // превращает техническую ошибку в инструкцию, что делать.
+        registryWarning = '⚠ Заявки на материалы не загрузились: ' + db.explainError(ordersError);
         log.error('Ошибка загрузки заявок для реестра:', ordersError.message);
+    } else {
+        registryWarning = '';
     }
 
     // Фильтруем только delivered + closed + archived
@@ -322,6 +331,13 @@ function getFilteredData() {
 export function renderRegistry() {
     const tbody = document.getElementById('registry-tbody');
     if (!tbody) return;
+
+    // Предупреждение о неполных данных (например, база без колонок v2.4.0)
+    const warningEl = document.getElementById('registry-warning');
+    if (warningEl) {
+        warningEl.textContent = registryWarning;
+        warningEl.classList.toggle('hidden', !registryWarning);
+    }
 
     const data = getFilteredData();
 

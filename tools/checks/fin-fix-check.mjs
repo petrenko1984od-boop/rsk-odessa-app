@@ -38,6 +38,7 @@ const SECTION = { id: 5, name: 'Кладочные работы', project_id: 3 
 const requests = [];
 const createdCashRequests = [];
 const createdOrders = [];
+const createdOrderItems = [];
 const report = [];
 const log = (...a) => { const line = a.join(' '); report.push(line); console.log(line); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -128,6 +129,15 @@ function handleMock(req, res, body) {
         const payload = JSON.parse(body || '{}');
         createdOrders.push(payload.request_number);
         return sendJson(res, 201, { id: 77 + createdOrders.length - 1, ...payload });
+    }
+
+    // ---- Позиции заявки на материалы ----
+    // Запоминаем, что именно приложение пишет в позиции: оплата в них не
+    // должна проставляться при создании заявки (см. проверку ниже).
+    if (p.includes('/rest/v1/order_items') && req.method === 'POST') {
+        const payload = JSON.parse(body || '{}');
+        createdOrderItems.push(...(Array.isArray(payload) ? payload : [payload]));
+        return sendJson(res, 201, payload);
     }
 
     // ---- Всё остальное: пустые чтения и успешные записи-заглушки ----
@@ -376,6 +386,14 @@ try {
             a.disabled === false && a.btn === '💾 Создать заявку', 'кнопка="' + a.btn + '", disabled=' + a.disabled);
         ok('попытка ' + a.n + ': показано подтверждение', a.done === true);
     });
+
+    if (FLOW === 'order') {
+        // Регрессия (жалоба «в карточке новой заявки стоит “Оплачено”»): новая
+        // заявка ещё не оплачена, поэтому в позициях не должно быть payment_status.
+        ok('в новых позициях нет статуса оплаты (заявка ещё не оплачена)',
+            createdOrderItems.length > 0 && createdOrderItems.every((item) => item.payment_status === undefined),
+            JSON.stringify(createdOrderItems));
+    }
 
     log('  ИТОГО: ' + (failed === 0 ? 'ВСЁ ВЕРНО — обе заявки ушли, кнопка не залипает' : failed + ' проверок не прошло'));
 

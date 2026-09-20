@@ -19,6 +19,59 @@ import { log, currentYear, formatRequestNumber, parseRequestNumber } from './uti
 // любые массовые операции без условий блокируются на уровне слоя БД.
 // =====================================================================
 
+// =====================================================================
+// ПОНЯТНАЯ ОШИБКА, КОГДА ТАБЛИЦА НЕ ОБНОВЛЕНА
+// =====================================================================
+// PostgREST отвечает 42703 («column orders.invoice_file_name does not
+// exist») или PGRST204 («Could not find the 'invoice_file_name' column of
+// 'orders' in the schema cache»), когда в базе нет колонки, которую знает
+// код. Причина всегда одна — не применена миграция (database/migrate-*.sql),
+// но по английскому тексту это не видно, и сотрудник видит «сохранение не
+// удалось» без объяснений. Здесь такие ошибки превращаются в подсказку с
+// именем колонки и файлом миграции.
+// =====================================================================
+
+let schemaWarningShown = false;
+
+/**
+ * Достаёт из ошибки PostgREST имя отсутствующей колонки и таблицы.
+ * @returns {{ table: string|null, column: string }|null}
+ */
+function parseMissingColumn(error) {
+    const message = error?.message || '';
+    if (!message) return null;
+
+    // «Could not find the 'invoice_file_name' column of 'orders' in the schema cache»
+    let match = message.match(/Could not find the '([^']+)' column of '([^']+)'/i);
+    if (match) return { table: match[2], column: match[1] };
+
+    // «column orders.invoice_file_name does not exist»
+    match = message.match(/column (?:"?([\w]+)"?\.)?"?([\w]+)"? does not exist/i);
+    if (match) return { table: match[1] || null, column: match[2] };
+
+    return null;
+}
+
+/**
+ * Текст ошибки для сотрудника. Для ошибок про отсутствующую колонку
+ * возвращает понятную инструкцию, для остальных — исходное сообщение.
+ */
+export function explainError(error) {
+    const missing = parseMissingColumn(error);
+    if (!missing) return error?.message || String(error || 'Неизвестная ошибка');
+
+    const where = missing.table ? `в таблице «${missing.table}»` : 'в базе данных';
+
+    if (!schemaWarningShown) {
+        schemaWarningShown = true;
+        log.error(`⚠ В таблице ${missing.table || '?'} нет колонки «${missing.column}» — база не обновлена под v${CONFIG.APP.VERSION}`);
+        log.error('⚠ Выполните database/migrate-v2.4.sql в Supabase → SQL Editor: без этих колонок счёт, доставка и оплата заявок не сохраняются.');
+    }
+
+    return `База данных не обновлена: ${where} нет колонки «${missing.column}». ` +
+        'Примените database/migrate-v2.4.sql (Supabase → SQL Editor) и повторите действие.';
+}
+
 /**
  * Проверяет, что payload не пустой (нечего обновлять).
  * @returns {Error|null} — ошибка или null, если всё в порядке
@@ -493,6 +546,7 @@ export const db = {
     count,
     // Специальные
     getNextRequestNumber,
+    explainError,
     // Storage
     uploadFile,
     getFileUrl,

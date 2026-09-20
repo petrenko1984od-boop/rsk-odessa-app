@@ -215,10 +215,15 @@ function renderOrderCard(order) {
         ? `<span class="text-[10px] bg-white border border-amber-300 text-amber-800 px-2 py-0.5 rounded font-bold">🧾 ${t('invoice.of')}</span>`
         : '';
 
+    // Бейдж оплаты — из общего правила (orderPaymentState): «Ожидает оплаты»
+    // для долга фирмы, «Оплачено» только когда статус оплаты действительно
+    // известен. Пусто — заявка ещё не дошла до денег (нет ни счёта, ни доставки).
+    const payState = orderPaymentState(order);
+
     let payBadge = '';
-    if (order.payment_status === 'debt') {
+    if (payState === 'debt') {
         payBadge = `<span class="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold">${t('order.paymentPending')}</span>`;
-    } else if (order.payment_status === 'paid' && order.invoice_path) {
+    } else if (payState === 'paid') {
         payBadge = `<span class="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">${t('order.paymentPaid')}</span>`;
     }
 
@@ -264,6 +269,46 @@ function renderOrderCard(order) {
 // КАРТОЧКА ЗАЯВКИ (просмотр)
 // =====================================================================
 
+/**
+ * Статус оплаты заявки для интерфейса:
+ *   null   — об оплате речи ещё нет (заявку не взяли в работу, счёта нет);
+ *   'debt' — «⏳ Ожидает оплаты»;
+ *   'paid' — «✅ Оплачено».
+ *
+ * Оплата живёт на заявке (её отмечает финансист по счёту), позиции лишь
+ * наследуют статус — поэтому смотрим на заявку, а не на каждую позицию.
+ * Раньше карточка рисовала бейдж по order_items.payment_status, а при
+ * создании заявки позиции сразу получали 'paid': «Новая» заявка показывала
+ * «✅ Оплачено», хотя денег никто не платил (и позиции финансиста по ней
+ * не ждали).
+ */
+function orderPaymentState(order) {
+    if (!order) return null;
+
+    // Отметка финансиста «счёт оплачен» — самый надёжный признак.
+    if (order.paid_at) return 'paid';
+
+    const items = order._items || [];
+    const delivered = order.status === 'delivered'
+        || order.status === 'closed'
+        || order.status === 'archived';
+
+    // Позиции помечены «Ожидает оплаты» — значит долг перед поставщиком открыт.
+    if (order.payment_status === 'debt' || items.some(it => it.payment_status === 'debt')) {
+        return 'debt';
+    }
+
+    // Ни счёта, ни доставки — показывать статус оплаты нечего.
+    if (!delivered && !order.invoice_path) return null;
+
+    // Материалы на объекте, платил снабженец из подотчёта — деньги уже ушли.
+    if (order.payment_source === 'employee' && delivered) return 'paid';
+
+    // Заявка фирмы без признака долга: так выглядят закупки, закрытые
+    // до v2.4 (и они уже оплачены) либо оплаченные финансистом.
+    return 'paid';
+}
+
 export async function openOrderDetail(id) {
     const order = ordersCache.find(o => o.id === id);
     if (!order) {
@@ -281,6 +326,10 @@ export async function openOrderDetail(id) {
     const creatorName = order.created_by_emp?.name || '—';
     const payerName = order.payer?.name || null;
 
+    // Статус оплаты заявки: null — «ещё неизвестно», поэтому бейдж в карточке
+    // показываем только когда он есть (см. orderPaymentState выше).
+    const payState = orderPaymentState(order);
+
     const itemsHtml = items.length > 0
         ? items.map(it => `
             <div class="flex justify-between items-center bg-white border rounded-lg p-2 text-xs">
@@ -290,7 +339,7 @@ export async function openOrderDetail(id) {
                 </div>
                 <div class="text-right shrink-0">
                     ${it.total_price ? `<p class="font-bold text-[#166534]">${formatMoney(it.total_price)}</p>` : ''}
-                    ${it.payment_status ? `<span class="text-[10px] px-1.5 py-0.5 rounded ${it.payment_status === 'debt' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-700'} font-bold">${it.payment_status === 'debt' ? t('order.paymentPending') : t('order.paymentPaid')}</span>` : ''}
+                    ${payState ? `<span class="text-[10px] px-1.5 py-0.5 rounded ${payState === 'debt' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-700'} font-bold">${payState === 'debt' ? t('order.paymentPending') : t('order.paymentPaid')}</span>` : ''}
                 </div>
             </div>
         `).join('')
@@ -343,7 +392,7 @@ export async function openOrderDetail(id) {
                            class="text-[#15803d] font-semibold hover:underline ml-1">${t('common.open')}</button>
                 </p>
             ` : ''}
-            ${order.payment_status === 'debt' ? `<p class="text-amber-700 font-semibold">${t('order.paymentPending')}</p>` : ''}
+            ${payState === 'debt' ? `<p class="text-amber-700 font-semibold">${t('order.paymentPending')}</p>` : ''}
             ${order.paid_at ? `<p><strong>${t('invoice.paidAt')}:</strong> ${formatDateTime(order.paid_at)}</p>` : ''}
             ${order.delivered_at ? `<p><strong>🚚 ${t('invoice.delivered')}:</strong> ${formatDate(order.delivered_at)}</p>` : ''}
             ${order.closed_at ? `<p><strong>✅ Закрыто:</strong> ${formatDate(order.closed_at)}</p>` : ''}
@@ -686,12 +735,16 @@ async function createOrder(form) {
         return false;
     }
 
+    // Статус оплаты позициям НЕ выставляем: новая заявка ещё не оплачена.
+    // Раньше здесь стояло payment_status: 'paid' — и карточка «Новой» заявки
+    // показывала «✅ Оплачено», хотя закупку ещё не брали в работу и денег
+    // никто не платил. Статус появляется позже: при доставке (closeOrder)
+    // или когда финансист отметит счёт (js/modules/invoices.js).
     const itemsPayload = items.map(it => ({
         order_id: orderId,
         name: it.name,
         qty: it.qty,
-        unit: it.unit,
-        payment_status: 'paid'
+        unit: it.unit
     }));
 
     const { error: itemsError } = await db.insertMany('order_items', itemsPayload);
@@ -828,14 +881,18 @@ export async function openCloseOrderModal(id) {
                        value="${it.unit_price || ''}"
                        oninput="window.recalcCloseOrderTotal()"
                        required>
-                <!-- Статус оплаты позиции вычисляется по способу оплаты заявки
-                     (см. closeOrder): фирма → «Ожидает оплаты», подотчёт → «Оплачено» -->
-                <span class="text-[10px] text-gray-500 text-center">${t('order.paymentPending')} / ${t('order.paymentPaid')}</span>
+                <!-- Статус оплаты позиций рисует updateCloseOrderPaymentHints(): он
+                     зависит от выбранного «кто платит» и пересчитывается на лету.
+                     Раньше здесь стояли оба варианта текста («Ожидает оплаты /
+                     Оплачено»), и в окне доставки читалось, будто позиции уже
+                     оплачены, хотя счёт ещё никто не оплачивал. -->
+                <span class="close-order-payment-state text-center"></span>
             </div>
         </div>
     `).join('');
 
     recalcCloseOrderTotal();
+    updateCloseOrderPaymentHints();
     showModal('close-order-modal');
 }
 
@@ -851,6 +908,33 @@ export function recalcCloseOrderTotal() {
 
     const totalEl = document.getElementById('close-order-total');
     if (totalEl) totalEl.textContent = formatMoney(total);
+}
+
+/**
+ * Показывает в окне доставки, что произойдёт с оплатой позиций при текущем
+ * выборе «кто платит». Без этого в окне висел статичный текст со обоими
+ * вариантами («Ожидает оплаты / Оплачено»), и снабженец читал его как
+ * «уже оплачено».
+ *
+ * Вызывается при открытии окна и при смене радиокнопки
+ * (onchange в index.html → window.updateCloseOrderPaymentHints()).
+ */
+export function updateCloseOrderPaymentHints() {
+    const order = ordersCache.find(o => o.id === currentOrderId);
+    const source = document.querySelector('input[name="close-order-payment-source"]:checked')?.value || 'company';
+
+    // Фирма (безнал по счёту) → «Ожидает оплаты», пока финансист не отметит
+    // счёт; подотчёт снабженца → деньги ушли сразу, «Оплачено».
+    // Если счёт уже оплачен (paid_at), статус не откатываем.
+    const state = (source === 'employee' || order?.paid_at) ? 'paid' : 'debt';
+
+    const badge = state === 'debt'
+        ? `<span class="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">${t('order.paymentPending')}</span>`
+        : `<span class="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded">${t('order.paymentPaid')}</span>`;
+
+    document.querySelectorAll('.close-order-payment-state').forEach((el) => {
+        el.innerHTML = badge;
+    });
 }
 
 export async function closeOrder(event) {
@@ -960,7 +1044,7 @@ export async function closeOrder(event) {
     }, { id: orderId });
 
     if (orderError) {
-        toast('Ошибка закрытия заявки: ' + orderError.message, 'error');
+        toast('Ошибка закрытия заявки: ' + db.explainError(orderError), 'error');
         submitBtn.disabled = false;
         submitBtn.textContent = '💾 Закрыть заявку';
         return;
@@ -1213,7 +1297,7 @@ export async function saveOrderInvoice(event) {
         const { error } = await db.update('orders', payload, { id: orderId });
 
         if (error) {
-            toast('Не удалось сохранить счёт: ' + error.message, 'error');
+            toast('Не удалось сохранить счёт: ' + db.explainError(error), 'error');
             return;
         }
 
@@ -1226,7 +1310,7 @@ export async function saveOrderInvoice(event) {
 
     } catch (err) {
         log.error('Исключение при сохранении счёта:', err);
-        toast('Не удалось сохранить счёт: ' + (err?.message || 'неизвестная ошибка'), 'error');
+        toast('Не удалось сохранить счёт: ' + db.explainError(err), 'error');
 
     } finally {
         submitBtn.disabled = false;
@@ -1338,5 +1422,6 @@ window.saveOrderInvoice = saveOrderInvoice;
 window.viewOrderInvoice = viewOrderInvoice;
 window.openCloseOrderModal = openCloseOrderModal;
 window.recalcCloseOrderTotal = recalcCloseOrderTotal;
+window.updateCloseOrderPaymentHints = updateCloseOrderPaymentHints;
 window.archiveOrder = archiveOrder;
 window.deleteOrder = deleteOrder;

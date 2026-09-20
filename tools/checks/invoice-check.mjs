@@ -437,6 +437,14 @@ async function main() {
         supActions.includes('Счёт от поставщика') && supActions.includes('Доставлено на объект'),
         supActions.replace(/\n/g, ' | '));
 
+    // Регрессия (жалоба «заявку ещё не взяли в работу, а в карточке “Оплачено”»):
+    // пока заявку не доставили и счёт не отмечен финансистом, карточка не должна
+    // утверждать, что позиции оплачены.
+    const detailBeforeInvoice = await evaluate(text('order-detail-content'));
+    ok('до счёта и доставки карточка не показывает «Оплачено»',
+        !detailBeforeInvoice.includes('Оплачено'),
+        detailBeforeInvoice.replace(/\n/g, ' | ').slice(0, 160));
+
     await evaluate('window.openOrderInvoiceModal(900)');
     await sleep(700);
 
@@ -472,6 +480,34 @@ async function main() {
     const deliveryInfo = await evaluate(text('close-order-info'));
     ok('в окне доставки видно объект и сумму счёта', deliveryInfo.includes('Тестовый объект'), deliveryInfo.replace(/\n/g, ' | ').slice(0, 120));
 
+    // Регрессия (жалоба «в окне доставки видно “Оплачено”, хотя счёт не оплачен»):
+    // статус в строках позиций следует за выбором «кто платит» и пересчитывается
+    // на месте, а не показывается текстом «Ожидает оплаты / Оплачено».
+    const pickPaymentSource = async (value) => {
+        await evaluate('(() => {' +
+            'const radio = document.querySelector(\'input[name="close-order-payment-source"][value="' + value + '"]\');' +
+            'radio.checked = true;' +
+            'radio.dispatchEvent(new Event("change", { bubbles: true }));' +
+            'return true; })()');
+        await sleep(300);
+        return evaluate(text('close-order-items'));
+    };
+
+    const hintCompany = await evaluate(text('close-order-items'));
+    ok('окно доставки: «фирма» → позиции «Ожидает оплаты», а не «Оплачено»',
+        hintCompany.includes('Ожидает оплаты') && !hintCompany.includes('Оплачено'),
+        hintCompany.replace(/\n/g, ' | ').slice(0, 120));
+
+    const hintEmployee = await pickPaymentSource('employee');
+    ok('окно доставки: «подотчёт снабженца» → позиции «Оплачено»',
+        hintEmployee.includes('Оплачено') && !hintEmployee.includes('Ожидает оплаты'),
+        hintEmployee.replace(/\n/g, ' | ').slice(0, 120));
+
+    const hintBack = await pickPaymentSource('company');
+    ok('окно доставки: вернулись на «фирму» → снова «Ожидает оплаты»',
+        hintBack.includes('Ожидает оплаты') && !hintBack.includes('Оплачено'),
+        hintBack.replace(/\n/g, ' | ').slice(0, 120));
+
     await evaluate('document.getElementById("close-order-form").dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }))');
     await sleep(2400);
 
@@ -483,6 +519,17 @@ async function main() {
         JSON.stringify(items.map((i) => i.payment_status)));
     ok('безнал: расход в подотчёт не создан', store.cash_operations.length === 0,
         'операций: ' + store.cash_operations.length);
+
+    // Долг перед поставщиком должен быть виден и в карточке заявки
+    await evaluate('window.openOrderDetail(900)');
+    await sleep(700);
+    const detailAfterDelivery = await evaluate(text('order-detail-content'));
+    ok('после доставки карточка показывает «Ожидает оплаты»',
+        detailAfterDelivery.includes('Ожидает оплаты') && !detailAfterDelivery.includes('Оплачено'),
+        detailAfterDelivery.replace(/\n/g, ' | ').slice(0, 160));
+
+    await evaluate('window.hideModal("order-detail-modal")');
+    await sleep(300);
 
     await evaluate('window.switchTab("registry")');
     await sleep(1600);

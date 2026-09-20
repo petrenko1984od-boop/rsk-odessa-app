@@ -154,7 +154,7 @@ export async function renderMaterialInvoices() {
 
     if (error) {
         panel.innerHTML = `<div class="bg-white rounded-xl shadow-sm border border-red-200 p-4 space-y-2">
-            ${head}<p class="text-xs text-red-600">Не удалось загрузить счета: ${escapeHtml(error.message)}</p></div>`;
+            ${head}<p class="text-xs text-red-600">Не удалось загрузить счета: ${escapeHtml(db.explainError(error))}</p></div>`;
         return;
     }
 
@@ -219,7 +219,7 @@ export async function markMaterialInvoicePaid(orderId) {
     }, { id: orderId });
 
     if (error) {
-        toast('Не удалось отметить оплату: ' + error.message, 'error');
+        toast('Не удалось отметить оплату: ' + db.explainError(error), 'error');
         return;
     }
 
