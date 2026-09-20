@@ -367,7 +367,9 @@
                        1) «🧾 Счета на материалы» (#material-invoices-panel) — со своим
                           меню «⏳ Ожидают оплату (N) / ✅ Оплаченные (M)», фильтром
                           периода у истории и выгрузкой в Excel по этому фильтру
-                          (рисует js/modules/invoices.js);
+                          (рисует js/modules/invoices.js). Карточка списка показывает
+                          статус счёта, клик по ней открывает окно подробностей
+                          (#material-invoice-detail-modal) — там же кнопка «✅ Оплачено»;
                        2) «🟡 Одобренные заявки на выдачу» (#financier-approved-block) —
                           с переключателями «🟡 К выдаче (N) / 🟢 Выданные (M)»
                           (рисует js/modules/cash-requests.js).
@@ -1180,6 +1182,26 @@
             </div>
             <div id="cash-request-detail-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="cash-request-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
+        </div>
+    </div>
+
+    <!-- ПОДРОБНОСТИ СЧЁТА НА МАТЕРИАЛЫ (очередь оплаты и история оплат).
+         Открывает js/modules/invoices.js → openMaterialInvoiceDetail(): карточка
+         в списке кликабельна, а кнопка «✅ Оплачено» живёт здесь. Раньше она
+         стояла прямо в карточке очереди, и список «⏳ Ожидают оплату» читался
+         как «эти счета уже оплачены». Одно окно и для очереди, и для истории:
+         у оплаченного счёта кнопки оплаты нет — только подробности. -->
+    <div id="material-invoice-detail-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-800" data-i18n="invoice.detailTitle">🧾 Счёт на материалы</h3>
+                    <p class="text-xs text-gray-500 mt-0.5" data-i18n="invoice.detailSubtitle">Что за закупка, кто поставщик, когда приехали материалы и оплачен ли счёт.</p>
+                </div>
+                <button onclick="hideModal('material-invoice-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div id="material-invoice-detail-content" class="space-y-3 text-sm text-gray-800"></div>
+            <div id="material-invoice-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
         </div>
     </div>
 

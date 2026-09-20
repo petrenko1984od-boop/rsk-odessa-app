@@ -25,7 +25,8 @@
 
 import { db } from '../database.js';
 import {
-    log, toast, escapeHtml, formatMoney, formatDate, todayISO
+    log, toast, escapeHtml, formatMoney, formatDate, todayISO,
+    showModal, hideModal
 } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 import { CONFIG } from '../config.js';
@@ -262,6 +263,16 @@ function renderInvoiceHead() {
     `;
 }
 
+/**
+ * Карточка счёта в очереди оплаты. Вся карточка кликабельна: подробности и
+ * кнопка оплаты живут в окне `#material-invoice-detail-modal`
+ * (openMaterialInvoiceDetail()).
+ *
+ * Почему в списке статус, а не кнопка: раньше справа внизу стояла зелёная
+ * кнопка «✅ Оплачено», и очередь «⏳ Ожидают оплату» читалась как «эти счета
+ * уже оплачены». Теперь список показывает состояние счёта, а закрыть долг
+ * можно только осознанно — открыв карточку.
+ */
 function renderInvoiceCard(order) {
     const sum = Number(order.invoice_total) || Number(order.total_sum) || 0;
     const delivered = order.status === 'delivered'
@@ -272,13 +283,19 @@ function renderInvoiceCard(order) {
         ? `<span class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">🚚 ${t('invoice.delivered')}</span>`
         : `<span class="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-bold">📦 ${t('invoice.notDelivered')}</span>`;
 
+    // Кнопка файла — внутри кликабельной карточки: гасим всплытие, иначе клик
+    // по «🧾 Открыть счёт» открывал бы ещё и окно подробностей.
     const fileBlock = order.invoice_path
-        ? `<button onclick="window.viewMaterialInvoice(${order.id})"
+        ? `<button onclick="event.stopPropagation(); window.viewMaterialInvoice(${order.id})"
+                   onkeydown="event.stopPropagation()"
                    class="text-[11px] font-semibold text-[#15803d] hover:underline">${t('invoice.openFile')}</button>`
         : `<span class="text-[11px] text-amber-700">⚠ ${t('invoice.noFile')}</span>`;
 
     return `
-        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+        <div id="material-invoice-card-${order.id}" role="button" tabindex="0"
+             onclick="window.openMaterialInvoiceDetail(${order.id})"
+             onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.openMaterialInvoiceDetail(${order.id}); }"
+             class="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2 cursor-pointer transition hover:border-amber-400 hover:shadow-sm">
             <div class="flex flex-wrap justify-between items-start gap-2">
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="font-bold text-[#15803d] font-mono text-sm bg-white px-2 py-0.5 rounded border border-emerald-200">${escapeHtml(order.request_number)}</span>
@@ -296,11 +313,9 @@ function renderInvoiceCard(order) {
 
             <div class="flex flex-wrap justify-between items-center gap-2 pt-1 border-t border-amber-200">
                 ${fileBlock}
-                <div class="flex gap-2">
-                    ${canPayInvoices() ? `
-                        <button onclick="window.markMaterialInvoicePaid(${order.id})"
-                                class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">${t('invoice.pay')}</button>
-                    ` : ''}
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-[11px] font-semibold text-[#15803d]">${t('invoice.cardHint')}</span>
+                    <span class="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded font-bold whitespace-nowrap">⏳ ${t('invoice.debt')}</span>
                 </div>
             </div>
         </div>
@@ -310,18 +325,25 @@ function renderInvoiceCard(order) {
 /**
  * Карточка оплаченного счёта (история «✅ Оплаченные»): когда и кто заплатил.
  * Кнопки «Оплачено» здесь нет — счёт уже оплачен, а отменить это в приложении
- * нельзя (см. инструкцию для финансиста).
+ * нельзя (см. инструкцию для финансиста). Карточка тоже кликабельна: окно
+ * подробностей покажет тот же счёт, но без кнопки оплаты.
  */
 function renderPaidInvoiceCard(order) {
+    // См. renderInvoiceCard(): всплытие гасим, иначе кнопка файла открывала бы
+    // ещё и окно подробностей.
     const fileBlock = order.invoice_path
-        ? `<button onclick="window.viewMaterialInvoice(${order.id})"
+        ? `<button onclick="event.stopPropagation(); window.viewMaterialInvoice(${order.id})"
+                   onkeydown="event.stopPropagation()"
                    class="text-[11px] font-semibold text-[#15803d] hover:underline">${t('invoice.openFile')}</button>`
         : `<span class="text-[11px] text-gray-400">${t('invoice.noFile')}</span>`;
 
     const payer = order.paid_by?.name;
 
     return `
-        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2">
+        <div id="material-invoice-card-${order.id}" role="button" tabindex="0"
+             onclick="window.openMaterialInvoiceDetail(${order.id})"
+             onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.openMaterialInvoiceDetail(${order.id}); }"
+             class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2 cursor-pointer transition hover:border-emerald-400 hover:shadow-sm">
             <div class="flex flex-wrap justify-between items-start gap-2">
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="font-bold text-[#15803d] font-mono text-sm bg-white px-2 py-0.5 rounded border border-emerald-200">${escapeHtml(order.request_number)}</span>
@@ -340,7 +362,10 @@ function renderPaidInvoiceCard(order) {
 
             <div class="flex flex-wrap justify-between items-center gap-2 pt-1 border-t border-emerald-200">
                 ${fileBlock}
-                ${order.invoice_uploaded_at ? `<span class="text-[10px] text-gray-500">${t('invoice.of')} 🧾 ${formatDate(order.invoice_uploaded_at)}</span>` : ''}
+                <div class="flex flex-wrap items-center gap-2">
+                    ${order.invoice_uploaded_at ? `<span class="text-[10px] text-gray-500">${t('invoice.of')} 🧾 ${formatDate(order.invoice_uploaded_at)}</span>` : ''}
+                    <span class="text-[11px] font-semibold text-[#15803d]">${t('invoice.cardHintPaid')}</span>
+                </div>
             </div>
         </div>
     `;
@@ -436,6 +461,130 @@ export async function renderMaterialInvoices() {
 }
 
 // =====================================================================
+// ОКНО ПОДРОБНОСТЕЙ СЧЁТА
+// =====================================================================
+// Список отвечает на вопрос «что нужно оплатить», а окно — «что это за закупка
+// и чем закрыть долг»: те же поля плюс даты (счёт, заявка, поставка) и отметка
+// оплаты — кто и когда. Кнопка оплаты есть только здесь: в списке счёт нельзя
+// закрыть случайным нажатием (раньше кнопка стояла в самой карточке очереди).
+//
+// Окно одно для очереди и истории оплат: у оплаченного счёта кнопки «Оплачено»
+// просто нет, поэтому отдельного окна для истории не нужно.
+//
+// Данные берём из кэша списка: окно открывается по клику, лишний запрос в базу
+// только задержал бы ответ, а счёт уже прочитан вместе со списком.
+
+/** Подставляет подробности счёта в окно и открывает его. */
+export function openMaterialInvoiceDetail(orderId) {
+    // Счёт ищем в обоих списках: кликабельны и карточка очереди, и история.
+    const order = invoiceCache.find(row => row.id === orderId)
+        || paidInvoiceCache.find(row => row.id === orderId);
+
+    if (!order) {
+        toast(t('invoice.notFound'), 'error');
+        return;
+    }
+
+    const container = document.getElementById('material-invoice-detail-content');
+    if (!container) return;
+
+    container.innerHTML = renderInvoiceDetail(order);
+    renderInvoiceDetailActions(order);
+
+    showModal('material-invoice-detail-modal');
+}
+
+/** Подробности счёта: шапка со статусами, поля заявки и файл счёта. */
+function renderInvoiceDetail(order) {
+    const delivered = order.status === 'delivered'
+        || order.status === 'closed'
+        || order.status === 'archived';
+
+    const paid = order.payment_status === 'paid';
+    const invoiceTotal = Number(order.invoice_total) || null;
+    const orderTotal = Number(order.total_sum) || null;
+
+    // Обе суммы показываем, только когда они РАЗНЫЕ: так видно, что в счёт
+    // поставщика не вошла своя доставка — она осталась расходом заявки.
+    // Копеечный запас — чтобы равенство не «поехало» из-за дробных чисел.
+    const sumsDiffer = invoiceTotal !== null && orderTotal !== null
+        && Math.abs(invoiceTotal - orderTotal) > 0.004;
+
+    const payBadge = paid
+        ? `<span class="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">✅ ${t('invoice.paidAt')}</span>`
+        : `<span class="text-xs font-bold px-2 py-0.5 rounded bg-amber-200 text-amber-900">⏳ ${t('invoice.debt')}</span>`;
+
+    const deliveryBadge = delivered
+        ? `<span class="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">🚚 ${t('invoice.delivered')}</span>`
+        : `<span class="text-xs font-bold px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">📦 ${t('invoice.notDelivered')}</span>`;
+
+    const fileBlock = order.invoice_path
+        ? `<div class="flex flex-wrap justify-between items-center gap-2 bg-gray-50 border rounded-lg p-2.5 text-xs">
+                <span class="text-gray-600">🧾 ${escapeHtml(order.invoice_file_name || t('invoice.of'))}</span>
+                <button onclick="window.viewMaterialInvoice(${order.id})"
+                        class="text-[11px] font-semibold text-[#15803d] hover:underline">${t('invoice.openFile')}</button>
+            </div>`
+        : `<p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">⚠ ${t('invoice.noFile')}</p>`;
+
+    const payer = order.paid_by?.name;
+
+    return `
+        <div class="flex flex-wrap justify-between items-center gap-2 bg-gray-50 border rounded-lg p-3">
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-[#15803d] font-mono text-base">${escapeHtml(order.request_number)}</span>
+                ${payBadge}
+                ${deliveryBadge}
+            </div>
+            <span class="font-bold text-[#166534]">${formatMoney(invoiceSum(order))}</span>
+        </div>
+
+        <div class="bg-gray-50 border rounded-lg p-3 space-y-0.5 text-xs text-gray-700">
+            <p><strong>🏗 ${t('common.object')}:</strong> ${escapeHtml(order.project?.name || '—')}</p>
+            <p><strong>📂 ${t('common.section')}:</strong> ${escapeHtml(order.section?.name || '—')}</p>
+            ${order.supplier ? `<p><strong>🏬 ${t('invoice.colSupplier')}:</strong> ${escapeHtml(order.supplier)}</p>` : ''}
+            <p><strong>💰 ${t('invoice.colSum')}:</strong> ${formatMoney(invoiceTotal ?? invoiceSum(order))}</p>
+            ${sumsDiffer ? `<p><strong>📦 ${t('invoice.orderSum')}:</strong> ${formatMoney(orderTotal)}</p>` : ''}
+            ${order.invoice_uploaded_at ? `<p><strong>🧾 ${t('invoice.fieldInvoiceLoaded')}:</strong> ${formatDate(order.invoice_uploaded_at)}</p>` : ''}
+            ${order.created_at ? `<p><strong>📅 ${t('invoice.fieldCreated')}:</strong> ${formatDate(order.created_at)}</p>` : ''}
+            ${order.desired_date ? `<p><strong>⏳ ${t('invoice.fieldDesired')}:</strong> ${formatDate(order.desired_date)}</p>` : ''}
+            ${order.delivered_at ? `<p><strong>🚚 ${t('invoice.fieldDeliveredAt')}:</strong> ${formatDate(order.delivered_at)}</p>` : ''}
+            ${order.paid_at ? `<p><strong>✅ ${t('invoice.paidAt')}:</strong> ${formatDate(order.paid_at)}${payer ? ` · 👤 ${t('invoice.paidBy')}: ${escapeHtml(payer)}` : ''}</p>` : ''}
+        </div>
+
+        ${fileBlock}
+    `;
+}
+
+/**
+ * Кнопки окна: файл счёта, оплата и закрытие. Оплата — только у долга и
+ * только с правом pay_material_invoice; шаг всё равно подтверждается
+ * системным вопросом (markMaterialInvoicePaid()), потому что деньги уходят с
+ * расчётного счёта фирмы, а отменить отметку в приложении нельзя.
+ */
+function renderInvoiceDetailActions(order) {
+    const container = document.getElementById('material-invoice-detail-actions');
+    if (!container) return;
+
+    const buttons = [];
+
+    if (order.invoice_path) {
+        buttons.push(`<button type="button" onclick="window.viewMaterialInvoice(${order.id})"
+            class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('invoice.openFile')}</button>`);
+    }
+
+    if (order.payment_status !== 'paid' && canPayInvoices()) {
+        buttons.push(`<button type="button" id="material-invoice-pay-btn"
+            onclick="window.markMaterialInvoicePaid(${order.id})"
+            class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('invoice.pay')}</button>`);
+    }
+
+    buttons.push(`<button type="button" onclick="hideModal('material-invoice-detail-modal')"
+        class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-sm transition">${t('common.close')}</button>`);
+
+    container.innerHTML = buttons.join('');
+}
+
+// =====================================================================
 // ДЕЙСТВИЯ
 // =====================================================================
 
@@ -501,6 +650,11 @@ export async function markMaterialInvoicePaid(orderId) {
 
     log.info('✅ Счёт отмечен оплаченным:', order.request_number);
     toast(t('invoice.paidToast', { number: order.request_number }), 'success');
+
+    // Окно подробностей закрываем: счёт ушёл в историю, а его карточка из
+    // очереди исчезнет после перерисовки — старая копия в окне только сбивала
+    // бы с толку (там осталась бы кнопка «✅ Оплачено»).
+    hideModal('material-invoice-detail-modal');
 
     await renderMaterialInvoices();
 
@@ -614,6 +768,7 @@ export function exportMaterialInvoicesToExcel() {
 // =====================================================================
 
 window.viewMaterialInvoice = viewMaterialInvoice;
+window.openMaterialInvoiceDetail = openMaterialInvoiceDetail;
 window.markMaterialInvoicePaid = markMaterialInvoicePaid;
 window.renderMaterialInvoices = renderMaterialInvoices;
 window.setInvoiceView = setInvoiceView;

@@ -845,10 +845,50 @@ async function main() {
     ok('общие фильтры заявок у финансиста скрыты', finBlocks.filters === false,
         'cashreq-filters виден: ' + finBlocks.filters);
 
+    // Карточка очереди показывает СТАТУС, а не кнопку оплаты: раньше в списке
+    // «⏳ Ожидают оплату» стояла зелёная кнопка «✅ Оплачено» и список читался
+    // как «эти счета уже оплачены» (жалоба с боевого приложения). Оплата теперь
+    // только в окне подробностей — его открывает клик по заявке.
+    const openCard = await evaluate('(() => {' +
+        'const card = document.getElementById("material-invoice-card-900");' +
+        'return { text: card ? card.innerText.replace(/\\s+/g, " ") : "нет карточки",' +
+        ' buttons: card ? Array.prototype.map.call(card.querySelectorAll("button"), (b) => b.innerText.trim()).join(" | ") : "" }; })()');
+    ok('карточка очереди подписана статусом «Ожидает оплату», а не кнопкой «Оплачено»',
+        openCard.text.includes('Ожидает оплату') && openCard.buttons.includes('Открыть счёт') &&
+        !openCard.buttons.includes('Оплачено'),
+        openCard.text.slice(0, 200) + ' :: кнопки: ' + openCard.buttons);
+
+    // Нажатие на заявку открывает окно с подробностями и кнопкой оплаты
+    await evaluate('document.getElementById("material-invoice-card-900").click()');
+    await sleep(800);
+    const detail = await evaluate('(() => {' +
+        'const modal = document.getElementById("material-invoice-detail-modal");' +
+        'const content = document.getElementById("material-invoice-detail-content");' +
+        'const actions = document.getElementById("material-invoice-detail-actions");' +
+        'return { open: !!modal && getComputedStyle(modal).display !== "none",' +
+        ' title: (modal && modal.querySelector("h3") ? modal.querySelector("h3").innerText : ""),' +
+        ' text: (content.innerText || "").replace(/\\s+/g, " "),' +
+        ' actions: (actions.innerText || "").replace(/\\s+/g, " ") }; })()');
+    ok('нажатие на заявку открывает окно с подробной информацией о счёте',
+        detail.open === true && detail.title.includes('Счёт на материалы') &&
+        detail.text.includes('З-1/26') && detail.text.includes('Эпицентр') &&
+        detail.text.includes('15 500') && detail.text.includes('Ожидает оплату') &&
+        detail.text.includes('Доставлено на объект'),
+        JSON.stringify({ open: detail.open, title: detail.title }) + ' :: ' + detail.text.slice(0, 220));
+    ok('в окне подробностей есть кнопка оплаты и открытие файла счёта',
+        detail.actions.includes('Оплачено') && detail.actions.includes('Открыть счёт'),
+        detail.actions);
+
+    // Оплата — кнопкой в окне (то, что видит живой финансист): прямой вызов
+    // markMaterialInvoicePaid() из консоли прошёл бы и мимо самой кнопки.
     const balanceBefore = balanceOf(9);
     await evaluate('window.confirm = () => true');
-    await evaluate('window.markMaterialInvoicePaid(900)');
+    await evaluate('document.getElementById("material-invoice-pay-btn").click()');
     await sleep(2000);
+
+    const detailClosed = await evaluate(
+        'getComputedStyle(document.getElementById("material-invoice-detail-modal")).display === "none"');
+    ok('после оплаты окно подробностей закрылось', detailClosed === true, String(detailClosed));
 
     ok('счёт отмечен оплаченным (кто и когда)',
         order.payment_status === 'paid' && !!order.paid_at && Number(order.paid_by_employee_id) === 9,

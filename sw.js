@@ -70,7 +70,14 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        В консоли та же подсказка называет версию НУЖНОЙ миграции (v2.4.0 для
 //        payment_status), а не версию приложения
 //        (js/database.js → MIGRATIONS, migrationForColumn(), explainError()).
-const SHELL_REVISION = 'r2';
+//   r3 — оплата счёта на материалы — из окна подробностей: карточка очереди
+//        целиком кликабельна, в списке стоит СТАТУС «⏳ Ожидает оплату» вместо
+//        кнопки «✅ Оплачено» (в очереди «Ожидают оплату» она читалась как
+//        «эти счета уже оплачены»), а сама кнопка живёт в окне
+//        `#material-invoice-detail-modal` вместе с подробностями: суммы по
+//        счёту и по заявке, даты, файл счёта и отметка «кто и когда оплатил»
+//        (index.html, js/modules/invoices.js, js/i18n.js).
+const SHELL_REVISION = 'r3';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
