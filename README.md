@@ -61,6 +61,16 @@ in the schema cache` или `column orders.payment_status does not exist` — э
 `node tools/checks/schema-live-check.mjs` (читает живую базу, ничего в неё не пишет и говорит,
 какой файл миграции применить).
 
+**А для архива заявок на финансы нужна ещё v2.6.0** — файл `database/migrate-v2.6.sql`. Он
+**колонок не добавляет**: правит только CHECK-ограничение `cash_requests_status_check` на список
+статусов (добавляет `revision` — «✏️ На доработку», и `archived` — «📥 В архив»). Без него кнопка
+«📥 В архив» и возврат «✏️ На доработку» падают с
+`new row for relation "cash_requests" violates check constraint "cash_requests_status_check"`
+(23514), а приложение называет именно этот файл. Применяется так же: SQL Editor → файл целиком →
+Run; в конце нужны шесть строк `ok`. Проверить ограничение можно только запросом в SQL Editor
+(`schema-live-check.mjs` его не видит — он смотрит одни колонки), а прогнать сценарий целиком —
+`node tools/checks/migration-run-check.mjs`. Подробно — `database/README.md`.
+
 
 ### Регистрация и вход (email + пароль)
 
@@ -134,8 +144,16 @@ js/modules/*.js       разделы: employees, projects, estimate, gantt, orde
 database/schema.sql   реконструкция схемы БД по коду (см. предупреждение в файле)
 database/migrate-v2.4.sql  миграция v2.4.0: 8 колонок в orders + обновление CHECK-ограничения
                       статусов (status = 'delivered'), самопроверка в конце
+database/migrate-v2.5.sql  миграция v2.5.0: 12 колонок (НДС в счёте и позициях заявки,
+                      вид доставки, своя доставка из подотчёта)
+database/migrate-v2.6.sql  миграция v2.6.0: архив заявок на финансы — обновление
+                      CHECK-ограничения cash_requests_status_check (revision, archived);
+                      колонок не добавляет, применять можно в любой момент
 database/fix-orders-status-check.sql  служебный скрипт: «заявка не закрывается»
                       (устаревшее ограничение orders_status_check) — короткая правка
+database/fix-cash-requests-status-check.sql  служебный скрипт: «заявка не уходит на доработку»
+                      (устаревшее ограничение cash_requests_status_check); архив он
+                      НЕ открывает — для «📥 В архив» нужен migrate-v2.6.sql
 database/fix-unconfirmed-users.sql  запросы для SQL Editor: подтвердить аккаунты, застрявшие
                       без письма (Confirm email включён), и посмотреть непривязанных сотрудников
 sw.js                 service worker: офлайн-кэш оболочки приложения (данные из базы не кэширует)
@@ -228,8 +246,8 @@ iPhone — `Документация/Инструкция-01-Установка-
 
 Проверка после деплоя: открыть сайт по https → DevTools → **Application** → *Manifest*
 (иконки, имя, без ошибок), *Service Workers* (activated) и *Cache Storage* —
-там должен быть один кэш `rsk-odessa-v2.5.0-r2` (имя складывается из `APP_VERSION` и
-`SHELL_REVISION` в `sw.js`, сейчас `2.5.0` и `r2`). Там же кнопка **«Установить»**
+там должен быть один кэш `rsk-odessa-v2.5.0-r4` (имя складывается из `APP_VERSION` и
+`SHELL_REVISION` в `sw.js`, сейчас `2.5.0` и `r4`). Там же кнопка **«Установить»**
 в адресной строке.
 
 Пересобрать иконки (нужен только Windows PowerShell и .NET GDI+):
@@ -764,11 +782,11 @@ node tools/checks/fin-workflow-check.mjs   # согласование заяво
 node tools/checks/invoice-check.mjs        # закупка: счёт → доставка → реестр → оплата (меню счетов, Excel), ведомость
 $env:FLOW='order'; node tools/checks/fin-fix-check.mjs   # повторное создание заявки (кнопка не «залипает»)
 
-node tools/checks/migration-check.mjs      # SQL миграций v2.4.0 и v2.5.0: колонки, if not exists, защита от обрыва
+node tools/checks/migration-check.mjs      # SQL миграций v2.4.0, v2.5.0 и v2.6.0: колонки, if not exists, защита от обрыва
 node tools/checks/i18n-check.mjs           # словарь RU/UK: ключи, подстановки {name}, разметка (без браузера)
 node tools/checks/vat-check.mjs            # НДС не начисляется дважды, своя доставка — расход объекта (без браузера)
 node tools/checks/schema-live-check.mjs    # колонки v2.4.0/v2.5.0 в БОЕВОЙ базе (нужна сеть; запись не выполняется)
-node tools/checks/migration-run-check.mjs  # та же миграция в настоящем Postgres (нужен @electric-sql/pglite)
+node tools/checks/migration-run-check.mjs  # те же миграции в настоящем Postgres: v2.4.0 и v2.6.0 (нужен @electric-sql/pglite)
 ```
 
 Регрессии, которые стерегут именно эти проверки: карточка «Новой» заявки не должна показывать
@@ -778,8 +796,12 @@ node tools/checks/migration-run-check.mjs  # та же миграция в на�
 чтении, `PGRST204` на записи), и приложение обязано показать объяснение с именем колонки и файлом
 `database/migrate-v2.4.sql`, а не пустые списки. И на **устаревшее CHECK-ограничение статусов**
 (`23514`: «заявка не закрывается»): тост тоже должен вести к файлу миграции, а не показывать
-английскую строку Postgres. Прогон в настоящем Postgres (`migration-run-check.mjs`) проверяет, что
-миграция действительно это ограничение обновляет.
+английскую строку Postgres. Третья регрессия того же рода — **архив заявок на финансы**
+(`23514` на `cash_requests_status_check`: «📥 В архив» и «✏️ На доработку»): подсказка обязана
+называть `database/migrate-v2.6.sql`, а не файлы колонок v2.4.0/v2.5.0, иначе администратор
+запускал не тот файл и видел ту же ошибку. Прогон в настоящем Postgres
+(`migration-run-check.mjs`) проверяет, что миграции действительно обновляют оба ограничения —
+`orders_status_check` (v2.4.0) и `cash_requests_status_check` (v2.6.0).
 
 `vat-check.mjs` стережёт деньги счёта: НДС начисляется ровно один раз (галочки «+20 %» в приложении
 нет — снабженец выбирает режим цены), своя доставка не попадает в счёт поставщика, а оплаченная из
@@ -796,7 +818,10 @@ v2.4.0 и v2.5.0, а в конце — какой файл применить и
 `database/migrate-v2.4.sql` и `database/migrate-v2.5.sql`, поэтому разойтись с миграциями он не
 может. В базу ничего не пишется (только `select`), так что запускать на боевой можно в любой момент;
 другой проект проверяется переменными `SUPABASE_URL` / `SUPABASE_ANON_KEY`. В отчёт попадает только
-хост — ключ не печатается.
+хост — ключ не печатается. Ограничение `cash_requests_status_check` (миграция **v2.6.0**) этим
+прогоном **не проверяется**: v2.6.0 колонок не добавляет, а список допустимых статусов через
+`/rest/v1/` не виден. Его смотрят запросом в SQL Editor (`database/README.md` → «Как применить
+`migrate-v2.6.sql`») или прогоном `migration-run-check.mjs`.
 
 `i18n-check.mjs` следит за словарём языков: `t('ключ')` без ключа возвращает сам ключ, поэтому
 непереведённая строка сразу видна в интерфейсе («order.paymentPending» вместо «⏳ Ожидает оплаты»).

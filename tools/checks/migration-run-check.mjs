@@ -14,7 +14,14 @@
 //      приложение отвечало «new row for relation "orders" violates check
 //      constraint "orders_status_check"» — «заявка не закрывается»;
 //   7. короткий файл database/fix-orders-status-check.sql (для случаев, когда
-//      миграцию целиком не запускают) лечит то же самое сам.
+//      миграцию целиком не запускают) лечит то же самое сам;
+//   8. миграция v2.6.0 (database/migrate-v2.6.sql) — та же история в третий раз,
+//      но про заявки на финансы: на cash_requests.status осталось ограничение
+//      прежних версий (без 'archived' и без 'revision'), поэтому «📥 В архив» и
+//      «✏️ На доработку» падали с «violates check constraint
+//      "cash_requests_status_check"» (23514). Проверяется и служебный файл
+//      database/fix-cash-requests-status-check.sql (он разрешает только
+//      'revision').
 //
 // Пакет нужен только для этого прогона:
 //     npm install @electric-sql/pglite
@@ -290,6 +297,106 @@ if (fs.existsSync(FIX_CASH)) {
     await db3.close();
 } else {
     ok('есть файл database/fix-cash-requests-status-check.sql', false, FIX_CASH);
+}
+
+// --- миграция v2.6.0 (database/migrate-v2.6.sql) -------------------------------
+// Третья боевая жалоба того же рода, но про заявки на финансы: автор убирает
+// законченную заявку в архив, а карточка не двигается — база отвечает
+// «new row for relation "cash_requests" violates check constraint
+// "cash_requests_status_check"» (23514). Причина: на cash_requests.status
+// осталось ограничение прежних версий — без 'archived' (архив появился в
+// v2.6.0) и без 'revision' («На доработке», v2.2.0). Файл колонок НЕ
+// добавляет: он снимает устаревшее ограничение и ставит новое со всеми шестью
+// статусами приложения (js/modules/cash-requests.js → getCashRequestStatusInfo).
+const ARCHIVE = path.join(ROOT, 'database', 'migrate-v2.6.sql');
+const CASH_STATUSES = ['pending', 'approved', 'revision', 'rejected', 'issued', 'archived'];
+
+if (fs.existsSync(ARCHIVE)) {
+    const archiveSql = fs.readFileSync(ARCHIVE, 'utf8');
+    const db4 = new PGlite();
+    await db4.exec(`
+        create table cash_requests (
+            id bigint primary key,
+            request_number text not null unique,
+            status text not null default 'pending'
+        );
+        alter table cash_requests add constraint cash_requests_status_check
+            check (status in ('pending', 'approved', 'rejected', 'issued'));
+        insert into cash_requests (id, request_number, status) values (1, 'Ф-1/26', 'issued');
+    `);
+
+    // Самопроверка файла (БЛОК 4) — тот же запрос, который читает администратор.
+    const verifyCashSql = archiveSql.slice(
+        archiveSql.indexOf('with constraint_def as ('),
+        archiveSql.indexOf('order by c.status_value;') + 'order by c.status_value;'.length
+    );
+    const verifyBefore = (await db4.query(verifyCashSql)).rows;
+    const missedBefore = verifyBefore.filter((row) => !String(row.status).startsWith('ok'));
+
+    // Боевые кнопки до миграции: «📥 В архив» и «✏️ На доработку».
+    let archiveBefore = null;
+    try { await db4.exec("update cash_requests set status = 'archived' where id = 1"); }
+    catch (error) { archiveBefore = error; }
+
+    let revisionBefore = null;
+    try { await db4.exec("update cash_requests set status = 'revision' where id = 1"); }
+    catch (error) { revisionBefore = error; }
+
+    let archiveRun = null;
+    try { await db4.exec(archiveSql); }
+    catch (error) { archiveRun = error; }
+
+    let archiveAfter = null;
+    try { await db4.exec("update cash_requests set status = 'archived' where id = 1"); }
+    catch (error) { archiveAfter = error; }
+
+    let revisionAfter = null;
+    try { await db4.exec("update cash_requests set status = 'revision' where id = 1"); }
+    catch (error) { revisionAfter = error; }
+
+    const verifyAfter = (await db4.query(verifyCashSql)).rows;
+
+    const archiveConstraint = (await db4.query(`
+        select pg_get_constraintdef(oid) as def from pg_constraint
+        where conrelid = 'cash_requests'::regclass and conname = 'cash_requests_status_check'
+    `)).rows[0];
+
+    // Повторный запуск безопасен: файл только правит ограничение.
+    let archiveRerun = null;
+    try { await db4.exec(archiveSql); }
+    catch (error) { archiveRerun = error; }
+
+    ok('migrate-v2.6.sql: до миграции архив запрещён (та самая боевая ошибка)',
+        archiveBefore !== null && /cash_requests_status_check/.test(archiveBefore.message),
+        archiveBefore ? archiveBefore.message : 'запись прошла — тест не воспроизвёл ошибку');
+    ok('migrate-v2.6.sql: до миграции доработка тоже запрещена',
+        revisionBefore !== null && /cash_requests_status_check/.test(revisionBefore.message),
+        revisionBefore ? '' : 'ограничение пропустило revision — тест не воспроизвёл состояние боевой базы');
+    ok('migrate-v2.6.sql: выполняется без ошибок', archiveRun === null,
+        archiveRun ? archiveRun.message : '');
+    ok('migrate-v2.6.sql: после миграции заявка уходит в архив', archiveAfter === null,
+        archiveAfter ? archiveAfter.message : '');
+    ok('migrate-v2.6.sql: после миграции заявка уходит на доработку', revisionAfter === null,
+        revisionAfter ? revisionAfter.message : '');
+    ok('migrate-v2.6.sql: ограничение допускает все шесть статусов кода',
+        CASH_STATUSES.every((value) => new RegExp("'" + value + "'").test(archiveConstraint?.def || '')),
+        String(archiveConstraint?.def || 'ограничения нет'));
+    ok('migrate-v2.6.sql: самопроверка до миграции честно печатает MISSING',
+        missedBefore.length === 2 &&
+            /archived/.test(missedBefore.map((row) => row.status_value).join(',')) &&
+            missedBefore.every((row) => /MISSING/.test(String(row.status))),
+        missedBefore.map((row) => row.status_value + '=' + row.status).join(', ') || 'ни одного MISSING');
+    ok('migrate-v2.6.sql: самопроверка после миграции печатает 6 строк ok',
+        verifyAfter.length === 6 && verifyAfter.every((row) => String(row.status).startsWith('ok')),
+        verifyAfter.map((row) => row.status_value + '=' + row.status).join(', '));
+    ok('migrate-v2.6.sql: повторный запуск безопасен', archiveRerun === null,
+        archiveRerun ? archiveRerun.message : '');
+    ok('migrate-v2.6.sql: колонок таблицы не трогает (архив — только статус)',
+        !/add column/i.test(archiveSql));
+
+    await db4.close();
+} else {
+    ok('есть файл database/migrate-v2.6.sql', false, ARCHIVE);
 }
 
 log('--- ИТОГ ---');

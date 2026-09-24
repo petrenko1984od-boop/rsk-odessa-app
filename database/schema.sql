@@ -189,10 +189,14 @@ create table if not exists cash_requests (
     -- revision — директор вернул автору на доработку (причина в rejection_reason)
     -- rejected — директор отказал (причина в rejection_reason)
     -- issued   — деньги выданы, подотчёт получателя пополнен
+    -- archived — автор убрал законченную заявку со своего рабочего экрана
     -- ⚠️ CHECK-констрейнта на список значений в боевой базе может не быть;
-    --    статус «revision» появился в v2.2.0 — миграция колонок НЕ нужна,
-    --    новые значения пишутся в существующие text-колонки.
-    status                    text        not null default 'pending', -- pending|approved|revision|rejected|issued
+    --    статус «revision» появился в v2.2.0, «archived» — в v2.6.0. Миграция
+    --    КОЛОНОК для них не нужна (новые значения пишутся в существующую
+    --    text-колонку), но если ограничение на статусы в базе ЕСТЬ, его надо
+    --    обновить — иначе база отклонит запись с ошибкой
+    --    cash_requests_status_check (SQLSTATE 23514): database/migrate-v2.6.sql.
+    status                    text        not null default 'pending', -- pending|approved|revision|rejected|issued|archived
     approved_by_employee_id   bigint      references employees(id),
     approved_at               timestamptz,
     -- Причина отказа ИЛИ причина возврата на доработку — что именно, видно
