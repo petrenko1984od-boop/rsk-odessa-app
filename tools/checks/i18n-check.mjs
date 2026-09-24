@@ -16,7 +16,21 @@
 //      языков, иначе подстановка молча не сработает;
 //   4. текст рядом с `data-i18n` в разметке совпадает со словарём (иначе при
 //      переключении RU → UK → RU надпись «прыгает» на другую формулировку);
-//   5. в словаре нет ключей-дублей.
+//   5. в словаре нет ключей-дублей;
+//   6. каждая пара фразового словаря PHRASES действительно переводит свой
+//      русский текст (иначе пара молча не работает: опечатка или конфликт с
+//      более длинной фразой);
+//   7. словарь не портит УЖЕ украинские тексты: ни одна русская фраза не
+//      совпадает с украинским текстом словаря. Такая пара применяется к
+//      готовому переводу и ломает его — например «всю → усю» переписывало
+//      украинское «всю таблицю» в «усю таблицю» посреди предложения.
+//      Проверки 6 и 7 идут по «живому» модулю i18n.js, тому же, что переводит
+//      интерфейс, поэтому ловят и конфликты между парами, и потерю формата;
+//   8. надписи разметки действительно переведены: у каждой надписи index.html
+//      (текст узла или placeholder/title/aria-label) есть пара в словаре или
+//      ключ data-i18n. Так ловится исходная проблема — надпись есть, а перевода
+//      нет, и на украинском сотрудник видит русский текст. Надписи, которые в
+//      RU и UK пишутся одинаково, перечислены в SAME_IN_BOTH.
 //
 // Лишние ключи (перевод есть, использования нет) — это примечание, а не
 // ошибка: они не мешают работе.
@@ -27,7 +41,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = process.env.APP_ROOT
     ? path.resolve(process.env.APP_ROOT)
@@ -39,6 +53,25 @@ const JS_DIR = path.join(ROOT, 'js');
 
 const report = [];
 const log = (...args) => { const line = args.join(' '); report.push(line); console.log(line); };
+
+/** Есть ли в тексте кириллица (для проверки надписей разметки). */
+const CYRILLIC = /[\u0400-\u04FF]/;
+
+/**
+ * Слова, которые в русском и украинском пишутся одинаково: надпись из таких слов
+ * (например «Дата» или «Ставка ПДВ, %») переводить не нужно — она одинакова в
+ * обоих языках. Новое такое слово дописывается сюда, иначе прогон честно
+ * скажет, что надпись осталась русской.
+ */
+const SAME_IN_BOTH = [
+    'дата', 'оплата', 'доставка', 'доставлено', 'баланс', 'заявка', 'заявки',
+    'финансист', 'дедлайн', 'причина', 'телефон', 'файл', 'план-факт', 'статус',
+    'ставка', 'пдв', 'грн', 'сума', 'тип', 'норма', 'форма', 'етап', 'адреса',
+    'пароль'
+];
+
+/** Примеры в подсказках: русское имя-образец переводить не нужно. */
+const EXAMPLE_HINTS = ['Иван Прорабов'];
 
 let failed = 0;
 const ok = (name, cond, extra = '') => {
@@ -82,6 +115,65 @@ function parseDict(source) {
     }
 
     return { dict, duplicates };
+}
+
+/**
+ * Пары фразового словаря PHRASES: [русский, украинский].
+ * Дубли русского текста возвращаются отдельно: одна и та же надпись,
+ * переведённая двумя разными способами, — это почти всегда опечатка.
+ */
+function parsePhrases(source) {
+    const start = source.indexOf('const PHRASES = [');
+    if (start === -1) return { pairs: [], pairDuplicates: [] };
+
+    const end = source.indexOf('\n];', start);
+    const block = source.slice(start, end === -1 ? source.length : end);
+    const unquote = (text) => text.replace(/\\(['"`\\])/g, '$1');
+
+    const pairs = [];
+    const seen = new Map();
+    const pairDuplicates = [];
+
+    for (const m of block.matchAll(/\[\s*'((?:[^'\\]|\\.)*)'\s*,\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")\s*\]/g)) {
+        const ru = unquote(m[1]);
+        const uk = unquote(m[2] !== undefined ? m[2] : (m[3] || ''));
+        pairs.push([ru, uk]);
+
+        if (seen.has(ru)) pairDuplicates.push(`«${ru}» → «${seen.get(ru)}» и «${uk}»`);
+        else seen.set(ru, uk);
+    }
+
+    return { pairs, pairDuplicates };
+}
+
+/**
+ * Надписи разметки, которые переводятся не по `data-i18n`, а фразовым словарём:
+ * текст узлов и подсказки в атрибутах. Возвращает список { text, where }.
+ */
+function markupTexts(html) {
+    const clean = html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<!--[\s\S]*?-->/g, ' ');
+
+    const out = [];
+    // Текст узла и тег перед ним: у элементов с data-i18n перевод берётся по
+    // ключу, у data-i18n-skip — не переводится вовсе (там и так украинский или
+    // пример-подсказка).
+    for (const m of clean.matchAll(/<([a-zA-Z][^>]*)>([^<>]+)</g)) {
+        // Любой data-i18n (ключ, -placeholder, -skip) значит, что надпись
+        // переводится не фразовым словарём — эту проверку она не проходит.
+        if (/\bdata-i18n/.test(m[1])) continue;
+        const text = m[2].trim();
+        if (text) out.push({ text, where: 'текст' });
+    }
+
+    for (const m of clean.matchAll(/(placeholder|title|aria-label)="([^"]*)"/g)) {
+        const text = m[2].trim();
+        if (text) out.push({ text, where: m[1] });
+    }
+
+    return out;
 }
 
 /** Ключи, которые просит код: t('ключ') и подстановки t('ключ', { name }). */
@@ -128,7 +220,7 @@ function keyedMarkup(html) {
 }
 
 
-function main() {
+async function main() {
     log('Проверка словаря языков: ' + path.relative(ROOT, I18N) + ' + ' + path.relative(ROOT, INDEX));
 
     if (!fs.existsSync(I18N)) {
@@ -138,6 +230,11 @@ function main() {
 
     const source = fs.readFileSync(I18N, 'utf8');
     const { dict, duplicates } = parseDict(source);
+
+    // Живой модуль: проверки фразового словаря идут через тот же код, который
+    // переводит интерфейс, иначе они проверяли бы копию правил, а не их.
+    const i18n = await import(pathToFileURL(I18N).href);
+    i18n.setLang('uk');
 
     ok('словарь читается: есть русский и украинский разделы',
         dict.ru.size > 0 && dict.uk.size > 0,
@@ -195,6 +292,50 @@ function main() {
     const unused = [...dict.ru.keys()].filter((key) => !codeKeys.has(key) && !htmlKeys.has(key));
     if (unused.length) log('  note  ключи есть в словаре, но нигде не используются: ' + unused.join(', '));
 
+    // --- 6. Пары фразового словаря действительно переводят ---
+    const { pairs, pairDuplicates } = parsePhrases(source);
+    const deadPairs = pairs
+        .filter(([ru, uk]) => uk !== ru && i18n.translateText(ru) !== uk)
+        .map(([ru]) => `«${ru}» → «${i18n.translateText(ru)}»`);
+    ok('каждая пара словаря переводит свой русский текст',
+        deadPairs.length === 0,
+        deadPairs.length ? deadPairs.slice(0, 2).join(' | ') : `проверено пар: ${pairs.length}`);
+
+    // --- 7. Словарь не портит украинские тексты ---
+    const ukTexts = [
+        ...[...dict.uk.entries()].map(([key, text]) => [`ключ ${key}`, text]),
+        ...pairs.map(([ru, uk]) => [`пара «${ru}»`, uk])
+    ];
+    const brokenUk = ukTexts
+        .filter(([, text]) => text && i18n.translateText(text) !== text)
+        .map(([where, text]) => `${where}: «${text}» → «${i18n.translateText(text)}»`);
+    ok('словарь не портит украинские тексты',
+        brokenUk.length === 0,
+        brokenUk.length ? brokenUk.slice(0, 2).join(' | ') : `проверено украинских текстов: ${ukTexts.length}`);
+
+    // Одна русская надпись не должна переводиться двумя способами: при обходе
+    // словаря сработала бы последняя пара, и надпись «прыгала» бы от правки.
+    ok('в фразовом словаре нет пар с одинаковым русским текстом',
+        pairDuplicates.length === 0,
+        pairDuplicates.slice(0, 3).join(' | '));
+
+    // --- 8. Разметка действительно переводится ---
+    // Так ловится исходная проблема: надпись в index.html есть, а пары для неё
+    // в PHRASES нет — на украинском сотрудник видит русский текст. Надписи,
+    // которые в RU и UK пишутся одинаково («Дата», «Оплата»), перечислены в
+    // SAME_IN_BOTH: их «неперевод» — норма.
+    const untranslated = markupTexts(html)
+        .filter(({ text }) => CYRILLIC.test(text) && i18n.translateText(text) === text)
+        .filter(({ text }) => !EXAMPLE_HINTS.includes(text))
+        .filter(({ text }) => {
+            const words = text.toLowerCase().match(/[а-яёіїєґ'’-]+/g) || [];
+            return words.some((word) => !SAME_IN_BOTH.includes(word));
+        })
+        .map(({ text, where }) => `${where}: «${text.replace(/\s+/g, ' ').slice(0, 60)}»`);
+    ok('надписи разметки переведены (нет русских надписей без пары в словаре)',
+        untranslated.length === 0,
+        untranslated.length ? untranslated.slice(0, 4).join(' | ') : `проверено надписей: ${markupTexts(html).length}`);
+
     log('--- ИТОГ ---');
     log(failed === 0
         ? `  ВСЁ ВЕРНО: ${all.size} ключ(ей) интерфейса переведены на RU и UK, подстановки и разметка согласованы`
@@ -202,7 +343,7 @@ function main() {
 }
 
 try {
-    main();
+    await main();
 } catch (error) {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
     failed += 1;
