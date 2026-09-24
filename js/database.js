@@ -148,14 +148,17 @@ export function explainError(error) {
         //   orders_status_check        — заявки на материалы: статус 'delivered'
         //                                появился в v2.4.0 (БЛОК 4 миграции);
         //   cash_requests_status_check — заявки на финансы: статус 'revision'
-        //                                («✏️ На доработку») появился в v2.2.0.
+        //                                («✏️ На доработку») появился в v2.2.0,
+        //                                а статус 'archived' («📥 В архив») —
+        //                                в v2.6.0; всё это разрешает
+        //                                database/migrate-v2.6.sql.
         // Подсказка зависит от таблицы: иначе директор, нажимая «На доработку»,
         // читал бы про «Доставлено на объект» и правил не то ограничение.
         if (/cash_request/i.test(`${check.table || ''} ${check.constraint}`)) {
-            log.error(`⚠ ${where} сработало ограничение «${check.constraint}»: в списке статусов нет «На доработке»`);
-            log.error('⚠ Выполните database/fix-cash-requests-status-check.sql в Supabase → SQL Editor: он разрешает статус revision.');
-            return `База отклонила запись: ${where} сработало ограничение «${check.constraint}» — в списке статусов нет «На доработке». ` +
-                'Примените database/fix-cash-requests-status-check.sql (Supabase → SQL Editor) и повторите действие.';
+            log.error(`⚠ ${where} сработало ограничение «${check.constraint}»: в списке статусов нет нужного значения`);
+            log.error('⚠ Выполните database/migrate-v2.6.sql в Supabase → SQL Editor: он разрешает «На доработке» и «В архиве».');
+            return `База отклонила запись: ${where} сработало ограничение «${check.constraint}» — в списке статусов нет нужного значения («На доработке» или «В архиве»). ` +
+                'Примените database/migrate-v2.6.sql (Supabase → SQL Editor) и повторите действие.';
         }
 
         if (/status/i.test(check.constraint)) {

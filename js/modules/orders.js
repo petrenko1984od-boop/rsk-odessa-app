@@ -13,6 +13,8 @@
 // Права:
 //   - Создание: все, кроме Директора. Прораб — только для своих объектов.
 //   - Обработка: Снабженец + Администратор.
+//   - Архив: Снабженец + Администратор и АВТОР заявки (прораб убирает свою
+//     отработанную закупку с рабочего экрана — см. canArchiveOrder()).
 // =====================================================================
 
 import { db } from '../database.js';
@@ -20,7 +22,10 @@ import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatDateTime, formatMoney, roundMoney,
     isDeliveryItem, getDeliveryItemType, getDeliveryItemName,
-    calcVat, vatFromTotal, normalizeVatRate
+    calcVat, vatFromTotal, normalizeVatRate,
+    // Перерисовка рабочего экрана после архивации: там же лежат заявки
+    // прораба, по которым он и убирает отработанные закупки (js/utils.js).
+    refreshDashboardIfVisible
 } from '../utils.js';
 import {
     can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
@@ -54,6 +59,51 @@ function canCreateOrder() {
  */
 function canProcessOrder() {
     return can('process_order');
+}
+
+/**
+ * Может ли текущий пользователь убрать ЭТУ заявку в архив.
+ *
+ * Обрабатывает закупку снабженец (берёт в работу, грузит счёт, закрывает) —
+ * canProcessOrder(). Но убрать ОТРАБОТАННУЮ заявку в архив должен и её автор:
+ * прораб создаёт заявку, ведёт объект, и после доставки она остаётся висеть в
+ * его блоке «📦 Мои заявки на материалы». Поэтому архив разрешён автору —
+ * это «убрать с глаз» уже сделанную заявку, а не изменить закупку: статус
+ * 'archived' не влияет ни на реестр, ни на план-факт, ни на деньги.
+ */
+function canArchiveOrder(order) {
+    if (canProcessOrder()) return true;
+
+    const emp = getEmployee();
+    return !!emp && order.created_by_employee_id === emp.id;
+}
+
+/**
+ * Находит заявку для действия (архив) по id: сначала в кэше модуля, потом в
+ * базе.
+ *
+ * Заявку открывают и с «Рабочего экрана» прораба: там список грузится своим
+ * запросом (только по объектам прораба) и в кэш модуля не попадает. Кнопка
+ * «📥 В архив» живёт в карточке заявки, поэтому к моменту нажатия заявка уже
+ * добирается из базы — здесь то же самое, но без полей для показа.
+ * @returns {Promise<object|null>}
+ */
+async function findOrderForAction(id) {
+    const cached = ordersCache.find(o => o.id === id);
+    if (cached) return cached;
+
+    const { data, error } = await db.select('orders', {
+        select: '*',
+        filters: { id },
+        single: true
+    });
+
+    if (error || !data) {
+        log.error('Ошибка загрузки заявки для действия:', error?.message || 'база не вернула заявку');
+        return null;
+    }
+
+    return data;
 }
 
 /**
@@ -481,7 +531,11 @@ function renderOrderActions(order) {
         buttonsHtml += `<button onclick="window.openCloseOrderModal(${order.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.deliveredButton')}</button>`;
     }
 
-    if ((order.status === 'delivered' || order.status === 'closed') && canProcessOrder()) {
+    // Архив: заявку убирает снабженец ИЛИ её автор (прораб) — см.
+    // canArchiveOrder(). Прорабу это единственный способ убрать отработанную
+    // закупку из своего блока «📦 Мои заявки на материалы»: он её создал, а
+    // статус 'archived' потом виден в фильтре «📥 Архив».
+    if ((order.status === 'delivered' || order.status === 'closed') && canArchiveOrder(order)) {
         buttonsHtml += `<button onclick="window.archiveOrder(${order.id})" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.toArchive')}</button>`;
     }
 
@@ -1950,15 +2004,26 @@ export async function viewOrderInvoice(orderId) {
 // =====================================================================
 // АРХИВ
 // =====================================================================
+// Кто может: снабженец (обработка закупки) и АВТОР заявки — прораб, который
+// её создал. Прораб убирает так отработанные заявки со своего рабочего экрана
+// (блок «📦 Мои заявки на материалы», фильтр «📥 Архив»): заявка остаётся в
+// базе и в реестре, меняется только статус. Условие одно для всех — заявка
+// уже отработана: «🚚 Доставлено на объект» или «🟢 Закрыта».
+// =====================================================================
 
 export async function archiveOrder(id) {
-    if (!canProcessOrder()) {
-        toast('Нет прав', 'error');
+    // Заявку берём из кэша, а если её там нет — из базы: карточку открывают и
+    // с «Рабочего экрана», где в кэше раздела «Снабжение» заявки может не быть.
+    const order = await findOrderForAction(id);
+    if (!order) {
+        toast('Заявка не найдена', 'error');
         return;
     }
 
-    const order = ordersCache.find(o => o.id === id);
-    if (!order) return;
+    if (!canArchiveOrder(order)) {
+        toast('Нет прав: заявку в архив убирает снабженец или её автор', 'error');
+        return;
+    }
 
     if (order.status !== 'delivered' && order.status !== 'closed') {
         toast('В архив можно отправить только доставленные заявки', 'warning');
@@ -1979,6 +2044,9 @@ export async function archiveOrder(id) {
     toast('Заявка в архиве', 'success');
     hideModal('order-detail-modal');
     await loadOrders();
+    // Тот же список есть и на «Рабочем экране» прораба по его объектам:
+    // без перечитывания убранная заявка осталась бы там до обновления страницы.
+    await refreshDashboardIfVisible();
 }
 
 // =====================================================================

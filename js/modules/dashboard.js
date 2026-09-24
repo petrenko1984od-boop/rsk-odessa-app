@@ -217,8 +217,9 @@ function renderDashboardBlock({ id, title, badge, badgeClass = 'bg-emerald-100 t
 // =====================================================================
 // Заявок со временем становится много, и сотруднику нужны две разные «линзы»:
 //   💰 по деньгам — на какой стадии заявка: подана, одобрена, на пересмотре,
-//      отклонена, выдана;
-//   📦 по материалам — что уже подано в снабжение, а что привезли на объект.
+//      отклонена, выдана, убрана в архив;
+//   📦 по материалам — что уже подано в снабжение, что привезли на объект и
+//      что уже отработано (архив).
 //
 // Кнопки-фильтры не ходят в базу: данные последнего рендера лежат в
 // переменных модуля ниже, поэтому нажатие перерисовывает ТОЛЬКО содержимое
@@ -240,7 +241,8 @@ const FINANCE_FILTERS = [
     { id: 'approved', label: '🟡 Одобрены' },      // деньги выдаёт финансист
     { id: 'revision', label: '✏️ На пересмотр' },  // директор вернул с причиной
     { id: 'rejected', label: '❌ Отклонены' },     // директор отказал
-    { id: 'issued',   label: '🟢 Выданы' }         // деньги уже в подотчёте
+    { id: 'issued',   label: '🟢 Выданы' },        // деньги уже в подотчёте
+    { id: 'archived', label: '📥 Архив' }          // убрано автором вручную
 ];
 
 /** Подпись пустого списка: у каждого фильтра она своя. */
@@ -250,20 +252,23 @@ const FINANCE_EMPTY = {
     approved: 'Одобренных заявок нет — выдавать пока нечего.',
     revision: 'Заявок на пересмотре нет.',
     rejected: 'Отклонённых заявок нет.',
-    issued: 'Выданных заявок нет.'
+    issued: 'Выданных заявок нет.',
+    archived: 'В архиве пусто: сюда попадают заявки, которые автор убрал с рабочего экрана.'
 };
 
 /** Фильтры блока «📦 Мои заявки на материалы» — по этапу закупки. */
 const MATERIAL_FILTERS = [
     { id: 'all',       label: '📋 Все',                  statuses: null },
     { id: 'supply',    label: '📤 Поданы в снабжение',   statuses: ['new', 'in_progress'] },
-    { id: 'delivered', label: '🚚 Доставлено на объект', statuses: ['delivered'] }
+    { id: 'delivered', label: '🚚 Доставлено на объект', statuses: ['delivered'] },
+    { id: 'archived',  label: '📥 Архив',                statuses: ['archived', 'closed'] }
 ];
 
 const MATERIAL_EMPTY = {
     all: 'Заявок на материалы нет. Нажмите «📦 Заказать материалы», если материалы нужны на объект.',
     supply: 'Пока ни одна заявка не подана в снабжение.',
-    delivered: 'Доставленных на объект заявок нет.'
+    delivered: 'Доставленных на объект заявок нет.',
+    archived: 'В архиве пусто: сюда попадают отработанные заявки, которые вы убрали с рабочего экрана.'
 };
 
 /** Попадает ли заявка на материалы в фильтр (у «Все» статусов нет). */
@@ -301,23 +306,32 @@ function renderBlockFilters(blockId, filters, active, handler) {
 // с причиной — прораб правит её и отправляет снова. Одобренные заявки тоже
 // видны: сотрудник знает, что деньги уже на пути к нему. Отклонённые и
 // выданные — история: её показывает свой фильтр (FINANCE_FILTERS выше).
+// Законченную заявку (выданную или отклонённую) автор сам убирает в «📥 Архив»
+// кнопкой в подробной карточке — фильтр архива показывает её отдельно, чтобы
+// история не мозолила глаза в рабочих списках.
+//
+// Карточка нажимается ЦЕЛИКОМ и открывает ту же подробную карточку заявки,
+// что и раздел «💰 Финансы» (openCashRequestDetail): состав с количествами и
+// ценами, объект и раздел, комментарий, решение директора с причиной. Раньше
+// кликабельным был только номер заявки в маленькой кнопке.
 
 const CASH_REQUEST_BADGES = {
     'revision': { label: '✏️ Требует доработки', cls: 'bg-orange-100 text-orange-800', border: 'border-orange-300' },
     'approved': { label: '🟡 Одобрено — ожидает выдачи', cls: 'bg-yellow-100 text-yellow-800', border: 'border-yellow-300' },
     'pending':  { label: '⏳ На согласовании у директора', cls: 'bg-red-100 text-red-700', border: 'border-gray-200' },
     'issued':   { label: '🟢 Выдано', cls: 'bg-green-100 text-green-700', border: 'border-emerald-200' },
-    'rejected': { label: '❌ Отклонено директором', cls: 'bg-red-100 text-red-700', border: 'border-red-200' }
+    'rejected': { label: '❌ Отклонено директором', cls: 'bg-red-100 text-red-700', border: 'border-red-200' },
+    'archived': { label: '📥 В архиве', cls: 'bg-gray-200 text-gray-600', border: 'border-gray-300' }
 };
 
 /** Порядок вывода: сначала то, что требует внимания сотрудника. */
-const CASH_REQUEST_ORDER = ['revision', 'approved', 'pending', 'rejected', 'issued'];
+const CASH_REQUEST_ORDER = ['revision', 'approved', 'pending', 'rejected', 'issued', 'archived'];
 
 /**
  * Сколько карточек показывает фильтр «Все». Рабочие статусы — целиком,
  * история — хвостом: остальное видно в своём фильтре, там ограничений нет.
  */
-const CASH_REQUEST_ALL_LIMITS = { revision: 20, approved: 20, pending: 20, rejected: 5, issued: 5 };
+const CASH_REQUEST_ALL_LIMITS = { revision: 20, approved: 20, pending: 20, rejected: 5, issued: 5, archived: 5 };
 
 function renderMyCashRequests() {
     const mine = (blockCashRequests || []).filter(Boolean);
@@ -391,7 +405,7 @@ function renderMyCashRequestCard(req, status) {
 
     const editBtn = req.status === 'revision'
         ? `<div class="mt-2 flex justify-end">
-                <button type="button" onclick="window.openCashRequestEdit(${req.id})"
+                <button type="button" onclick="event.stopPropagation(); window.openCashRequestEdit(${req.id})"
                         class="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-600">
                     ✏️ Исправить и отправить
                 </button>
@@ -399,14 +413,19 @@ function renderMyCashRequestCard(req, status) {
         : '';
 
     return `
-        <div class="rounded-lg border ${badge.border} p-3">
+        <div role="button" tabindex="0"
+             onclick="window.openCashRequestDetail(${req.id})"
+             onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.openCashRequestDetail(${req.id}); }"
+             class="cursor-pointer rounded-lg border ${badge.border} p-3 text-left transition hover:bg-emerald-50/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
-                    <button type="button" onclick="window.openCashRequestDetail(${req.id})"
-                            class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(req.request_number)}</button>
+                    <span class="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-xs font-bold text-[#15803d]">${escapeHtml(req.request_number)}</span>
                     <span class="rounded px-1.5 py-0.5 text-[10px] font-bold ${badge.cls}">${badge.label}</span>
                 </div>
-                <span class="text-sm font-bold text-[#166534]">${formatMoney(req.total_sum)}</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-sm font-bold text-[#166534]">${formatMoney(req.total_sum)}</span>
+                    <span class="whitespace-nowrap text-[10px] font-semibold text-gray-400">Подробнее ›</span>
+                </div>
             </div>
             <p class="mt-1 text-[11px] text-gray-500">🏗 ${escapeHtml(projectName)}${req.section?.name ? ' · ' + escapeHtml(req.section.name) : ''}${req.created_at ? ' · 📅 ' + formatDate(req.created_at) : ''}</p>
             ${hint}
@@ -433,9 +452,12 @@ export function setMyFinanceFilter(filter) {
 // Показываем только заявки по СВОИМ объектам: фильтр project_id.in уходит в
 // базу, поэтому чужая закупка сюда не попадёт. Фильтр «Все» — прежний порядок:
 // сначала те, что в работе («🔴 Новая», «🟡 В обработке», «🚚 Доставлено на
-// объект»), следом последние пять закрытых и архивных. Фильтры «Поданы в
-// снабжение» и «Доставлено на объект» отвечают на два ежедневных вопроса
-// прораба: что уже заказано и что привезли (см. MATERIAL_FILTERS выше).
+// объект»), следом последние пять отработанных (закрытых и архивных). Фильтры
+// «Поданы в снабжение», «Доставлено на объект» и «📥 Архив» отвечают на
+// ежедневные вопросы прораба: что уже заказано, что привезли и что уже
+// отработано (см. MATERIAL_FILTERS выше). В архив заявку убирает САМ ПРОРАБ:
+// доставленную (🚚) или закрытую (🟢) — кнопка «📥 В архив» в подробной
+// карточке заявки, там же, где она есть у снабженца.
 //
 // Стоимости закупки в списке нет. Цену вносит снабженец при доставке (вместе
 // с поставщиком и счётом), а список отвечает на вопрос «что заказано», а не
@@ -1132,7 +1154,7 @@ window.loadDashboard = loadDashboard;
 window.toggleDashboardBlock = toggleDashboardBlock;
 window.openMaterialOverrunDetail = openMaterialOverrunDetail;
 // Фильтры блоков рабочего экрана: «💰 Мои заявки на финансирование»
-// (все / поданы / одобрены / на пересмотр / отклонены / выданы) и
-// «📦 Мои заявки на материалы» (все / поданы в снабжение / доставлено).
+// (все / поданы / одобрены / на пересмотр / отклонены / выданы / архив) и
+// «📦 Мои заявки на материалы» (все / поданы в снабжение / доставлено / архив).
 window.setMyFinanceFilter = setMyFinanceFilter;
 window.setMyMaterialsFilter = setMyMaterialsFilter;

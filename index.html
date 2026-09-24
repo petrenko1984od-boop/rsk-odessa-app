@@ -411,6 +411,10 @@
                             <button onclick="switchCashRequestsTab('approved')" id="cashreq-filter-approved" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Одобрены</button>
                             <button onclick="switchCashRequestsTab('issued')" id="cashreq-filter-issued" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выданы</button>
                             <button onclick="switchCashRequestsTab('rejected')" id="cashreq-filter-rejected" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">❌ Отклонены</button>
+                            <!-- «📥 Архив»: заявки, которые их автор убрал со своего
+                                 рабочего экрана (выданные и отклонённые). Статус 'archived'
+                                 знает версия 2.6.0 — база требует database/migrate-v2.6.sql. -->
+                            <button onclick="switchCashRequestsTab('archived')" id="cashreq-filter-archived" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📥 Архив</button>
                             <button onclick="switchCashRequestsTab('all')" id="cashreq-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
                         </div>
 

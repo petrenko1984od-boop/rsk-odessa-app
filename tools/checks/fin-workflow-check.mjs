@@ -2,6 +2,10 @@
 // Прогон нового согласования заявок на финансирование (v2.2.0) в браузере:
 //   прораб создаёт → директор (одобрить / на доработку / отклонить)
 //   → финансист выдаёт «Выдано» (сумма уходит с ЕГО подотчёта получателю).
+// Затем — рабочий экран прораба: фильтры блоков «💰 Мои заявки на
+// финансирование» и «📦 Мои заявки на материалы», нажимаемая целиком карточка
+// заявки и «📥 Архив» (автор убирает отработанную заявку: выданную,
+// отклонённую, доставленную).
 // Приложение отдаётся с локального сервера, «Supabase» подменён моком,
 // поэтому видно, что реально делает интерфейс и какие строки пишутся в базу.
 // =====================================================================
@@ -42,11 +46,13 @@ const store = {
     sections: [{ id: 5, name: 'Кладочные работы', project_id: 3, plan_total: 100000 }],
     // Заявки на материалы прораба — три этапа закупки. На них проверяются
     // фильтры блока «📦 Мои заявки на материалы»: «поданы в снабжение»
-    // (новые и взятые в работу) и «доставлено на объект».
+    // (новые и взятые в работу), «доставлено на объект» и «архив».
+    // created_by_employee_id = 7: заявки создал прораб, поэтому он же убирает
+    // отработанные в архив (js/modules/orders.js → canArchiveOrder).
     orders: [
-        { id: 901, request_number: 'З-11/26', project_id: 3, section_id: 5, status: 'new', supplier: null, total_sum: null, created_at: '2026-09-17T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } },
-        { id: 902, request_number: 'З-12/26', project_id: 3, section_id: 5, status: 'in_progress', supplier: null, total_sum: null, created_at: '2026-09-18T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } },
-        { id: 903, request_number: 'З-13/26', project_id: 3, section_id: 5, status: 'delivered', supplier: 'Стройбаза Одесса', total_sum: 25000, created_at: '2026-09-19T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } }
+        { id: 901, request_number: 'З-11/26', project_id: 3, section_id: 5, status: 'new', supplier: null, total_sum: null, created_by_employee_id: 7, created_at: '2026-09-17T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } },
+        { id: 902, request_number: 'З-12/26', project_id: 3, section_id: 5, status: 'in_progress', supplier: null, total_sum: null, created_by_employee_id: 7, created_at: '2026-09-18T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } },
+        { id: 903, request_number: 'З-13/26', project_id: 3, section_id: 5, status: 'delivered', supplier: 'Стройбаза Одесса', total_sum: 25000, created_by_employee_id: 7, created_at: '2026-09-19T08:00:00Z', section: { id: 5, name: 'Кладочные работы' } }
     ],
     // Позиции доставленной заявки: на них проверяется подробная карточка,
     // которая открывается нажатием на карточку заявки в списке материалов.
@@ -266,6 +272,19 @@ function handleMock(req, res, body) {
                 updated.push(row);
                 log('    [мок] UPDATE cash_requests #' + row.id + ' → status=' + row.status +
                     (row.rejection_reason ? ' (' + row.rejection_reason + ')' : ''));
+            });
+        }
+
+        // Заявки на материалы: прораб убирает отработанную заявку в архив
+        // (js/modules/orders.js → archiveOrder), поэтому мок должен уметь
+        // сохранять статус — иначе «архив» выглядел бы рабочим в интерфейсе,
+        // но в «базе» ничего не менялось.
+        if (table === 'orders') {
+            store.orders.forEach((row) => {
+                if (ids.length && !ids.includes(row.id)) return;
+                Object.assign(row, payload);
+                updated.push(row);
+                log('    [мок] UPDATE orders #' + row.id + ' (' + row.request_number + ') → status=' + row.status);
             });
         }
 
@@ -877,6 +896,139 @@ try {
         materialsDelivered.replace(/\n/g, ' | ').slice(0, 200));
 
     await evaluate('window.setMyMaterialsFilter(\"all\")');
+    await sleep(300);
+
+    // ---------------------- 9. Архив: автор убирает отработанное ----------------------
+    // У обоих блоков рабочего экрана есть фильтр «📥 Архив». Карточка заявки на
+    // финансирование нажимается целиком и открывает подробное окно, а кнопка
+    // «📥 В архив» живёт в этом окне — там же, где она есть у снабженца.
+    const archiveChips = await evaluate('(() => {' +
+        'const chip = (block, id) => { const el = document.getElementById(block + "-filter-" + id); return el ? el.innerText.trim() : ""; };' +
+        'return { finance: chip("dash-block-finance", "archived"), materials: chip("dash-block-materials", "archived") }; })()');
+    ok('у блока заявок на финансирование есть фильтр «📥 Архив»',
+        archiveChips.finance.includes('📥 Архив'), archiveChips.finance);
+    ok('у блока заявок на материалы есть фильтр «📥 Архив»',
+        archiveChips.materials.includes('📥 Архив'), archiveChips.materials);
+
+    const financeCardsClickable = await evaluate('(() => {' +
+        'const cards = Array.prototype.filter.call(document.querySelectorAll("#dash-block-finance-body [role=button]"),' +
+        ' (el) => (el.getAttribute("onclick") || "").indexOf("openCashRequestDetail") >= 0);' +
+        'return { count: cards.length, text: cards.map((c) => c.innerText.trim()).join(" || ") }; })()');
+    ok('карточка заявки на финансирование нажимается целиком (2 заявки — 2 карточки)',
+        financeCardsClickable.count === 2, JSON.stringify(financeCardsClickable).slice(0, 240));
+
+    // Карточку ищем по НОМЕРУ заявки: в тексте карточки «❌ Отклонено» стоит
+    // причина отказа, и в ней может упоминаться номер другой заявки
+    // («Дублирует заявку Ф-1/26») — по тексту карточка выбиралась бы не та.
+    const clickFinanceCard = (number) => evaluate('(() => {' +
+        'const cards = Array.prototype.filter.call(document.querySelectorAll("#dash-block-finance-body [role=button]"),' +
+        ' (el) => (el.getAttribute("onclick") || "").indexOf("openCashRequestDetail") >= 0);' +
+        'const card = cards.filter((el) => { const n = el.querySelector("span.font-mono");' +
+        ' return !!n && n.innerText.trim() === "' + number + '"; })[0];' +
+        'if (card) card.click();' +
+        'return !!card; })()');
+
+    ok('карточка выданной заявки нажимается целиком', await clickFinanceCard('Ф-1/26'));
+    await sleep(800);
+    const financeDetailCard = await evaluate('(() => ({' +
+        ' number: (document.querySelector("#cash-request-detail-content span.font-mono") || {}).innerText || "",' +
+        ' hidden: document.getElementById("cash-request-detail-modal").classList.contains("hidden"),' +
+        ' text: (document.getElementById("cash-request-detail-content") || {}).innerText || "" }))()');
+    ok('в окне открылась именно та заявка, на карточку которой нажали',
+        financeDetailCard.number.trim() === 'Ф-1/26', financeDetailCard.number);
+    ok('в подробном окне видно состав заявки, объект и раздел',
+        !financeDetailCard.hidden &&
+        ['Кладка стен', 'Кладочные работы', 'грн']
+            .every((part) => financeDetailCard.text.includes(part)),
+        financeDetailCard.text.replace(/\n/g, ' | ').slice(0, 240));
+
+    const financeArchiveButton = await evaluate('(() => {' +
+        'const btns = Array.prototype.slice.call(document.querySelectorAll("#cash-request-detail-actions button"));' +
+        'return { all: btns.map((b) => b.innerText.trim()).join(", "),' +
+        ' count: btns.filter((b) => b.innerText.indexOf("В архив") >= 0).length }; })()');
+    ok('в подробном окне выданной заявки есть у автора кнопка «📥 В архив»',
+        financeArchiveButton.count === 1, financeArchiveButton.all);
+
+    const issuedSumBefore = Number(requestA.total_sum);
+    await evaluate('window.confirm = () => true');
+    await evaluate('(() => {' +
+        'const btn = Array.prototype.slice.call(document.querySelectorAll("#cash-request-detail-actions button"))' +
+        ' .filter((b) => b.innerText.indexOf("В архив") >= 0)[0];' +
+        'if (btn) btn.click();' +
+        'return !!btn; })()');
+    await sleep(2200);
+    ok('выданная заявка ушла в архив (в базе status = archived)',
+        requestA.status === 'archived', 'status=' + requestA.status);
+    ok('заявка осталась в базе со своей суммой (архив — не удаление)',
+        !!REQUEST_OF('Ф-1/26') && Number(REQUEST_OF('Ф-1/26').total_sum) === issuedSumBefore,
+        REQUEST_OF('Ф-1/26') ? 'сумма=' + REQUEST_OF('Ф-1/26').total_sum : 'заявки нет');
+
+    await evaluate('window.setMyFinanceFilter("archived")');
+    await sleep(500);
+    const financeArchiveBody = await evaluate('(document.getElementById("dash-block-finance-body") || {}).innerText || ""');
+    ok('фильтр «📥 Архив» показывает убранную заявку со статусом «📥 В архиве»',
+        financeArchiveBody.includes('Ф-1/26') && financeArchiveBody.includes('📥 В архиве'),
+        financeArchiveBody.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyFinanceFilter("issued")');
+    await sleep(400);
+    const financeIssuedAfter = await evaluate('(document.getElementById("dash-block-finance-body") || {}).innerText || ""');
+    ok('из «🟢 Выданы» убранная заявка исчезла',
+        !financeIssuedAfter.includes('Ф-1/26') && financeIssuedAfter.includes('Выданных заявок нет'),
+        financeIssuedAfter.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyFinanceFilter("all")');
+    await sleep(300);
+
+    // Заявка на материалы: карточку доставленной заявки открываем из блока и
+    // убираем в архив кнопкой в подробной карточке — её видит автор заявки.
+    await evaluate('(() => {' +
+        'const card = Array.prototype.filter.call(document.querySelectorAll("#dash-block-materials-body button"),' +
+        ' (b) => (b.getAttribute("onclick") || "").indexOf("openOrderDetail(903)") >= 0)[0];' +
+        'if (card) card.click();' +
+        'return !!card; })()');
+    await sleep(900);
+
+    const orderArchiveButton = await evaluate('(() => {' +
+        'const btns = Array.prototype.slice.call(document.querySelectorAll("#order-detail-actions button"));' +
+        'return { all: btns.map((b) => b.innerText.trim()).join(", "),' +
+        ' count: btns.filter((b) => b.innerText.indexOf("В архив") >= 0).length }; })()');
+    ok('прораб видит в карточке доставленной заявки кнопку «📥 В архив»',
+        orderArchiveButton.count === 1, orderArchiveButton.all);
+
+    await evaluate('window.confirm = () => true');
+    await evaluate('(() => {' +
+        'const btn = Array.prototype.slice.call(document.querySelectorAll("#order-detail-actions button"))' +
+        ' .filter((b) => b.innerText.indexOf("В архив") >= 0)[0];' +
+        'if (btn) btn.click();' +
+        'return !!btn; })()');
+    await sleep(2200);
+    const order903 = () => store.orders.find((o) => o.id === 903);
+    ok('доставленная заявка на материалы ушла в архив',
+        order903().status === 'archived', 'status=' + order903().status);
+
+    await evaluate('window.setMyMaterialsFilter("archived")');
+    await sleep(500);
+    const materialsArchiveBody = await evaluate('(document.getElementById("dash-block-materials-body") || {}).innerText || ""');
+    ok('фильтр «📥 Архив» показывает убранную заявку на материалы',
+        materialsArchiveBody.includes('З-13/26') && materialsArchiveBody.includes('📥 Архив'),
+        materialsArchiveBody.replace(/\n/g, ' | ').slice(0, 200));
+
+    await evaluate('window.setMyMaterialsFilter("delivered")');
+    await sleep(400);
+    const materialsDeliveredAfter = await evaluate('(document.getElementById("dash-block-materials-body") || {}).innerText || ""');
+    ok('из «🚚 Доставлено на объект» убранная заявка исчезла',
+        !materialsDeliveredAfter.includes('З-13/26'),
+        materialsDeliveredAfter.replace(/\n/g, ' | ').slice(0, 160));
+
+    // Рабочую заявку в архив не пускаем: «Поданы в снабжение» ещё не отработаны
+    await evaluate('window.archiveOrder(901)');
+    await sleep(900);
+    ok('рабочую заявку в архив не пускает (только доставленную или закрытую)',
+        store.orders.find((o) => o.id === 901).status === 'new',
+        'status=' + store.orders.find((o) => o.id === 901).status);
+
+    await evaluate('window.setMyMaterialsFilter("all")');
     await sleep(300);
 
     log('--- ИТОГ ---');

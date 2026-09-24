@@ -9,6 +9,13 @@
 //   revision  — ✏️ На доработке    (директор вернул автору с причиной)
 //   rejected  — ❌ Отклонено       (директор отказал, причина обязательна)
 //   issued    — 🟢 Выдано         (деньги выданы, подотчёт получателя пополнен)
+//   archived  — 📥 В архиве       (автор убрал законченную заявку со своего
+//                                  рабочего экрана: ни списки, ни деньги не
+//                                  меняются — заявка просто уходит из работы)
+//
+// «Архив» появился в v2.6.0 и требует database/migrate-v2.6.sql: на
+// cash_requests.status в боевой базе стоит CHECK-ограничение со списком
+// статусов, и без миграции база отклонит запись (ошибка 23514).
 //
 // Причина возврата и причина отказа хранятся в одной колонке
 // rejection_reason: смысл однозначен по статусу заявки, а новой колонки
@@ -29,7 +36,11 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatMoney, parseNumber, roundMoney
+    formatDate, formatMoney, parseNumber, roundMoney,
+    // Общая с другими модулями перерисовка рабочего экрана: после действий
+    // автора заявки (создание, доработка, удаление, архив) блок «Мои заявки на
+    // финансирование» не должен показывать старый статус (js/utils.js).
+    refreshDashboardIfVisible
 } from '../utils.js';
 import { can, getEmployee, getRole, canSeeTab, canSeeHeaderButton } from '../permissions.js';
 import { t } from '../i18n.js';
@@ -114,6 +125,24 @@ function canEditCashRequest(req) {
 }
 
 /**
+ * Может ли текущий пользователь убрать ЭТУ заявку в архив.
+ *
+ * Только автор и только ЗАКОНЧЕННУЮ заявку: выданную (деньги уже получены)
+ * или отклонённую (по ней решения больше не будет). Рабочие статусы —
+ * «ожидает», «одобрена», «на доработке» — не архивируются: по ним ещё идёт
+ * работа, и они нужны директору и финансисту.
+ *
+ * Чужую историю со своего рабочего экрана никто не убирает: архив — личное
+ * дело автора заявки. Отдельной колонки «кто убрал» нет намеренно: она
+ * потребовала бы миграции, а автор всегда один и тот же.
+ */
+export function canArchiveCashRequest(req) {
+    const emp = getEmployee();
+    return !!emp && req.employee_id === emp.id &&
+        (req.status === 'issued' || req.status === 'rejected');
+}
+
+/**
  * Видна ли кнопка создания своей заявки на подотчёт (по id элемента).
  * Урезанный интерфейс роли может её спрятать: директор только согласует
  * и выдаёт деньги, свои заявки он не оформляет (ROLE_UI в permissions.js).
@@ -194,23 +223,6 @@ export function getCashRequestsCache() {
 }
 
 /**
- * Перерисовывает рабочий экран, если он открыт. Прораб создаёт и дорабатывает
- * заявки прямо с дашборда, поэтому после сохранения блок «Мои заявки на
- * финансирование» не должен показывать старый статус.
- * Дашборд не трогаем, когда открыт другой раздел (иначе лишний запрос).
- */
-async function refreshDashboardIfVisible() {
-    if (window.AppState?.currentTab !== 'tasks') return;
-    if (typeof window.loadDashboard !== 'function') return;
-
-    try {
-        await window.loadDashboard();
-    } catch (err) {
-        log.warn('Не удалось обновить рабочий экран:', err?.message || err);
-    }
-}
-
-/**
  * Панель «Рабочий стол финансиста»: его баланс (подотчёт) и сколько денег
  * нужно выдать по одобренным заявкам. У остальных ролей блок скрыт:
  * у директора на этом же месте — баланс финансиста рядом с кнопкой пополнения
@@ -280,7 +292,7 @@ function getFilteredCashRequests() {
 export function switchCashRequestsTab(filter) {
     currentFilter = filter;
 
-    const filters = ['active', 'pending', 'revision', 'approved', 'issued', 'rejected', 'all'];
+    const filters = ['active', 'pending', 'revision', 'approved', 'issued', 'rejected', 'archived', 'all'];
     filters.forEach(f => {
         const btn = document.getElementById(`cashreq-filter-${f}`);
         if (!btn) return;
@@ -634,6 +646,14 @@ function renderCashRequestActions(req) {
         buttonsHtml += `<button onclick="window.deleteCashRequest(${req.id})" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
     }
 
+    // Автор: убрать ЗАКОНЧЕННУЮ заявку (выданную или отклонённую) в архив.
+    // Заявка остаётся в базе со всей историей, но уходит из рабочих списков:
+    // на рабочем экране она видна в фильтре «📥 Архив»
+    // (см. canArchiveCashRequest() — почему это только автор и только история).
+    if (canArchiveCashRequest(req)) {
+        buttonsHtml += `<button onclick="window.archiveCashRequest(${req.id})" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">📥 В архив</button>`;
+    }
+
     actionsContainer.innerHTML = buttonsHtml;
 }
 
@@ -647,7 +667,8 @@ export function getCashRequestStatusInfo(status) {
         'revision': { label: '✏️ На доработке', bg: 'bg-orange-100', color: 'text-orange-800', border: 'border-orange-400' },
         'approved': { label: '🟡 Одобрено',     bg: 'bg-yellow-100', color: 'text-yellow-800', border: 'border-yellow-400' },
         'issued':   { label: '🟢 Выдано',       bg: 'bg-green-100',  color: 'text-green-700',  border: 'border-[#15803d]' },
-        'rejected': { label: '❌ Отклонено',    bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-400' }
+        'rejected': { label: '❌ Отклонено',    bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-400' },
+        'archived': { label: '📥 В архиве',     bg: 'bg-gray-200',   color: 'text-gray-600',   border: 'border-gray-300' }
     };
     return map[status] || { label: status, bg: 'bg-gray-100', color: 'text-gray-700', border: 'border-gray-300' };
 }
@@ -1551,6 +1572,60 @@ export async function deleteCashRequest(id) {
     await loadCashRequests();
     await refreshDashboardIfVisible();
 }
+
+// =====================================================================
+// АРХИВ (автор убирает законченную заявку)
+// =====================================================================
+
+/**
+ * Убрать законченную заявку в архив (status → 'archived').
+ *
+ * Заявка НЕ удаляется: остаётся в базе со всеми позициями, решением директора
+ * и операцией выдачи (деньги по ней уже в подотчёте). Меняется только статус —
+ * работа по заявке закончена, и автор убирает её из своих рабочих списков.
+ *
+ * Кто и когда может: только автор, только выданную или отклонённую
+ * (canArchiveCashRequest выше). Возврат из архива не предусмотрен: вернуть
+ * заявку в работу всё равно нельзя — деньги по ней уже выданы или решение
+ * принято, а история есть в «💰 Финансы» → «📥 Архив».
+ *
+ * ⚠️ Статус 'archived' знает только версия v2.6.0+: если в боевой базе на
+ *    cash_requests.status стоит старое CHECK-ограничение, база отклонит запись
+ *    (23514), а explainError() подскажет применить database/migrate-v2.6.sql.
+ */
+export async function archiveCashRequest(id) {
+    const req = cashRequestsCache.find(r => r.id === id);
+    if (!req) {
+        toast('Заявка не найдена', 'error');
+        return;
+    }
+
+    if (!canArchiveCashRequest(req)) {
+        toast('В архив можно убрать только свою выданную или отклонённую заявку', 'warning');
+        return;
+    }
+
+    if (!confirm(`Убрать заявку ${req.request_number} в архив?\n\nОна останется в базе со всей историей, но уйдёт из рабочих списков.`)) return;
+
+    const { error } = await db.update('cash_requests', {
+        status: 'archived'
+    }, { id });
+
+    if (error) {
+        log.error('Ошибка архивации заявки:', error.message);
+        toast('Не удалось убрать заявку в архив: ' + db.explainError(error), 'error');
+        return;
+    }
+
+    log.info('📥 Заявка в архиве:', req.request_number);
+    toast('Заявка в архиве', 'success');
+
+    hideModal('cash-request-detail-modal');
+    await loadCashRequests();
+    // Рабочий экран прораба — то место, откуда заявку и убирают: перечитываем
+    // его, иначе карточка осталась бы в списке выданных до обновления страницы.
+    await refreshDashboardIfVisible();
+}
 // =====================================================================
 // ГЛОБАЛЬНЫЕ ФУНКЦИИ
 // =====================================================================
@@ -1570,3 +1645,6 @@ window.requestRevisionCashRequest = requestRevisionCashRequest;
 window.rejectCashRequest = rejectCashRequest;
 window.issueCashRequest = issueCashRequest;
 window.deleteCashRequest = deleteCashRequest;
+// «📥 В архив» в подробной карточке заявки: автор убирает выданную или
+// отклонённую заявку со своего рабочего экрана (в базе она остаётся)
+window.archiveCashRequest = archiveCashRequest;

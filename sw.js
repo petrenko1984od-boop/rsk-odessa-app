@@ -77,7 +77,16 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        `#material-invoice-detail-modal` вместе с подробностями: суммы по
 //        счёту и по заявке, даты, файл счёта и отметка «кто и когда оплатил»
 //        (index.html, js/modules/invoices.js, js/i18n.js).
-const SHELL_REVISION = 'r3';
+//   r4 — архив заявок на рабочем экране прораба: карточка заявки на
+//        финансирование нажимается целиком и открывает подробное окно, у обоих
+//        блоков появился фильтр «📥 Архив», а отработанную заявку (доставленную
+//        по материалам / выданную и отклонённую по финансам) автор убирает в
+//        архив кнопкой в карточке. Статус 'archived' у заявок на финансы знает
+//        v2.6.0: база требует database/migrate-v2.6.sql
+//        (database/migrate-v2.6.sql, index.html, js/database.js, js/utils.js,
+//        js/i18n.js, js/modules/dashboard.js, js/modules/orders.js,
+//        js/modules/cash-requests.js).
+const SHELL_REVISION = 'r4';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

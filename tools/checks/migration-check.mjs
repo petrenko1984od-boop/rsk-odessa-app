@@ -315,6 +315,64 @@ function main() {
             /own_delivery/.test(utilsJs) && /ownDeliveryCoveredOrderIds/.test(utilsJs));
     }
 
+    // --- 3е. Миграция v2.6.0: архив заявок на финансирование ---
+    // Третья боевая жалоба того же рода: «кнопка 📥 В архив не работает».
+    // Причина — на cash_requests.status осталось CHECK-ограничение без статуса
+    // 'archived' (появился в v2.6.0). Файл колонок НЕ добавляет: правит только
+    // ограничение, поэтому в нём не должно быть ни одного add column.
+    const ARCHIVE_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.6.sql');
+    const ARCHIVE_STATUS_VALUES = ['pending', 'approved', 'revision', 'rejected', 'issued', 'archived'];
+
+    if (!fs.existsSync(ARCHIVE_MIGRATION)) {
+        ok('есть файл database/migrate-v2.6.sql', false, ARCHIVE_MIGRATION);
+    } else {
+        const v26 = fs.readFileSync(ARCHIVE_MIGRATION, 'utf8');
+
+        ok('migrate-v2.6.sql: снимает старое и ставит новое ограничение',
+            /cash_requests_status_check/.test(v26) && /drop constraint/i.test(v26) &&
+            /add constraint cash_requests_status_check/i.test(v26), 'drop + add');
+
+        const v26Missing = ARCHIVE_STATUS_VALUES.filter((value) => !new RegExp(`'${value}'`).test(v26));
+        ok('migrate-v2.6.sql: разрешает все статусы кода (включая archived)',
+            v26Missing.length === 0, v26Missing.join(', ') || ARCHIVE_STATUS_VALUES.join(' | '));
+
+        ok('migrate-v2.6.sql: колонки таблицы не трогает (архив — только статус)',
+            !/add column/i.test(v26));
+
+        const v26Handlers = (v26.match(/exception\s+when\s+others/gi) || []).length;
+        ok('migrate-v2.6.sql: шаги защищены и есть проверка результата',
+            v26Handlers >= 2 && /MISSING — примените файл целиком/.test(v26) && /'ok'/.test(v26),
+            'обработчиков exception when others: ' + v26Handlers);
+
+        ok('migrate-v2.6.sql просит PostgREST перечитать схему (notify pgrst)',
+            /notify\s+pgrst\s*,\s*'reload schema'/i.test(v26));
+
+        const v26Typo = codeLines(v26).filter((line) => TYPOGRAPHIC.test(line.code));
+        const v26Invisible = codeLines(v26).filter((line) => INVISIBLE.test(line.code));
+        const v26Stripped = linesOf(v26)
+            .map((line) => {
+                const comment = line.indexOf('--');
+                return comment === -1 ? line : line.slice(0, comment);
+            })
+            .join('\n')
+            .replace(/'(?:[^']|'')*'/g, "''");
+        const v26Even = (open, close) => v26Stripped.split(open).length === v26Stripped.split(close).length;
+
+        ok('migrate-v2.6.sql чистая для копирования (кавычки, пробелы, скобки, $$)',
+            v26Typo.length === 0 && v26Invisible.length === 0 &&
+            v26Even('(', ')') && ((v26.match(/\$\$/g) || []).length % 2 === 0),
+            [...v26Typo, ...v26Invisible]
+                .map((line) => line.number + ': ' + line.code.trim().slice(0, 50)).join(' | '));
+
+        // Код и миграция должны знать один и тот же статус: приложение пишет
+        // 'archived' и показывает его фильтром «📥 Архив».
+        const cashJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'cash-requests.js'), 'utf8');
+        const dashboardJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'dashboard.js'), 'utf8');
+        ok("код умеет ставить и показывать статус 'archived'",
+            /canArchiveCashRequest/.test(cashJs) && /'archived'/.test(cashJs) &&
+            /'archived'/.test(dashboardJs));
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'
