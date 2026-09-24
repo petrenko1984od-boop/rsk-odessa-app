@@ -246,8 +246,8 @@ iPhone — `Документация/Инструкция-01-Установка-
 
 Проверка после деплоя: открыть сайт по https → DevTools → **Application** → *Manifest*
 (иконки, имя, без ошибок), *Service Workers* (activated) и *Cache Storage* —
-там должен быть один кэш `rsk-odessa-v2.5.0-r5` (имя складывается из `APP_VERSION` и
-`SHELL_REVISION` в `sw.js`, сейчас `2.5.0` и `r5`). Там же кнопка **«Установить»**
+там должен быть один кэш `rsk-odessa-v2.6.0-r1` (имя складывается из `APP_VERSION` и
+`SHELL_REVISION` в `sw.js`, сейчас `2.6.0` и `r1`). Там же кнопка **«Установить»**
 в адресной строке.
 
 Пересобрать иконки (нужен только Windows PowerShell и .NET GDI+):
