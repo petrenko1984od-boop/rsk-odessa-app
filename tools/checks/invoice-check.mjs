@@ -134,6 +134,11 @@ function rowsFor(table, params) {
     const inList = (rows, column) => {
         const raw = params[column];
         if (!raw) return rows;
+        // Только настоящий список: order_id=eq.900 — это равенство, и
+        // фильтровать его как список нельзя (иначе запрос «позиции одной
+        // заявки» возвращал бы пусто — так и было, пока карточка брала
+        // позиции из кэша списка, а не отдельным запросом).
+        if (!String(raw).startsWith('in.(')) return rows;
         const list = String(raw).replace(/^in\.\(/, '').replace(/\)$/, '').split(',');
         return rows.filter((row) => list.includes(String(row[column])));
     };
@@ -202,6 +207,18 @@ function wantsSingleRow(table, params) {
 }
 
 /** Обновление строк таблицы по фильтрам (id / order_id / employee_id). */
+/**
+ * Страница ответа для чтения: offset/limit из запроса — их ставит
+ * supabase-js для .range() (js/database.js → selectPage). PostgREST режет
+ * список по ним, поэтому и мок обязан резать: иначе проверка «список
+ * читается страницами» была бы фиктивной — мок отдавал бы все строки.
+ */
+function pageRows(rows, params) {
+    const offset = params.offset !== undefined ? Number(params.offset) : 0;
+    const limit = params.limit !== undefined ? Number(params.limit) : rows.length;
+    return rows.slice(offset, offset + limit);
+}
+
 function updateRows(table, params, payload) {
     const rows = store[table] || [];
     const filters = ['id', 'order_id', 'employee_id', 'request_id']
@@ -348,7 +365,7 @@ function handleMock(req, res, body) {
             return sendJson(res, 200, rows[0]);
         }
 
-        return sendJson(res, 200, rows);
+        return sendJson(res, 200, pageRows(rows, params));
     }
 
     if (req.method === 'POST') return sendJson(res, 201, insertRows(table, payload));

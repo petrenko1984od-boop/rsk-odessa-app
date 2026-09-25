@@ -54,6 +54,20 @@ const DICT = {
         'common.section': 'Раздел',
         'common.total': 'Итого',
 
+        // --- страницы списка и поиск (v2.9.0) ---
+        // Панель общая для всех списков: js/pagination.js. Ключ «сколько
+        // строк всего» есть не всегда (база может не ответить Content-Range),
+        // поэтому у надписи две формы: с общим числом и без него.
+        'pager.range': 'Показано {from}-{to} из {total}',
+        'pager.rangeUnknown': 'Показано {rows} строк',
+        'pager.page': 'Страница {page}',
+        'pager.pageOf': 'Страница {page} из {pages}',
+        'pager.pageSize': 'Строк на странице:',
+        'pager.prev': '‹ Назад',
+        'pager.next': 'Вперёд ›',
+        'pager.searchPlaceholder': 'Поиск',
+        'orders.searchPlaceholder': 'Поиск: номер, поставщик, объект',
+
         // --- настройки ---
         'settings.title': '⚙ Настройки приложения',
         'settings.subtitle': 'Язык интерфейса и цветовая схема. Настройки сохраняются для этого устройства.',
@@ -217,6 +231,17 @@ const DICT = {
         'common.object': 'Обʼєкт',
         'common.section': 'Розділ',
         'common.total': 'Разом',
+
+        // --- сторінки списку та пошук (v2.9.0) ---
+        'pager.range': 'Показано {from}-{to} з {total}',
+        'pager.rangeUnknown': 'Показано {rows} рядків',
+        'pager.page': 'Сторінка {page}',
+        'pager.pageOf': 'Сторінка {page} з {pages}',
+        'pager.pageSize': 'Рядків на сторінці:',
+        'pager.prev': '‹ Попередня',
+        'pager.next': 'Далі ›',
+        'pager.searchPlaceholder': 'Пошук',
+        'orders.searchPlaceholder': 'Пошук: номер, постачальник, об’єкт',
 
         // --- налаштування ---
         'settings.title': '⚙ Налаштування застосунку',

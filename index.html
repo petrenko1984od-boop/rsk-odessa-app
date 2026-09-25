@@ -327,6 +327,12 @@
                     <button onclick="switchOrdersTab('all')" id="orders-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
                 </div>
 
+                <!-- Панель списка: поиск, «Показано 1-25 из 137», страницы,
+                     выбор размера страницы. Разметку рисует общий модуль
+                     js/pagination.js (v2.9.0) на языке сотрудника, поэтому
+                     здесь нет ни текста, ни data-i18n. -->
+                <div id="orders-toolbar" class="bg-white p-3 rounded-xl shadow-sm space-y-2"></div>
+
                 <!-- Плашка «база не обновлена»: появляется, если заявки не
                      загрузились (например, в базе нет колонок v2.4.0 — не
                      применена миграция). Заполняет js/modules/orders.js

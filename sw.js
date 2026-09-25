@@ -26,7 +26,7 @@
 // сотрудники с установленным приложением останутся на старых js/css.
 // =====================================================================
 
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const CACHE_PREFIX = 'rsk-odessa';
 // Ревизия оболочки — счётчик правок внутри одной версии, часть имени кэша
 // (`rsk-odessa-v2.4.0-r3`, см. README → «Проверка после деплоя»). История:
@@ -121,6 +121,15 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        js/database.js → RPC/rpc(), js/modules/orders.js,
 //        js/modules/cash-requests.js). Позиции новой заявки на материалы
 //        больше не помечаются «оплачено».
+//   v2.9.0 начинается с r1: имя кэша и так меняется вместе с APP_VERSION.
+//   r1 — масштабирование списков: заявки на материалы читаются СТРАНИЦАМИ
+//        (25/50/100 строк) с фильтрами на сервере — вкладка статуса, права
+//        прораба и поиск уходят в запрос, а не фильтруют выгруженную таблицу
+//        в браузере. Появилась общая панель списка (js/pagination.js) и слой
+//        страниц (js/database.js → selectPage/selectAllPaged/textSearch).
+//        Индексы под эти запросы ставит database/migrate-v2.9-scale-indexes.sql
+//        (index.html → панель «Снабжения», js/i18n.js → надписи панели,
+//        js/modules/orders.js → список заявок).
 const SHELL_REVISION = 'r1';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
@@ -142,6 +151,7 @@ const APP_SHELL = [
     './js/auth.js',
     './js/permissions.js',
     './js/database.js',
+    './js/pagination.js',
     './js/pwa.js',
     './js/modules/dashboard.js',
     './js/modules/employees.js',

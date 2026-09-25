@@ -116,7 +116,7 @@ function copyIssues(text) {
 }
 
 function main() {
-    log('Проверка миграций базы (v2.4.0 … v2.8.0): ' + path.relative(ROOT, MIGRATION));
+    log('Проверка миграций базы (v2.4.0 … v2.9.0): ' + path.relative(ROOT, MIGRATION));
 
     if (!fs.existsSync(MIGRATION)) {
         ok('файл миграции существует', false, MIGRATION);
@@ -697,6 +697,152 @@ function main() {
             v28Copy.clean, v28Copy.detail);
     }
 
+    // --- 3и. Миграция v2.9.0: индексы под страницы и фильтры на сервере ---
+    // Повод: список заявок грузил ВСЮ таблицу и фильтровал её в браузере. С
+    // v2.9.0 списки читаются страницами с фильтрами в запросе
+    // (js/database.js → selectPage), поэтому у каждой колонки, по которой код
+    // фильтрует и сортирует, должен быть индекс — иначе «страница на 25 строк»
+    // читает весь объект. Здесь же проверяется связка «код ↔ индекс»: новая
+    // колонка в фильтре без индекса валит прогон.
+    const SCALE_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.9-scale-indexes.sql');
+    const ordersJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'orders.js'), 'utf8');
+    const paginationExists = fs.existsSync(path.join(ROOT, 'js', 'pagination.js'));
+    const swJs = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+    const configJs = fs.readFileSync(path.join(ROOT, 'js', 'config.js'), 'utf8');
+    const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+
+    if (!fs.existsSync(SCALE_MIGRATION)) {
+        ok('есть файл database/migrate-v2.9-scale-indexes.sql', false, SCALE_MIGRATION);
+    } else {
+        const v29 = fs.readFileSync(SCALE_MIGRATION, 'utf8');
+
+        // 1. Файл ничего не ломает: только индексы и статистика планировщика.
+        //    Ни данных, ни таблиц, ни политик, ни прав.
+        const dangerous = ['drop ', 'alter ', 'insert ', 'update ', 'delete ', 'revoke ', 'grant ',
+            'create table', 'create policy', 'truncate']
+            .filter((word) => new RegExp('^\\s*' + word, 'im').test(v29));
+        ok('v2.9.0: файл только ставит индексы и статистику (данные и права не трогает)',
+            dangerous.length === 0, dangerous.join(', '));
+
+        // 2. Все индексы создаются с if not exists: повторный запуск безопасен
+        //    (файл копируют в SQL Editor целиком и иногда дважды).
+        const creates = (v29.match(/create index\s+/gi) || []).length;
+        const idempotent = (v29.match(/create index if not exists\s+/gi) || []).length;
+        ok('v2.9.0: каждый индекс создаётся с if not exists (повтор безопасен)',
+            creates > 0 && creates === idempotent, 'всего: ' + creates + ', идемпотентных: ' + idempotent);
+
+        // 3. Список индексов из определений и из самопроверки — один и тот же:
+        //    индекс, забытый в самопроверке, выглядит как MISSING у администратора.
+        const indexDefs = [...v29.matchAll(
+            /create index if not exists\s+([a-z_0-9]+)\s+on public\.([a-z_]+)\s*\(([^)]*)\)([^;]*);/gi)]
+            .map((m) => ({
+                name: m[1],
+                table: m[2],
+                columns: [
+                    ...m[3].split(',').map((column) => column.trim().replace(/\s+(asc|desc)$/i, '')),
+                    // Колонки из WHERE частичного индекса тоже покрыты: Postgres
+                    // берёт такой индекс, когда условие запроса совпадает с его
+                    // предикатом (orders_debt_created_idx покрывает и
+                    // payment_status, и payment_source).
+                    ...[...m[4].matchAll(/([a-z_0-9]+)\s*=\s*'/gi)].map((x) => x[1])
+                ]
+            }));
+        const selfCheckBlock = v29.slice(v29.indexOf('БЛОК 8. САМОПРОВЕРКА'));
+        const missingInSelfCheck = indexDefs.filter((ix) => !selfCheckBlock.includes("('" + ix.name + "')"));
+        ok('v2.9.0: самопроверка перечисляет все индексы файла (иначе администратор видит MISSING)',
+            indexDefs.length >= 20 && missingInSelfCheck.length === 0,
+            missingInSelfCheck.map((ix) => ix.name).join(', ') || 'индексов: ' + indexDefs.length);
+
+        // 4. СВЯЗКА «КОД ↔ ИНДЕКС». Колонки, по которым списки фильтруют и
+        //    сортируют на сервере. Список ведётся руками рядом с кодом:
+        //    добавили фильтр — добавьте строку здесь и индекс в миграцию,
+        //    иначе прогон скажет, что индекс пропущен.
+        const pagedColumns = [
+            ['orders', 'status'],
+            ['orders', 'created_at'],
+            ['orders', 'created_by_employee_id'],
+            ['orders', 'project_id'],
+            ['orders', 'section_id'],
+            ['orders', 'payer_employee_id'],
+            ['orders', 'payment_status'],
+            ['orders', 'paid_at'],
+            ['order_items', 'order_id'],
+            ['cash_requests', 'employee_id'],
+            ['cash_requests', 'status'],
+            ['cash_requests', 'project_id'],
+            ['cash_request_items', 'request_id'],
+            ['cash_operations', 'employee_id'],
+            ['cash_operations', 'operation_type'],
+            ['cash_operations', 'operation_date'],
+            ['cash_operations', 'project_id'],
+            ['cash_operations', 'section_id'],
+            ['cash_operations', 'order_id'],
+            ['tasks', 'assignee_employee_id'],
+            ['tasks', 'project_id'],
+            ['tasks', 'deadline'],
+            ['tasks', 'section_id'],
+            ['sections', 'project_id'],
+            ['sections', 'planned_start_date'],
+            ['project_files', 'project_id'],
+            ['projects', 'foreman_id'],
+            ['employees', 'user_id'],
+            ['employees', 'position'],
+            ['employees', 'name']
+        ];
+        const uncovered = pagedColumns.filter(([table, column]) =>
+            !indexDefs.some((ix) => ix.table === table && ix.columns.includes(column)));
+        ok('v2.9.0: у каждой колонки фильтра/сортировки списков есть индекс',
+            uncovered.length === 0,
+            uncovered.map(([table, column]) => table + '.' + column).join(', ') ||
+                'проверено колонок: ' + pagedColumns.length);
+
+        // 5. Список заявок действительно читается страницей, а не всей таблицей:
+        //    ровно эту деградацию миграция и лечит. Вернётся «вся таблица +
+        //    фильтр в браузере» — индексы уже не помогут.
+        const loadOrdersBody = (ordersJs.match(/export async function loadOrders\(\)[\s\S]*?\n}/) || [''])[0];
+        ok('v2.9.0: список заявок читается страницей (db.selectPage), а не всей таблицей',
+            /db\.selectPage\('orders'/.test(loadOrdersBody) &&
+            !/db\.select\('orders'/.test(loadOrdersBody) &&
+            /pageSize: ordersPageSize/.test(loadOrdersBody));
+
+        // 6. Фильтры списка уходят на сервер: вкладка статуса (в том числе
+        //    «активные» = два статуса), видимость прораба и поиск. Фильтра
+        //    в браузере (ordersCache.filter(canSeeOrder)) быть не должно.
+        ok('v2.9.0: вкладки, права прораба и поиск стали условиями запроса, а не фильтром в браузере',
+            /'status\.in': \['new', 'in_progress'\]/.test(ordersJs) &&
+            /filters\.created_by_employee_id = emp\.id/.test(ordersJs) &&
+            /db\.textSearch\(/.test(ordersJs) &&
+            !/filter\(canSeeOrder\)/.test(ordersJs));
+
+        // 6б. Условие поиска собирается БЕЗ своих скобок: скобки добавляет
+        //     supabase-js. Со своими в запрос уходило or=((...)), PostgREST
+        //     отвечал PGRST100 — и поиск молча ничего не находил (эту ошибку
+        //     поймал прогон scale-check.mjs при разработке v2.9.0).
+        const databaseJs29 = fs.readFileSync(path.join(ROOT, 'js', 'database.js'), 'utf8');
+        ok('v2.9.0: условие поиска собирается без лишних скобок (иначе or=((...)) и PGRST100)',
+            /return \{ or: parts\.join\(','\) \};/.test(databaseJs29));
+
+        // 7. Панель списка есть, она в кэше оболочки и у неё есть место в
+        //    разметке — иначе поиск и страницы просто некуда рисовать.
+        ok('v2.9.0: панель списка существует, подключена к оболочке и к разметке',
+            paginationExists &&
+            /'\.\/js\/pagination\.js'/.test(swJs) &&
+            /id="orders-toolbar"/.test(indexHtml));
+
+        // 8. Версия приложения одна в config.js и sw.js: с v2.9.0 меняется имя
+        //    кэша оболочки, и расхождение версий оставило бы сотрудников на
+        //    старых js — то есть на списке без страниц.
+        const configVersion = (configJs.match(/VERSION:\s*'([0-9.]+)'/) || [])[1];
+        const swVersion = (swJs.match(/const APP_VERSION = '([0-9.]+)'/) || [])[1];
+        ok('v2.9.0: версия приложения совпадает в js/config.js и sw.js',
+            configVersion === '2.9.0' && swVersion === configVersion,
+            'config: ' + configVersion + ', sw: ' + swVersion);
+
+        const v29Copy = copyIssues(v29);
+        ok('migrate-v2.9-scale-indexes.sql чистый для копирования (кавычки, пробелы, скобки, $$)',
+            v29Copy.clean, v29Copy.detail);
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'
@@ -730,7 +876,7 @@ function main() {
 
     log('--- ИТОГ ---');
     log(failed === 0
-        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.8.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
+        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.9.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
         : '  не прошло проверок: ' + failed);
 }
 

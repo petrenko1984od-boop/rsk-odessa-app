@@ -134,6 +134,7 @@ const cashRequestRows = () => store.cashRequests.map((row) => {
     };
 });
 
+/** Строки таблицы из «базы» с учётом страниц (offset/limit). */
 function rowsFor(table, params) {
     const byEq = (rows, column) => {
         const raw = params[column];
@@ -142,10 +143,11 @@ function rowsFor(table, params) {
     };
 
     // Фильтр «по списку»: project_id=in.(3) — так рабочий экран прораба просит
-    // заявки только по своим объектам.
+    // заявки только по своим объектам. Значение вида eq.3 сюда не относится:
+    // это равенство, и as список его разбирать нельзя (иначе строки исчезли бы).
     const byIn = (rows, column) => {
         const raw = params[column];
-        if (!raw) return rows;
+        if (!raw || !String(raw).startsWith('in.(')) return rows;
         const list = String(raw).replace(/^in\.\(/, '').replace(/\)$/, '').split(',').map((v) => v.trim());
         return rows.filter((row) => list.includes(String(row[column])));
     };
@@ -489,7 +491,16 @@ function handleMock(req, res, body) {
             }
             return sendJson(res, 200, rows[0]);
         }
-        return sendJson(res, 200, rows);
+        // Страничная выдача: offset/limit ставит supabase-js для .range()
+        // (js/database.js → selectPage). PostgREST режет список по ним, и мок
+        // делает то же — иначе список «Снабжения» проверялся бы без страниц.
+        const page = (list) => {
+            const offset = params.offset !== undefined ? Number(params.offset) : 0;
+            const limit = params.limit !== undefined ? Number(params.limit) : list.length;
+            return list.slice(offset, offset + limit);
+        };
+
+        return sendJson(res, 200, page(rows));
     }
 
     if (req.method === 'POST') {

@@ -284,11 +284,30 @@ function validateFilters(table, filters, operation) {
     return null;
 }
 
+// =====================================================================
+// МОДУЛЬНАЯ БИБЛИОТЕКА ФИЛЬТРОВ
+// =====================================================================
 /**
  * Применяет одно условие к запросу.
  * Поддерживает операторы: { 'id.in': [1,2] }, { 'created_at.gte': '...' }
+ *
+ * v2.9.0 добавила два случая, без которых не собрать фильтр поиска и
+ * «или» на СЕРВЕРЕ:
+ *   * ilike — поиск по части строки без учёта регистра (номер заявки,
+ *     поставщик, имя сотрудника): { 'supplier.ilike': '%труба%' };
+ *   * or / and — готовое условие PostgREST целиком, когда колонки в ключе
+ *     нет: { or: 'request_number.ilike.%труба%,supplier.ilike.%труба%' }.
+ *     Собирает такое условие db.textSearch() — он же вычищает из текста
+ *     символы, которые сломали бы разбор (запятая, скобки, проценты).
+ *     Скобки вокруг значения добавляет сам supabase-js (в запрос уйдёт
+ *     or=(...)) — свои добавлять не нужно: выйдет or=((...)) и PGRST100.
  */
 function applyFilter(query, key, value) {
+    // Условие целиком (без колонки в ключе) — отдаём в PostgREST как есть.
+    if (key === 'or' || key === 'and') {
+        return query[key](value);
+    }
+
     if (!key.includes('.')) {
         return query.eq(key, value);
     }
@@ -296,17 +315,19 @@ function applyFilter(query, key, value) {
     const [field, op] = key.split('.');
 
     switch (op) {
-        case 'gte':  return query.gte(field, value);
-        case 'lte':  return query.lte(field, value);
-        case 'gt':   return query.gt(field, value);
-        case 'lt':   return query.lt(field, value);
-        case 'neq':  return query.neq(field, value);
-        case 'in':   return query.in(field, Array.isArray(value) ? value : [value]);
-        case 'like': return query.like(field, value);
-        case 'is':   return query.is(field, value);
-        default:     return query.eq(field, value);
+        case 'gte':   return query.gte(field, value);
+        case 'lte':   return query.lte(field, value);
+        case 'gt':    return query.gt(field, value);
+        case 'lt':    return query.lt(field, value);
+        case 'neq':   return query.neq(field, value);
+        case 'in':    return query.in(field, Array.isArray(value) ? value : [value]);
+        case 'like':  return query.like(field, value);
+        case 'ilike': return query.ilike(field, value);
+        case 'is':    return query.is(field, value);
+        default:      return query.eq(field, value);
     }
 }
+
 
 // =====================================================================
 // УНИВЕРСАЛЬНЫЕ CRUD-ОПЕРАЦИИ
@@ -370,6 +391,232 @@ export async function select(table, options = {}) {
     } catch (err) {
         log.error(`Исключение в SELECT "${table}":`, err);
         return { data: null, error: err };
+    }
+}
+
+// =====================================================================
+// СТРАНИЦЫ (v2.9.0) — ЧИТАЕМ НЕ ВСЮ ТАБЛИЦУ, А ОДНУ СТРАНИЦУ
+// =====================================================================
+// До v2.9.0 список заявок грузил ВСЮ таблицу: 25 карточек на экране и,
+// например, 40 000 строк из базы, из которых 39 975 тут же выбрасывались
+// фильтром в браузере. Чем дольше работают объекты, тем медленнее
+// открывался раздел — и тем больше памяти занимала вкладка.
+//
+// Здесь живёт серверная страница: PostgREST отдаёт РОВНО pageSize строк
+// (.range → HTTP-заголовок Range) и, если попросить count: 'exact', ещё и
+// общее число строк (заголовок Content-Range), не выгружая их.
+//
+//   const { data, count, page, totalPages } =
+//       await db.selectPage('orders', {
+//           select: 'id, request_number', filters: { status: 'new' },
+//           orderBy: { column: 'created_at', asc: false }, page: 2
+//       });
+//
+// ⚠️ data — это ТОЛЬКО страница. Всё, что должно считать по всем строкам
+//    (итоги, план-факт, экспорт в Excel), обязано либо фильтровать на
+//    сервере, либо брать полный набор через db.selectAllPaged() — иначе
+//    сумма посчитается по одной странице и окажется меньше настоящей.
+// =====================================================================
+
+/** Сколько строк в странице по умолчанию. */
+export const PAGE_SIZE = 25;
+
+/** Больше этого числа строк за один запрос слой не отдаст, даже если
+ *  модуль попросит: страница на 1000 карточек — это уже не список, а
+ *  выгрузка (для выгрузки есть db.selectAllPaged). */
+export const MAX_PAGE_SIZE = 100;
+
+/**
+ * Условие «или» для текстового поиска по нескольким колонкам.
+ *
+ *   db.textSearch(['request_number', 'supplier'], 'труба')
+ *   → { or: 'request_number.ilike.%труба%,supplier.ilike.%труба%' }
+ *   в запрос уйдёт: or=(request_number.ilike.%труба%,supplier.ilike.%труба%)
+ *
+ * Пустой текст → null: фильтр не добавляем (иначе поиск по «%» нашёл бы
+ * всё и запрос всё равно стал бы полным перебором).
+ *
+ * ⚠️ Скобки вокруг условия НЕ ставим: supabase-js сам оборачивает значение
+ *    `.or()` в скобки. Со своими скобками в запрос уходило or=((...)) — и
+ *    боевая база отвечала PGRST100 «failed to parse logic tree», а поиск
+ *    молча не находил ничего (прогон tools/checks/scale-check.mjs ловит это).
+ *
+ * Запятая, скобки, проценты и точка с запятой ВЫРЕЗАЮТСЯ из текста: в
+ * PostgREST это служебные символы условия or, и «труба, 50» превратило бы
+ * одно условие в два бессмысленных. Символы всё равно не помогли бы найти
+ * ничего: в номере заявки и в названии поставщика их не бывает.
+ *
+ * @param {string[]} columns — колонки, по которым ищем
+ * @param {string} text — то, что набрал сотрудник
+ * @returns {Object|null} — готовый фильтр или null, если искать нечего
+ */
+export function textSearch(columns, text) {
+    const term = String(text || '')
+        .replace(/[,()%*;]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!term || !columns || columns.length === 0) return null;
+
+    const parts = columns.map((column) => `${column}.ilike.%${term}%`);
+    return { or: parts.join(',') };
+}
+
+/**
+ * Взять ОДНУ страницу записей вместе с общим количеством строк.
+ *
+ * @param {string} table
+ * @param {Object} options — { select, filters, orderBy, page, pageSize }
+ * @returns {Promise<{ data, error, count, page, pageSize, totalPages, hasMore, from, to }>}
+ *
+ * count — сколько строк подходит под фильтр ВСЕГО (null, если база не
+ * вернула Content-Range, например на моках в проверках). Интерфейс обязан
+ * работать и с null: js/pagination.js тогда показывает «Показано N» вместо
+ * «Показано 1-N из M».
+ */
+export async function selectPage(table, options = {}) {
+    const {
+        select: columns = '*',
+        filters = null,
+        orderBy = null,
+        page = 1,
+        pageSize = PAGE_SIZE
+    } = options;
+
+    const size = Math.min(Math.max(1, Math.floor(Number(pageSize) || PAGE_SIZE)), MAX_PAGE_SIZE);
+    const current = Math.max(1, Math.floor(Number(page) || 1));
+    const from = (current - 1) * size;
+    const to = from + size - 1;
+
+    log.db(`SELECT-СТРАНИЦА из "${table}"`, { columns, filters, orderBy, from, to });
+
+    try {
+        let query = supabase
+            .from(table)
+            .select(columns, { count: 'exact' });
+
+        if (filters && typeof filters === 'object') {
+            for (const [key, value] of Object.entries(filters)) {
+                if (value === undefined || value === null) continue;
+                query = applyFilter(query, key, value);
+            }
+        }
+
+        if (orderBy) {
+            query = query.order(orderBy.column, { ascending: orderBy.asc !== false });
+        }
+
+        const { data, error, count } = await query.range(from, to);
+
+        if (error) {
+            log.error(`Ошибка SELECT-СТРАНИЦА "${table}":`, error.message);
+            return { data: null, error, count: null, page: current, pageSize: size };
+        }
+
+        const rows = data || [];
+        // totalPages считаем только по достоверному count: при null
+        // (мок/старый PostgREST) страниц «вперёд» не показываем.
+        const totalPages = typeof count === 'number' ? Math.max(1, Math.ceil(count / size)) : null;
+
+        return {
+            data: rows,
+            error: null,
+            count: typeof count === 'number' ? count : null,
+            page: current,
+            pageSize: size,
+            totalPages,
+            hasMore: rows.length >= size,
+            from: rows.length ? from + 1 : 0,
+            to: from + rows.length
+        };
+
+    } catch (err) {
+        log.error(`Исключение в SELECT-СТРАНИЦА "${table}":`, err);
+        return { data: null, error: err, count: null, page: current, pageSize: size };
+    }
+}
+
+
+/**
+ * Взять ВСЕ строки страницами — для того, что честно считает по всему
+ * набору: экспорт в Excel, план-факт объекта, реестр, итоги по всем
+ * заявкам. Заменяет db.select() без фильтров там, где нужен полный набор.
+ *
+ * @param {string} table
+ * @param {Object} options — { select, filters, orderBy, pageSize, maxRows }
+ * @returns {Promise<{ data, error, fetched, truncated }>}
+ *
+ * truncated = true значит: строк больше, чем maxRows, и в data лежит только
+ * часть. Модуль ОБЯЗАН сказать об этом сотруднику («показаны не все
+ * строки — сузьте период»), а не молча посчитать половину суммы: молчаливое
+ * усечение в деньгах — это неверный итог, за который отвечает бухгалтер.
+ */
+export async function selectAllPaged(table, options = {}) {
+    const {
+        select: columns = '*',
+        filters = null,
+        orderBy = null,
+        pageSize = MAX_PAGE_SIZE,
+        maxRows = 5000
+    } = options;
+
+    const size = Math.min(Math.max(1, Math.floor(Number(pageSize) || MAX_PAGE_SIZE)), MAX_PAGE_SIZE);
+    const limit = Math.max(size, Math.floor(Number(maxRows) || 5000));
+    const rows = [];
+
+    log.db(`SELECT-ВСЁ "${table}" страницами`, { columns, filters, orderBy, pageSize: size, maxRows: limit });
+
+    try {
+        let page = 1;
+
+        // Идём страницами, пока база отдаёт полные страницы. Ограничение —
+        // предохранитель от бесконечного цикла, если база проигнорировала
+        // .range() (так ведут себя моки в проверках): тогда выходим, как
+        // только строк стало больше заявленного максимума.
+        while (rows.length < limit) {
+            let query = supabase.from(table).select(columns);
+            const from = (page - 1) * size;
+
+            if (filters && typeof filters === 'object') {
+                for (const [key, value] of Object.entries(filters)) {
+                    if (value === undefined || value === null) continue;
+                    query = applyFilter(query, key, value);
+                }
+            }
+
+            if (orderBy) {
+                query = query.order(orderBy.column, { ascending: orderBy.asc !== false });
+            }
+
+            const { data, error } = await query.range(from, from + size - 1);
+
+            if (error) {
+                log.error(`Ошибка SELECT-ВСЁ "${table}":`, error.message);
+                return { data: rows.length ? rows : null, error, fetched: rows.length, truncated: false };
+            }
+
+            const part = data || [];
+            rows.push(...part);
+
+            if (part.length < size) break;
+            page += 1;
+        }
+
+        const truncated = rows.length > limit;
+        if (truncated) {
+            log.error(`SELECT-ВСЁ "${table}": строк больше ${limit} — вернул первые ${limit}`);
+        }
+
+        return {
+            data: rows.slice(0, limit),
+            error: null,
+            fetched: Math.min(rows.length, limit),
+            truncated
+        };
+
+    } catch (err) {
+        log.error(`Исключение в SELECT-ВСЁ "${table}":`, err);
+        return { data: rows.length ? rows : null, error: err, fetched: rows.length, truncated: false };
     }
 }
 
@@ -791,6 +1038,12 @@ export const db = {
     update,
     remove,
     count,
+    // Страницы и поиск на сервере (v2.9.0)
+    selectPage,
+    selectAllPaged,
+    textSearch,
+    PAGE_SIZE,
+    MAX_PAGE_SIZE,
     // Серверные команды (транзакции, версия 2.8.0)
     rpc,
     RPC,

@@ -32,15 +32,35 @@ import {
 } from '../permissions.js';
 import { CONFIG } from '../config.js';
 import { t, onLangChange } from '../i18n.js';
+import { renderToolbar } from '../pagination.js';
 import { fillSectionsSelect } from './sections.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
 
-let ordersCache = [];         // Все загруженные заявки
+let ordersCache = [];         // Заявки ТЕКУЩЕЙ СТРАНИЦЫ (v2.9.0)
 let currentFilter = 'active'; // Текущий фильтр
 let currentOrderId = null;    // Открытая карточка заявки
+let currentOrder = null;      // Сама открытая заявка (для подсказок в окнах)
+
+// --- страницы и поиск (v2.9.0) --------------------------------------
+// До v2.9.0 модуль грузил ВСЮ таблицу заявок и фильтровал её в браузере:
+// список из 25 карточек стоил выгрузки десятков тысяч строк. Теперь у
+// списка есть состояние страницы, а фильтры (вкладка, права, поиск) уходят
+// в запрос к базе — см. ordersFilters().
+let ordersPage = 1;                       // текущая страница, с 1
+let ordersPageSize = db.PAGE_SIZE;        // строк на странице (слой ограничивает 100)
+let ordersSearch = '';                    // что набрано в поиске
+let ordersTotal = null;                   // сколько строк всего (null — база не сообщила)
+
+// Карточки заявок, открытые за эту сессию: id → заявка ВМЕСТЕ С ПОЗИЦИЯМИ.
+// Нужны действиям (окно счёта, доставки, закрытия — они строят список работ),
+// потому что в ordersCache с v2.9.0 лежит только текущая страница списка.
+// Раньше карточка «докладывала» заявку в общий кэш целиком — и позиции
+// случайно доставались действиям; теперь это отдельное, явное место.
+const orderDetails = new Map();
+
 
 // =====================================================================
 // ПРАВА
@@ -89,8 +109,13 @@ function canArchiveOrder(order) {
  * @returns {Promise<object|null>}
  */
 async function findOrderForAction(id) {
-    const cached = ordersCache.find(o => o.id === id);
-    if (cached) return cached;
+    // 1) Строка текущей страницы — в ней позиции уже есть (загружены вместе
+    //    со списком).
+    const fromPage = ordersCache.find((order) => order.id === id && (order._items || []).length > 0);
+    if (fromPage) return fromPage;
+
+    // 2) Открытая в этой сессии карточка — в ней позиции добраны при открытии.
+    if (orderDetails.has(id)) return orderDetails.get(id);
 
     const { data, error } = await db.select('orders', {
         select: '*',
@@ -103,21 +128,15 @@ async function findOrderForAction(id) {
         return null;
     }
 
+    // Позиции добираем всегда — их строят окна счёта, доставки и закрытия
+    // («У заявки нет позиций» вместо списка работ было бы ошибкой). Один
+    // запрос по order_items_order_idx (database/migrate-v2.9-scale-indexes.sql)
+    // дешевле, чем держать в памяти все заявки с позициями.
+    const { data: items } = await db.select('order_items', { filters: { order_id: id } });
+    data._items = items || [];
+    orderDetails.set(id, data);
+
     return data;
-}
-
-/**
- * Видит ли текущий пользователь эту заявку?
- */
-function canSeeOrder(order) {
-    const emp = getEmployee();
-    if (!emp) return false;
-
-    // Если не прораб — видит все
-    if (emp.position !== 'Прораб') return true;
-
-    // Прораб видит только свои объекты
-    return order.created_by_employee_id === emp.id;
 }
 
 // =====================================================================
@@ -141,10 +160,45 @@ function showOrdersWarning(text) {
     el.classList.toggle('hidden', !text);
 }
 
+/**
+ * Фильтр по вкладке — уходит НА СЕРВЕР.
+ *
+ * Вкладка «🔄 Активные» — это два статуса сразу (new + in_progress), поэтому
+ * условие 'status.in', а не равенство.
+ */
+function ordersStatusFilter() {
+    if (currentFilter === 'all') return {};
+    if (currentFilter === 'active') return { 'status.in': ['new', 'in_progress'] };
+
+    return { status: currentFilter };
+}
+
+/**
+ * Все условия запроса списка заявок: вкладка + права + поиск.
+ *
+ * Права (прораб видит только свои заявки) и поиск идут в базу вместе со
+ * страницей: фильтровать их в браузере нельзя — тогда «Показано 1-25 из 137»
+ * считалось бы по всем заявкам, а на экране было бы 4 карточки.
+ */
+function ordersFilters() {
+    const filters = { ...ordersStatusFilter() };
+
+    const emp = getEmployee();
+    if (emp && emp.position === 'Прораб') {
+        filters.created_by_employee_id = emp.id;
+    }
+
+    // Поиск по номеру заявки и поставщику. Пустой текст → null, фильтр не
+    // добавляем (см. db.textSearch: «%» вернул бы всю таблицу).
+    const search = db.textSearch(['request_number', 'supplier'], ordersSearch);
+
+    return search ? { ...filters, ...search } : filters;
+}
+
 export async function loadOrders() {
     log.info('Загрузка заявок...');
 
-    const { data, error } = await db.select('orders', {
+    const { data, error, count } = await db.selectPage('orders', {
         select: `
             *,
             project:projects ( id, name ),
@@ -152,7 +206,10 @@ export async function loadOrders() {
             created_by_emp:employees!orders_created_by_employee_id_fkey ( id, name, position ),
             payer:employees!orders_payer_employee_id_fkey ( id, name, position )
         `,
-        orderBy: { column: 'created_at', asc: false }
+        filters: ordersFilters(),
+        orderBy: { column: 'created_at', asc: false },
+        page: ordersPage,
+        pageSize: ordersPageSize
     });
 
     if (error) {
@@ -165,11 +222,18 @@ export async function loadOrders() {
 
     showOrdersWarning('');
 
-    // Фильтруем по правам
-    const allOrders = data || [];
-    ordersCache = allOrders.filter(canSeeOrder);
+    ordersCache = data || [];
+    ordersTotal = count;
 
-    // Загружаем позиции одним запросом
+    // Последнюю заявку страницы могли удалить или убрать в архив — тогда
+    // страница опустела. Показываем предыдущую, а не пустой экран с
+    // подписью «Заявок нет», хотя заявки есть.
+    if (ordersCache.length === 0 && ordersPage > 1) {
+        ordersPage -= 1;
+        return loadOrders();
+    }
+
+    // Позиции заявок страницы — одним запросом (25 заявок = один запрос).
     if (ordersCache.length > 0) {
         const orderIds = ordersCache.map(o => o.id);
         const { data: items } = await db.select('order_items', {
@@ -195,18 +259,55 @@ export async function loadOrders() {
 // ФИЛЬТРАЦИЯ
 // =====================================================================
 
+/**
+ * Строки для показа. Фильтры применила база (см. ordersFilters), поэтому
+ * здесь только текущая страница — перефильтровывать нечего.
+ */
 function getFilteredOrders() {
-    if (currentFilter === 'all') return ordersCache;
-
-    if (currentFilter === 'active') {
-        return ordersCache.filter(o => o.status === 'new' || o.status === 'in_progress');
-    }
-
-    return ordersCache.filter(o => o.status === currentFilter);
+    return ordersCache;
 }
 
-export function switchOrdersTab(filter) {
+/**
+ * Панель списка: поиск, «Показано 1-25 из 137», страницы.
+ * Разметку и события даёт общий модуль js/pagination.js.
+ */
+function renderOrdersToolbar() {
+    renderToolbar('orders-toolbar', {
+        id: 'orders',
+        searchValue: ordersSearch,
+        searchPlaceholder: t('orders.searchPlaceholder'),
+        page: ordersPage,
+        pageSize: ordersPageSize,
+        count: ordersTotal,
+        rowsOnPage: ordersCache.length,
+
+        // Любое изменение фильтра — это НОВЫЙ запрос: списка целиком в
+        // браузере больше нет, поэтому возвращаемся на первую страницу
+        // (иначе с 5-й страницы старого фильтра попадёшь в пустоту).
+        onSearch: (text) => {
+            ordersSearch = text;
+            ordersPage = 1;
+            loadOrders();
+        },
+        onPage: (page) => {
+            ordersPage = page;
+            loadOrders();
+        },
+        onPageSize: (size) => {
+            ordersPageSize = Math.min(Number(size) || db.PAGE_SIZE, db.MAX_PAGE_SIZE);
+            ordersPage = 1;
+            loadOrders();
+        }
+    });
+}
+
+export async function switchOrdersTab(filter) {
+    const changed = filter !== currentFilter;
     currentFilter = filter;
+
+    // Другая вкладка — другой набор строк: снова с первой страницы, иначе
+    // сотрудник попадал бы на «пустую» пятую страницу нового фильтра.
+    if (changed) ordersPage = 1;
 
     const filters = ['active', 'new', 'in_progress', 'delivered', 'closed', 'archived', 'all'];
     filters.forEach(f => {
@@ -221,7 +322,8 @@ export function switchOrdersTab(filter) {
         }
     });
 
-    renderOrders();
+    // Вкладка — фильтр на стороне базы: перечитываем страницу заявок.
+    await loadOrders();
 }
 
 // =====================================================================
@@ -248,14 +350,24 @@ export function renderOrders() {
         createBtn.style.display = canCreateOrder() ? '' : 'none';
     }
 
+    // Панель поиска и страниц рисуем всегда — в том числе когда строк нет:
+    // без неё из пустого списка не выйти (не видно, что фильтр не пустой).
+    renderOrdersToolbar();
+
     if (filtered.length === 0) {
+        // Отдельная подпись для поиска: «Заявок нет» рядом с непустым
+        // поиском читается как «в базе ничего нет», хотя строки просто не
+        // подошли под запрос.
+        const title = ordersSearch ? 'Ничего не найдено' : 'Заявок нет';
+        const hint = ordersSearch
+            ? `По запросу «${escapeHtml(ordersSearch)}» заявок нет. Измените запрос или очистите поиск.`
+            : (canCreateOrder() ? 'Нажми «➕ Создать заявку», чтобы оформить новую' : 'Пока заявок нет');
+
         container.innerHTML = `
             <div class="bg-white rounded-xl shadow-sm border-2 border-dashed border-gray-300 p-8 text-center space-y-2">
-                <div class="text-5xl">📦</div>
-                <h3 class="font-bold text-gray-700">Заявок нет</h3>
-                <p class="text-sm text-gray-500">
-                    ${canCreateOrder() ? 'Нажми «➕ Создать заявку», чтобы оформить новую' : 'Пока заявок нет'}
-                </p>
+                <div class="text-5xl">${ordersSearch ? '🔍' : '📦'}</div>
+                <h3 class="font-bold text-gray-700">${title}</h3>
+                <p class="text-sm text-gray-500">${hint}</p>
             </div>
         `;
         return;
@@ -412,7 +524,12 @@ export async function openOrderDetail(id) {
 
         const { data: items } = await db.select('order_items', { filters: { order_id: id } });
         order._items = items || [];
-        ordersCache.push(order);
+
+        // Карточку запоминаем отдельно от списка: из неё действия (счёт,
+        // доставка, закрытие) берут позиции. В ordersCache НЕ кладём — там
+        // лежит ровно текущая страница списка (v2.9.0), и лишняя строка
+        // показалась бы в ней чужой карточкой.
+        orderDetails.set(id, order);
     }
 
     currentOrderId = id;
@@ -833,7 +950,7 @@ export async function takeOrderToWork(id) {
         return;
     }
 
-    const order = ordersCache.find(o => o.id === id);
+    const order = await findOrderForAction(id);
     if (!order) {
         toast('Заявка не найдена', 'error');
         return;
@@ -869,7 +986,9 @@ export async function openCloseOrderModal(id) {
         return;
     }
 
-    const order = ordersCache.find(o => o.id === id);
+    // Заявку берём из кэша страницы, иначе из базы: карточку открывают и с
+    // «Рабочего экрана», а списка «Снабжения» в браузере может не быть.
+    const order = await findOrderForAction(id);
     if (!order) {
         toast('Заявка не найдена', 'error');
         return;
@@ -887,6 +1006,10 @@ export async function openCloseOrderModal(id) {
     }
 
     currentOrderId = id;
+    // Заявку открытой карточки держим отдельно: подсказки в окне доставки
+    // пересчитываются на каждое нажатие радиокнопки (и при смене языка), а
+    // списка целиком в браузере больше нет — v2.9.0.
+    currentOrder = order;
     hideModal('order-detail-modal');
 
     const titleEl = document.getElementById('close-order-title');
@@ -975,7 +1098,9 @@ export function recalcCloseOrderTotal() {
  * (onchange в index.html → window.updateCloseOrderPaymentHints()).
  */
 export function updateCloseOrderPaymentHints() {
-    const order = ordersCache.find(o => o.id === currentOrderId);
+    // Заявку помним с момента открытия окна доставки (openCloseOrderModal):
+    // списка всех заявок в браузере больше нет — v2.9.0.
+    const order = currentOrder;
     const source = document.querySelector('input[name="close-order-payment-source"]:checked')?.value || 'company';
 
     // Фирма (безнал по счёту) → «Ожидает оплаты», пока финансист не отметит
@@ -1010,7 +1135,7 @@ export async function closeOrder(event) {
         return;
     }
 
-    const order = ordersCache.find(o => o.id === orderId);
+    const order = await findOrderForAction(orderId);
     if (!order) {
         toast('Заявка не найдена', 'error');
         return;
@@ -1346,7 +1471,7 @@ export async function openOrderInvoiceModal(orderId) {
         return;
     }
 
-    const order = ordersCache.find(o => o.id === orderId);
+    const order = await findOrderForAction(orderId);
     if (!order) {
         toast('Заявка не найдена', 'error');
         return;
@@ -1677,7 +1802,7 @@ export async function saveOrderInvoice(event) {
     }
 
     const orderId = parseInt(document.getElementById('order-invoice-id').value, 10);
-    const order = ordersCache.find(o => o.id === orderId);
+    const order = await findOrderForAction(orderId);
     if (!order) {
         toast('Заявка не найдена', 'error');
         return;
@@ -1910,7 +2035,7 @@ export async function saveOrderInvoice(event) {
 
 /** Открывает файл счёта по заявке (подписанная ссылка). */
 export async function viewOrderInvoice(orderId) {
-    const order = ordersCache.find(o => o.id === orderId);
+    const order = await findOrderForAction(orderId);
     if (!order || !order.invoice_path) {
         toast('Файл счёта не загружен', 'warning');
         return;
@@ -1984,7 +2109,7 @@ export async function deleteOrder(id) {
         return;
     }
 
-    const order = ordersCache.find(o => o.id === id);
+    const order = await findOrderForAction(id);
     if (!order) return;
 
     if (order.status !== 'new') {
