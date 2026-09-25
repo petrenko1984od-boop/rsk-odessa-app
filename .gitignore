@@ -8,10 +8,10 @@ Desktop.ini
 .idea/
 *.swp
 
-# ---- Node (если появятся тулзы/тесты) ----
+# ---- Node (сборка CSS, линтер, проверочные прогоны) ----
+# package-lock.json КОММИТИТСЯ: по нему CI ставит те же версии (`npm ci`).
 node_modules/
 npm-debug.log*
-package-lock.json
 
 # ---- Секреты ----
 .env

@@ -1,0 +1,123 @@
+# =====================================================================
+# НЕПРЕРЫВНАЯ ИНТЕГРАЦИЯ (GitHub Actions): проверки RSK Odessa
+# =====================================================================
+# Зачем: перед выкладкой руками делают одно и то же — собирают CSS, гоняют
+# линтер и прогоны. Если шаг забыть, ошибка уезжает к сотрудникам (так было с
+# «лишними скобками» в поиске заявок: прогон их ловил, а запускали его редко).
+# Здесь те же шаги запускаются на каждый push и pull request.
+#
+# Три задачи — по цене и по потребностям:
+#   * «Прогоны без браузера» — быстрые (сборка CSS, линтер, схема/миграции,
+#     словарь языков, НДС, фронтенд). Сборка CSS ДОЛЖНА совпасть с
+#     закоммиченной: `git diff` после `npm run build` ругается, если правила
+#     разметку, а css/tailwind.css не пересобрали;
+#   * «Миграции в настоящем Postgres» — SQL-файлы выполняются в pglite;
+#   * «Прогоны в браузере» — настоящий Chrome, мок базы, реальные нажатия.
+#
+# Секреты не нужны: браузерные прогоны работают на моке Supabase, а живая база
+# проверяется отдельно и локально (tools/checks/schema-live-check.mjs).
+# =====================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Прогоны без браузера
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Зависимости по замку
+        run: npm ci
+
+      - name: Сборка Tailwind (css/tailwind.css)
+        run: npm run build
+
+      - name: Собранный CSS совпадает с исходниками
+        run: git diff --exit-code -- css/tailwind.css
+
+      - name: Линтер
+        run: npm run lint
+
+      - name: Прогоны без браузера
+        run: |
+          node tools/checks/migration-check.mjs
+          node tools/checks/i18n-check.mjs
+          node tools/checks/vat-check.mjs
+          node tools/checks/frontend-check.mjs
+
+      - name: Отчёты прогонов
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-static
+          path: /tmp/rsk-fin/*.txt
+          if-no-files-found: ignore
+
+  migrations:
+    name: Миграции в настоящем Postgres
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Зависимости прогонов (pglite)
+        run: npm --prefix tools/checks ci
+
+      - name: Миграции v2.4.0 … v2.9.0 в pglite
+        run: node tools/checks/migration-run-check.mjs
+
+  browser:
+    name: Прогоны в браузере
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # Chrome ставится в задаче: на ubuntu-latest его нет, а прогонам нужен
+      # настоящий браузер (они поднимают его сами и говорят с ним по CDP).
+      - name: Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Зависимости по замку
+        run: npm ci
+
+      - name: Прогоны в браузере
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          node tools/checks/invoice-check.mjs
+          node tools/checks/fin-workflow-check.mjs
+          node tools/checks/scale-check.mjs
+          SCENARIO=A node tools/checks/fin-fix-check.mjs
+          FLOW=order node tools/checks/fin-fix-check.mjs
+
+      - name: Отчёты прогонов
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-browser
+          path: /tmp/rsk-fin/*.txt
+          if-no-files-found: ignore

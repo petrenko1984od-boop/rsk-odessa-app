@@ -45,7 +45,7 @@ function operationLabel(operation) {
     return labels[operation.operation_type] || operation.operation_type || 'Операция';
 }
 
-function renderMetric(icon, label, value, detail, tone = 'emerald', onClick = null) {
+function renderMetric(icon, label, value, detail, tone = 'emerald', action = null, arg = null) {
     const tones = {
         emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
         blue: 'border-blue-200 bg-blue-50 text-blue-800',
@@ -65,10 +65,17 @@ function renderMetric(icon, label, value, detail, tone = 'emerald', onClick = nu
         </div>
     `;
 
-    if (!onClick) return content;
+    if (!action) return content;
+
+    // Действие называется именем (`data-action`), а не строкой кода: так
+    // разметка подчиняется CSP, а опечатка ловится прогоном frontend-check
+    // (см. js/actions.js).
+    const actionAttrs = arg === null || arg === undefined
+        ? `data-action="${action}"`
+        : `data-action="${action}" data-arg="${arg}"`;
 
     return `
-        <button type="button" onclick="${escapeHtml(onClick)}" class="w-full text-left focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
+        <button type="button" ${actionAttrs} class="w-full text-left focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
             ${content}
         </button>
     `;
@@ -100,9 +107,12 @@ function renderOperations(operations, employees) {
 function renderForemanTasks(tasks, projects) {
     const projectMap = new Map((projects || []).map(project => [project.id, project.name]));
     const groups = [
-        { status: 'pending', title: 'Новые', tone: 'yellow' },
-        { status: 'in_progress', title: 'В работе', tone: 'blue' },
-        { status: 'done', title: 'Законченные', tone: 'green' }
+        // `badge` — целые имена классов, а не сборка из `tone`: Tailwind
+        // собирается заранее (`npm run build`), а склейка вида
+        // `bg-${tone}-100` в готовый CSS не попадает (см. tailwind.config.js).
+        { status: 'pending', title: 'Новые', tone: 'yellow', badge: 'bg-yellow-100 text-yellow-800' },
+        { status: 'in_progress', title: 'В работе', tone: 'blue', badge: 'bg-blue-100 text-blue-800' },
+        { status: 'done', title: 'Законченные', tone: 'green', badge: 'bg-green-100 text-green-800' }
     ];
 
     return groups.map(group => {
@@ -111,11 +121,11 @@ function renderForemanTasks(tasks, projects) {
             <section class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
                 <div class="flex items-center justify-between gap-2 border-b pb-3">
                     <h3 class="text-sm font-bold text-gray-800">${group.title}</h3>
-                    <span class="rounded-full bg-${group.tone}-100 px-2 py-1 text-xs font-bold text-${group.tone}-800">${groupTasks.length}</span>
+                    <span class="rounded-full ${group.badge} px-2 py-1 text-xs font-bold">${groupTasks.length}</span>
                 </div>
                 <div class="mt-2 space-y-2">
                     ${groupTasks.length ? groupTasks.map(task => `
-                        <button onclick="window.openTaskDetail(${task.id})" class="w-full rounded-lg border p-3 text-left transition hover:bg-emerald-50/60">
+                        <button data-action="openTaskDetail" data-arg="${task.id}" class="w-full rounded-lg border p-3 text-left transition hover:bg-emerald-50/60">
                             <p class="text-sm font-semibold text-gray-800">${escapeHtml(task.title || task.text || 'Без названия')}</p>
                             <p class="mt-1 text-xs text-gray-500">${escapeHtml(projectMap.get(task.project_id) || 'Объект не указан')}${task.deadline ? ` · Срок: ${formatDate(task.deadline)}` : ''}</p>
                         </button>
@@ -199,7 +209,7 @@ function renderDashboardBlock({ id, title, badge, badgeClass = 'bg-emerald-100 t
                 <div class="flex flex-wrap items-center gap-2">
                     ${actions}
                     <button type="button" id="dash-block-${id}-toggle" aria-expanded="${hidden ? 'false' : 'true'}"
-                            onclick="window.toggleDashboardBlock('${id}')"
+                            data-action="toggleDashboardBlock" data-arg="${id}"
                             class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-100">
                         ${hidden ? 'Показать' : 'Скрыть'}
                     </button>
@@ -292,7 +302,7 @@ function renderBlockFilters(blockId, filters, active, handler) {
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200';
 
                 return `<button type="button" id="${blockId}-filter-${filter.id}"
-                                onclick="window.${handler}('${filter.id}')"
+                                data-action="${handler}" data-arg="${filter.id}"
                                 class="px-3 py-1.5 rounded-lg text-xs font-semibold transition ${cls}">${filter.label} (${filter.count})</button>`;
             }).join('')}
         </div>
@@ -338,7 +348,7 @@ function renderMyCashRequests() {
     const activeCount = mine.filter(req => ['revision', 'approved', 'pending'].includes(req.status)).length;
 
     const createBtn = can('cash_expense_self')
-        ? `<button type="button" onclick="window.openNewCashRequestForm()"
+        ? `<button type="button" data-action="openNewCashRequestForm"
                    class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">➕ Создать заявку</button>`
         : '';
 
@@ -405,7 +415,7 @@ function renderMyCashRequestCard(req, status) {
 
     const editBtn = req.status === 'revision'
         ? `<div class="mt-2 flex justify-end">
-                <button type="button" onclick="event.stopPropagation(); window.openCashRequestEdit(${req.id})"
+                <button type="button" data-action="openCashRequestEdit" data-arg="${req.id}" data-stop
                         class="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-600">
                     ✏️ Исправить и отправить
                 </button>
@@ -414,8 +424,8 @@ function renderMyCashRequestCard(req, status) {
 
     return `
         <div role="button" tabindex="0"
-             onclick="window.openCashRequestDetail(${req.id})"
-             onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.openCashRequestDetail(${req.id}); }"
+             data-action="openCashRequestDetail" data-arg="${req.id}"
+             data-on="click keydown" data-keys="Enter Space" data-prevent
              class="cursor-pointer rounded-lg border ${badge.border} p-3 text-left transition hover:bg-emerald-50/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
@@ -474,7 +484,7 @@ function renderMyMaterialOrders() {
     const activeOrders = rows.filter(order => ORDER_ACTIVE_STATUSES.includes(order.status));
 
     const createBtn = can('create_order')
-        ? `<button type="button" onclick="window.openNewOrderForm()"
+        ? `<button type="button" data-action="openNewOrderForm"
                    class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">📦 Заказать материалы</button>`
         : '';
 
@@ -517,7 +527,7 @@ function renderMyMaterialOrdersBody() {
         const sectionName = order.section?.name || '';
 
         return `
-            <button type="button" onclick="window.openOrderDetail(${order.id})"
+            <button type="button" data-action="openOrderDetail" data-arg="${order.id}"
                     class="w-full rounded-lg border ${status.border} p-3 text-left transition hover:bg-emerald-50/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/50">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <div class="flex flex-wrap items-center gap-2">
@@ -618,13 +628,13 @@ function renderTaskSummary(tasks) {
 
     return `
         <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
-            ${renderMetric('🟡', 'В работе', active, `${tasks.filter(task => task.status === 'pending').length} новых · ${tasks.filter(task => task.status === 'in_progress').length} в процессе`, 'amber', "openTaskFilterModal('active')")}
-            ${renderMetric('🔴', 'Просрочено', overdue, 'дедлайн нарушен', overdue ? 'red' : 'emerald', "openTaskFilterModal('overdue')")}
-            ${renderMetric('🟢', 'Выполнено', done30, 'за последние 30 дней', 'emerald', "openTaskFilterModal('done_30')")}
+            ${renderMetric('🟡', 'В работе', active, `${tasks.filter(task => task.status === 'pending').length} новых · ${tasks.filter(task => task.status === 'in_progress').length} в процессе`, 'amber', 'openTaskFilterModal', 'active')}
+            ${renderMetric('🔴', 'Просрочено', overdue, 'дедлайн нарушен', overdue ? 'red' : 'emerald', 'openTaskFilterModal', 'overdue')}
+            ${renderMetric('🟢', 'Выполнено', done30, 'за последние 30 дней', 'emerald', 'openTaskFilterModal', 'done_30')}
         </div>
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3 text-xs text-gray-500">
             <span>Всего задач в системе: <strong class="text-gray-800">${tasks.length}</strong></span>
-            <button type="button" onclick="openTaskFilterModal('all')" class="font-semibold text-emerald-700 transition hover:text-emerald-900">📋 Все задачи</button>
+            <button type="button" data-action="openTaskFilterModal" data-arg="all" class="font-semibold text-emerald-700 transition hover:text-emerald-900">📋 Все задачи</button>
         </div>
     `;
 }
@@ -777,7 +787,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
 
     const overrunRows = projectRows.slice(0, 12).map((row, index) => {
         return `
-            <tr onclick="openMaterialOverrunDetail(${index})" class="cursor-pointer transition hover:bg-emerald-50/60">
+            <tr data-action="openMaterialOverrunDetail" data-arg="${index}" class="cursor-pointer transition hover:bg-emerald-50/60">
                 <td class="px-2 py-3 text-left text-sm font-semibold text-gray-800">${escapeHtml(row.name || '—')}</td>
                 <td class="px-2 py-3 text-left text-sm text-gray-700">${escapeHtml(row.sectionName || '—')}</td>
                 <td class="px-2 py-3 text-right text-sm font-bold text-red-600">+${Math.round(row.percent || 0)}%</td>
@@ -803,7 +813,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                     <h2 class="mt-1 text-2xl font-bold text-gray-800">Компания в целом</h2>
                     <p class="mt-1 text-sm text-gray-500">Финансы, задачи, задолженности</p>
                 </div>
-                <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
+                <button data-action="loadDashboard" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
             </div>
 
             <div class="flex min-w-0 flex-col gap-3">
@@ -841,7 +851,7 @@ function renderExecutiveDashboard({ employees, balances, tasks, orders, orderIte
                     <div class="border-t border-gray-200 p-5">
                         ${canCreateTask ? `
                             <div class="mb-3 flex justify-end">
-                                <button type="button" onclick="window.openNewTaskForm()"
+                                <button type="button" data-action="openNewTaskForm"
                                         class="shrink-0 rounded-lg bg-[#15803d] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#166534]">
                                     ➕ Поставить задачу
                                 </button>
@@ -907,8 +917,7 @@ export function openMaterialOverrunDetail(index) {
 
     const materialOverrun = row.materialsFact - row.materialsPlan;
     const worksOverrun = row.worksFact - row.worksPlan;
-    const totalOverrun = row.totalFact - row.totalPlan;
-    const title = document.getElementById('material-overrun-title');
+        const title = document.getElementById('material-overrun-title');
     const content = document.getElementById('material-overrun-content');
     const projectButton = document.getElementById('material-overrun-project-button');
     if (!title || !content || !projectButton) return;
@@ -994,7 +1003,7 @@ export async function loadDashboard() {
                             <h2 class="mt-1 text-2xl font-bold text-gray-800">Задания от руководства</h2>
                             <p class="mt-1 text-sm text-gray-500">Только ваши задачи и заявки по объектам, где вы ответственный</p>
                         </div>
-                        <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
+                        <button data-action="loadDashboard" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
                     </div>
 
                     <!-- ПОРЯДОК БЛОКОВ РАБОЧЕГО ЭКРАНА: 1) задачи, 2) заявки на
@@ -1066,13 +1075,15 @@ export async function loadDashboard() {
         return;
     }
 
-    const [projectsResult, sectionsResult, expensesResult, balancesResult, tasksResult, ordersResult, operationsResult, employeesResult] = await Promise.all([
+    // Заявки на материалы в это окно не читаются: раньше здесь стоял запрос
+    // `db.select('orders', …)`, результат которого нигде не использовался —
+    // лишнее чтение всей таблицы на каждый показ рабочего экрана.
+    const [projectsResult, sectionsResult, expensesResult, balancesResult, tasksResult, operationsResult, employeesResult] = await Promise.all([
         db.select('projects', { select: 'id, name, foreman_id' }),
         db.select('sections', { select: 'id, project_id, plan_total' }),
         db.select('cash_operations', { filters: { operation_type: 'expense' } }),
         db.select('employee_cash_balance', { select: 'employee_id, balance' }),
         db.select('tasks', { select: 'id, title, project_id, status, deadline, created_at' }),
-        db.select('orders', { select: 'id, project_id, request_number, status, created_at' }),
         db.select('cash_operations', { select: 'id, employee_id, project_id, operation_type, amount, operation_date, created_at', orderBy: { column: 'created_at', asc: false }, limit: 20 }),
         db.select('employees', { select: 'id, name, position' }),
         // Свои заявки на финансирование — блок на рабочем экране (кэш модуля)
@@ -1092,7 +1103,6 @@ export async function loadDashboard() {
     const expenses = (expensesResult.data || []).filter(isVisibleProjectData);
     const balances = (balancesResult.data || []).filter(item => !isForeman || item.employee_id === employee.id);
     const tasks = (tasksResult.data || []).filter(isVisibleProjectData);
-    const orders = (ordersResult.data || []).filter(isVisibleProjectData);
     const operations = (operationsResult.data || []).filter(isVisibleProjectData).slice(0, 6);
     const employees = employeesResult.data || [];
 
@@ -1100,8 +1110,7 @@ export async function loadDashboard() {
     const fact = expenses.reduce((sum, operation) => sum + (Number(operation.amount) || 0), 0);
     const debt = balances.reduce((sum, item) => sum + Math.max(0, -(Number(item.balance) || 0)), 0);
     const overdueTasks = tasks.filter(isOverdueTask);
-    const activeOrders = orders.filter(order => order.status === 'new' || order.status === 'in_progress');
-    const activeProjects = projects.filter(isActiveProject);
+        const activeProjects = projects.filter(isActiveProject);
     const scopeLabel = isForeman ? 'по вашим объектам' : 'по компании';
 
     // Свои заявки на финансирование — блок на рабочем экране. Список кладём
@@ -1117,7 +1126,7 @@ export async function loadDashboard() {
                     <h2 class="mt-1 text-2xl font-bold text-gray-800">Добрый день, ${escapeHtml(employee?.name || 'коллега')}</h2>
                     <p class="mt-1 text-sm text-gray-500">Ключевые показатели ${scopeLabel} на ${formatDate(new Date())}</p>
                 </div>
-                <button onclick="loadDashboard()" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
+                <button data-action="loadDashboard" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-800">↻ Обновить</button>
             </div>
 
             <div class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

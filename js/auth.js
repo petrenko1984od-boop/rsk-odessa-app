@@ -211,7 +211,7 @@ export async function getCurrentEmployee() {
  *   { allowed: false, reason: 'blocked' | 'fired' | 'not_linked', employee }
  */
 export async function checkEmployeeAccess() {
-    const { employee, error } = await getCurrentEmployee();
+    const { employee } = await getCurrentEmployee();
 
     // Нашли запись и она активна — доступ есть
     if (employee && (!employee.status || employee.status === 'active')) {
@@ -494,7 +494,7 @@ export function initLoginScreen(options = {}) {
         btn.disabled = true;
         btn.textContent = 'Регистрируем...';
 
-        const { user, error } = await signUp(email, password);
+        const { error } = await signUp(email, password);
 
         btn.disabled = false;
         btn.textContent = 'Зарегистрироваться';
@@ -530,7 +530,7 @@ export function initLoginScreen(options = {}) {
     });
 
     // ----- Слежение за изменениями сессии -----
-    onAuthChange((event, session) => {
+    onAuthChange((event) => {
         if (event === 'SIGNED_OUT') {
             showScreen(AUTH_SCREEN_ID);
             if (onLogout) onLogout();

@@ -40,7 +40,7 @@ import { db } from '../database.js';
 import { CONFIG } from '../config.js';
 import {
     log, escapeHtml, formatMoney, formatDate,
-    getOrderStatusBadge, isExtraSectionName,
+    getOrderStatusBadge,
     showModal, hideModal
 } from '../utils.js';
 import { canSeeTab } from '../permissions.js';
@@ -303,7 +303,7 @@ function renderExtraOperationRow(op, kind) {
         : '';
 
     return `
-        <button type="button" onclick="window.__openExtraCostDetail('${escapeHtml(String(op.id))}')"
+        <button type="button" data-action="__openExtraCostDetail" data-arg="${escapeHtml(String(op.id))}"
                 class="flex w-full items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white p-3 text-left text-xs transition hover:border-amber-300 hover:bg-amber-50/60">
             <div class="min-w-0 flex-1 space-y-1">
                 <p class="truncate font-semibold text-gray-800">${escapeHtml(extraOperationTitle(op))}</p>
@@ -365,7 +365,7 @@ function renderExtraOrdersBlock(orders) {
     const total = orders.reduce((sum, order) => sum + (Number(order.total_sum) || 0), 0);
 
     const rows = orders.map(order => `
-        <tr class="cursor-pointer hover:bg-amber-50/60" onclick="window.__openExtraOrderDetail(${order.id})">
+        <tr class="cursor-pointer hover:bg-amber-50/60" data-action="__openExtraOrderDetail" data-arg="${order.id}">
             <td class="p-2 font-semibold text-[#166534] whitespace-nowrap">${escapeHtml(order.request_number || '—')}</td>
             <td class="p-2 whitespace-nowrap text-gray-600">${formatDate(order.created_at)}</td>
             <td class="p-2 text-gray-700">${escapeHtml(order.supplier || '—')}</td>
@@ -463,7 +463,7 @@ export async function renderExtraCostsUI(project) {
         <div class="overflow-hidden rounded-xl border border-amber-200 bg-white shadow-sm">
             <div class="flex flex-wrap items-center justify-between gap-2 bg-amber-500 px-4 py-3 text-white">
                 <h3 class="text-sm font-bold">⚠ ${sectionName} (вне сметы)</h3>
-                <button onclick="window.__renderExtraCostsUI()"
+                <button data-action="__renderExtraCostsUI"
                         class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold transition hover:bg-amber-700">
                     ↻ Обновить
                 </button>
@@ -622,7 +622,7 @@ function showExtraCostDetail(op, order) {
 
     if (op && op.receipt_path) {
         actionsHtml.push(`
-            <button onclick="window.viewReceipt('${escapeHtml(op.receipt_path)}')"
+            <button data-action="viewReceipt" data-arg="${escapeHtml(op.receipt_path)}"
                     class="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-100">
                 📎 Открыть чек
             </button>
@@ -631,7 +631,7 @@ function showExtraCostDetail(op, order) {
 
     if (order && canSeeTab('orders')) {
         actionsHtml.push(`
-            <button onclick="window.__openExtraCostOrder(${order.id})"
+            <button data-action="__openExtraCostOrder" data-arg="${order.id}"
                     class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">
                 📦 Открыть карточку заявки
             </button>

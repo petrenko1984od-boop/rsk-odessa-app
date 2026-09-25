@@ -406,13 +406,13 @@ export function renderEstimateUI(project) {
                         </div>
                     </div>
                     <div class="flex gap-2 shrink-0">
-                        <button onclick="window.viewEstimateFile(${project.id})"
+                        <button data-action="viewEstimateFile" data-arg="${project.id}"
                                 class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1.5 rounded-lg font-semibold transition"
                                 title="Скачать Excel">
                             📥 Excel
                         </button>
                         ${canDelete ? `
-                            <button onclick="window.deleteEstimateUI(${project.id})" 
+                            <button data-action="deleteEstimateUI" data-arg="${project.id}" 
                                     class="bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1.5 rounded-lg transition"
                                     title="Удалить смету">
                                 🗑
@@ -434,7 +434,7 @@ export function renderEstimateUI(project) {
                 <div class="flex flex-col sm:flex-row gap-2">
                     <input type="file" id="estimate-file-input-${project.id}" accept=".xlsx, .xls"
                            class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-[#15803d] hover:file:bg-emerald-100 cursor-pointer border rounded-lg bg-white">
-                    <button onclick="window.uploadEstimateUI(${project.id})" class="bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow whitespace-nowrap">📤 Загрузить и разобрать</button>
+                    <button data-action="uploadEstimateUI" data-arg="${project.id}" class="bg-[#15803d] hover:bg-[#166534] text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow whitespace-nowrap">📤 Загрузить и разобрать</button>
                 </div>
             </div>
         `;
@@ -463,19 +463,15 @@ export function renderSectionsUI(project, expensesMap = {}, sectionsList = null)
         return;
     }
 
-    let totalPlanWorks = 0, totalPlanMaterials = 0, totalPlan = 0;
-    let totalFactWorks = 0, totalFactMaterials = 0, totalFact = 0;
+    let totalPlan = 0;
+    let totalFact = 0;
 
     sectionsData.forEach(s => {
         const ops = expensesMap[s.id] || [];
         const facts = calcFacts(ops);
 
-        totalPlanWorks += Number(s.plan_works) || 0;
-        totalPlanMaterials += Number(s.plan_materials) || 0;
-        totalPlan += Number(s.plan_total) || 0;
-        totalFactWorks += facts.works;
-        totalFactMaterials += facts.materials;
-        totalFact += facts.total;
+                        totalPlan += Number(s.plan_total) || 0;
+                        totalFact += facts.total;
     });
 
     const projectBalance = totalPlan - totalFact;
@@ -511,8 +507,7 @@ export function renderSectionsUI(project, expensesMap = {}, sectionsList = null)
 
         const balanceWorks = planWorks - facts.works;
         const balanceMaterials = planMaterials - facts.materials;
-        const balanceTotal = planTotal - facts.total;
-
+        
         const isOverWorks = facts.works > planWorks;
         const isOverMaterials = facts.materials > planMaterials;
         const isOverTotal = facts.total > planTotal;
@@ -529,7 +524,7 @@ export function renderSectionsUI(project, expensesMap = {}, sectionsList = null)
 
         return `
             <div class="border rounded-xl bg-white overflow-hidden transition shadow-sm">
-                <div onclick="window.toggleSectionDetails(${idx})" 
+                <div data-action="toggleSectionDetails" data-arg="${idx}" 
                      class="p-4 cursor-pointer hover:bg-emerald-50/40 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                     <div class="flex items-center gap-2 flex-1">
                         <span id="section-arrow-${idx}" class="text-xs font-bold text-[#15803d] transition-transform">▼</span>
@@ -640,7 +635,7 @@ function renderSectionOperations(operations) {
                 </div>
                 <div class="flex flex-col items-end gap-1 shrink-0">
                     <span class="font-bold text-red-600">− ${formatMoney(op.amount)}</span>
-                    ${op.receipt_path ? `<button onclick="event.stopPropagation(); window.viewReceipt('${escapeHtml(op.receipt_path)}')" class="text-[10px] text-blue-600 hover:underline">📎 Чек</button>` : ''}
+                    ${op.receipt_path ? `<button data-action="viewReceipt" data-arg="${escapeHtml(op.receipt_path)}" data-stop class="text-[10px] text-blue-600 hover:underline">📎 Чек</button>` : ''}
                 </div>
             </div>
         `;

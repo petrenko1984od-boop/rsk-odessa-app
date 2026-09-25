@@ -81,6 +81,7 @@ function codeLines(text) {
 }
 
 const TYPOGRAPHIC = /[\u00AB\u00BB\u2018\u2019\u201A\u201B\u201C\u201D\u201E\u2039\u203A]/u;
+// eslint-disable-next-line no-misleading-character-class -- рядом стоят неразрывные и нулевой ширины пробелы с ZWJ: именно их и надо найти
 const INVISIBLE = /[\u00A0\u2007\u202F\u200B\u200C\u200D\u2060\uFEFF]/u;
 
 /**

@@ -16,7 +16,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatMoney
+    formatDate
 } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 import { CONFIG } from '../config.js';
@@ -258,13 +258,13 @@ function renderFileRow(file, canManage) {
                 </div>
             </div>
             <div class="flex gap-1 shrink-0">
-                <button onclick="window.downloadProjectFile(${file.id})"
+                <button data-action="downloadProjectFile" data-arg="${file.id}"
                         class="bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-2 py-1 rounded text-[11px] font-semibold transition"
                         title="Скачать">
                     📥
                 </button>
                 ${canManage ? `
-                    <button onclick="window.deleteProjectFile(${file.id})"
+                    <button data-action="deleteProjectFile" data-arg="${file.id}"
                             class="bg-red-50 hover:bg-red-100 text-red-500 px-2 py-1 rounded text-[11px] font-semibold transition"
                             title="Удалить">
                         🗑

@@ -12,6 +12,7 @@
 import { db } from '../database.js';
 import {
     log, toast, formatMoney, formatDate, escapeHtml,
+    showModal, hideModal,
     parseNumber, roundMoney, isExtraSectionName, todayISO,
     isOwnDeliveryCovered, ownDeliveryCoveredOrderIds
 } from '../utils.js';
@@ -908,8 +909,8 @@ async function renderMyOperationsContent(emp) {
     if (canExpense || canReturn) {
         buttonsHtml = `
             <div class="flex flex-wrap gap-2 pt-2">
-                ${canExpense ? `<button onclick="window.myOpenExpense()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">🛒 Внести расход</button>` : ''}
-                ${canReturn ? `<button onclick="window.myOpenReturn()" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">↩️ Возврат</button>` : ''}
+                ${canExpense ? `<button data-action="myOpenExpense" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">🛒 Внести расход</button>` : ''}
+                ${canReturn ? `<button data-action="myOpenReturn" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow">↩️ Возврат</button>` : ''}
             </div>
         `;
     }
@@ -926,26 +927,26 @@ async function renderMyOperationsContent(emp) {
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
                         <label for="my-ops-filter-project" class="block text-[10px] font-semibold text-gray-500 mb-0.5">Объект</label>
-                        <select id="my-ops-filter-project" onchange="window.applyMyOperationsFilters()"
+                        <select id="my-ops-filter-project" data-action="applyMyOperationsFilters" data-on="change"
                                 class="w-full border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">Все объекты</option>
                         </select>
                     </div>
                     <div>
                         <label for="my-ops-filter-date-from" class="block text-[10px] font-semibold text-gray-500 mb-0.5">Дата с</label>
-                        <input type="date" id="my-ops-filter-date-from" onchange="window.applyMyOperationsFilters()"
+                        <input type="date" id="my-ops-filter-date-from" data-action="applyMyOperationsFilters" data-on="change"
                                class="w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                     </div>
                     <div>
                         <label for="my-ops-filter-date-to" class="block text-[10px] font-semibold text-gray-500 mb-0.5">Дата по</label>
-                        <input type="date" id="my-ops-filter-date-to" onchange="window.applyMyOperationsFilters()"
+                        <input type="date" id="my-ops-filter-date-to" data-action="applyMyOperationsFilters" data-on="change"
                                class="w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                     </div>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="window.resetMyOperationsFilters()"
+                    <button data-action="resetMyOperationsFilters"
                             class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-3 py-2 rounded-lg text-xs transition">🗑 Сброс фильтра</button>
-                    <button onclick="window.exportMyOperationsToExcel()"
+                    <button data-action="exportMyOperationsToExcel"
                             class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition shadow">📥 Excel</button>
                 </div>
             </div>
@@ -1036,7 +1037,7 @@ function renderOperationRow(op) {
     }
 
     const receiptHtml = op.receipt_path 
-        ? `<button onclick="window.viewReceipt('${escapeHtml(op.receipt_path)}')" class="text-[10px] text-blue-600 hover:underline mt-1">📎 Просмотреть чек</button>`
+        ? `<button data-action="viewReceipt" data-arg="${escapeHtml(op.receipt_path)}" class="text-[10px] text-blue-600 hover:underline mt-1">📎 Просмотреть чек</button>`
         : '';
 
     return `
@@ -1473,13 +1474,13 @@ export function addExpenseItemRow() {
                 <input type="text" placeholder="Наименование (Цемент М400)" 
                        class="item-name w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
             </div>
-            <button onclick="document.getElementById('${rowId}').remove(); window.recalcExpenseTotal()" 
+            <button data-action="recalcExpenseTotal" data-remove="${rowId}"
                     class="text-red-500 hover:text-red-700 px-2 py-1 text-base font-bold">✕</button>
         </div>
         <div class="grid grid-cols-3 gap-2">
             <input type="number" step="any" placeholder="Кол-во" 
                    class="item-qty border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                   oninput="window.recalcExpenseTotal()">
+                   data-action="recalcExpenseTotal" data-on="input">
             <select class="item-unit border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 <option value="шт">шт</option>
                 <option value="м">м</option>
@@ -1493,7 +1494,7 @@ export function addExpenseItemRow() {
             </select>
             <input type="number" step="any" placeholder="Цена за ед." 
                    class="item-price border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                   oninput="window.recalcExpenseTotal()">
+                   data-action="recalcExpenseTotal" data-on="input">
         </div>
     `;
     container.appendChild(row);

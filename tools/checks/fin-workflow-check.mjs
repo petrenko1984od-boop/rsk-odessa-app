@@ -186,7 +186,7 @@ function rowsFor(table, params) {
             const requested = params.employee_id ? [Number(String(params.employee_id).replace(/^eq\./, ''))] : store.employees.map((e) => e.id);
             return requested
                 .map((id) => ({ employee_id: id, name: employee(id)?.name || '—', balance: balanceOf(id) }))
-                .filter((row) => params.employee_id || true);
+                .filter(() => params.employee_id || true);
         }
         default: return [];
     }
@@ -1150,14 +1150,14 @@ try {
 
     const materialsCards = await evaluate('(() => {' +
         'const cards = Array.prototype.filter.call(document.querySelectorAll(\"#dash-block-materials-body button\"),' +
-        ' (b) => (b.getAttribute(\"onclick\") || \"\").indexOf(\"openOrderDetail\") >= 0);' +
+        ' (b) => (b.getAttribute(\"data-action\") || \"\") === \"openOrderDetail\");' +
         'return { count: cards.length, text: cards.map((c) => c.innerText.trim()).join(\" || \") }; })()');
     ok('каждая карточка заявки кликабельна целиком (3 заявки — 3 карточки)',
         materialsCards.count === 3, JSON.stringify(materialsCards).slice(0, 220));
 
     await evaluate('(() => {' +
         'const card = Array.prototype.filter.call(document.querySelectorAll(\"#dash-block-materials-body button\"),' +
-        ' (b) => (b.getAttribute(\"onclick\") || \"\").indexOf(\"openOrderDetail(903)\") >= 0)[0];' +
+        ' (b) => b.getAttribute(\"data-action\") === \"openOrderDetail\" && b.getAttribute(\"data-arg\") === \"903\")[0];' +
         'if (card) card.click();' +
         'return !!card; })()');
     await sleep(900);
@@ -1206,7 +1206,7 @@ try {
 
     const financeCardsClickable = await evaluate('(() => {' +
         'const cards = Array.prototype.filter.call(document.querySelectorAll("#dash-block-finance-body [role=button]"),' +
-        ' (el) => (el.getAttribute("onclick") || "").indexOf("openCashRequestDetail") >= 0);' +
+        ' (el) => (el.getAttribute("data-action") || "") === "openCashRequestDetail");' +
         'return { count: cards.length, text: cards.map((c) => c.innerText.trim()).join(" || ") }; })()');
     ok('карточка заявки на финансирование нажимается целиком (2 заявки — 2 карточки)',
         financeCardsClickable.count === 2, JSON.stringify(financeCardsClickable).slice(0, 240));
@@ -1216,7 +1216,7 @@ try {
     // («Дублирует заявку Ф-1/26») — по тексту карточка выбиралась бы не та.
     const clickFinanceCard = (number) => evaluate('(() => {' +
         'const cards = Array.prototype.filter.call(document.querySelectorAll("#dash-block-finance-body [role=button]"),' +
-        ' (el) => (el.getAttribute("onclick") || "").indexOf("openCashRequestDetail") >= 0);' +
+        ' (el) => (el.getAttribute("data-action") || "") === "openCashRequestDetail");' +
         'const card = cards.filter((el) => { const n = el.querySelector("span.font-mono");' +
         ' return !!n && n.innerText.trim() === "' + number + '"; })[0];' +
         'if (card) card.click();' +
@@ -1278,7 +1278,7 @@ try {
     // убираем в архив кнопкой в подробной карточке — её видит автор заявки.
     await evaluate('(() => {' +
         'const card = Array.prototype.filter.call(document.querySelectorAll("#dash-block-materials-body button"),' +
-        ' (b) => (b.getAttribute("onclick") || "").indexOf("openOrderDetail(903)") >= 0)[0];' +
+        ' (b) => b.getAttribute("data-action") === "openOrderDetail" && b.getAttribute("data-arg") === "903")[0];' +
         'if (card) card.click();' +
         'return !!card; })()');
     await sleep(900);

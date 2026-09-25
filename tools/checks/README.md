@@ -20,7 +20,10 @@ Chrome** и убеждается, что интерфейс делает име�
   только для браузерных прогонов.
 
 Дополнительные пакеты ставить не нужно — только стандартная библиотека Node
-(исключение — `migration-run-check.mjs`, см. выше).
+(исключение — `migration-run-check.mjs`, см. выше). Установка пакетов
+приложения (`npm install` в корне) нужна одному прогону: `frontend-check.mjs`
+сверяет сборку Tailwind, а для точного сравнения ему нужен `node_modules/tailwindcss`
+(без пакета он проверяет всё остальное и честно пишет «пропуск»).
 
 ## Как запускать
 
@@ -38,8 +41,20 @@ node migration-check.mjs       # статические проверки SQL м�
 node migration-run-check.mjs   # миграции v2.4.0 и v2.6.0 в настоящем Postgres (нужен пакет @electric-sql/pglite)
 node i18n-check.mjs            # словарь языков: ключи RU/UK, пары фраз, подстановки, разметка (браузер не нужен)
 node vat-check.mjs             # НДС не начисляется дважды и своя доставка — расход объекта (браузер не нужен)
+node frontend-check.mjs        # фронтенд для прода: сборка Tailwind, data-action, CSP, линтер, CI (браузер не нужен)
 node schema-live-check.mjs     # схема БОЕВОЙ базы: колонки миграций v2.4.0/v2.5.0, закрыты ли финансы
                                # от anon (v2.7.0) и создан ли журнал audit_log (v2.8.0) — нужна сеть
+```
+
+Из корня репозитория то же самое собирается в короткие команды (и так же
+запускается в CI, см. `.github/workflows/ci.yml`):
+
+```bash
+npm run check           # migration-check → i18n-check → vat-check → frontend-check
+npm run check:browser   # invoice, fin-workflow, scale (нужен Chrome)
+npm run check:db        # migration-run-check + schema-live-check (pglite и живая база)
+npm run build           # сборка css/tailwind.css (пересобрать после правки классов)
+npm run lint            # eslint: встроенные обработчики и мёртвый код
 ```
 
 `migration-check.mjs` — обычная проверка без браузера и без зависимостей: она
@@ -335,7 +350,7 @@ Chrome живут ещё несколько секунд после `kill`), п�
 
 * `invoice-check.txt`, `fin-workflow.txt`, `fin-fix-finance.txt`, `fin-fix-order.txt`,
   `migration-check.txt`, `migration-run-check.txt`, `i18n-check.txt`,
-  `vat-check.txt`, `schema-live-check.txt`;
+  `vat-check.txt`, `frontend-check.txt`, `schema-live-check.txt`;
 * `fin-workflow-uk.txt` — текст рабочего экрана после переключения языка на
   украинский (последняя проверка `fin-workflow-check.mjs`): по нему видно, что
   именно осталось русским, если прогон пожалуется на непереведённую надпись.
@@ -348,6 +363,56 @@ Chrome живут ещё несколько секунд после `kill`), п�
 хорошо) — можно ставить в автоматику, не читая отчёт глазами. Исключение —
 `migration-run-check.mjs` без пакета `@electric-sql/pglite`: он печатает
 «прогон пропущен» и возвращает 0.
+
+## Что именно проверяет `frontend-check.mjs`
+
+Прогон появился вместе с этапом «Фронтенд для прода»: Tailwind перестал
+подключаться как Play CDN (`cdn.tailwindcss.com`) и собирается заранее
+(`npm run build` → `css/tailwind.css`), а вместо встроенных обработчиков
+(`onclick="..."`) разметка называет действие (`data-action`, см. `js/actions.js`),
+иначе Content-Security-Policy пришлось бы разрешить `'unsafe-inline'` — то есть
+вставить скрипт в страницу мог бы любой подставленный текст. Оба изменения
+ломаются МОЛЧА, поэтому у них есть прогон:
+
+1. **Tailwind собран локально.** В `index.html` не должно остаться тега с
+   `cdn.tailwindcss.com`; должно быть подключение `./css/tailwind.css` и в том же
+   порядке, что раньше (после `css/style.css`, до `css/theme.css` — последняя
+   перекрашивает «фирменные» утилиты под выбранную тему). `src/tailwind.css`
+   (исходник с `@tailwind base/components/utilities`) на месте, а `css/tailwind.css`
+   — действительно собранный файл. Оба новых файла (`css/tailwind.css`,
+   `js/actions.js`) есть в офлайн-оболочке `sw.js` → `APP_SHELL`.
+2. **Отпечаток сборки** (`/* rsk-tailwind-build v2.9.0 <отпечаток> */` в конце
+   файла) совпадает с текущим содержимым `index.html` и всех модулей `js/**`, а версия —
+   с `js/config.js` и `sw.js`.
+3. **Точная пересборка**: если установлен `node_modules/tailwindcss`, прогон
+   запускает сборку заново и сравнивает результат с закоммиченным файлом байт в байт.
+   Это ловит ситуацию «класс добавили, `npm run build` забыли»: Play CDN раньше
+   дорисовывал такой класс на лету, статическая сборка — нет, и кнопка просто теряла цвет.
+4. **Все классы на месте**: из разметки и шаблонов модулей собираются имена классов
+   (388 штук) и проверяются в готовом CSS. Свои классы (`app-loading`,
+   `cashreq-item-name`) ищутся в `css/style.css` и `css/theme.css`, классы-маркеры
+   (по ним модули находят поля формы через `querySelector`) — в коде. Отдельно
+   проверяются классы, собираемые из поля (`badge` групп задач): такое имя класса
+   Tailwind не видит в разметке.
+5. **Встроенных обработчиков нет** ни в `index.html`, ни в `js/**` (двадцать
+   событий, включая `onerror` и `onkeydown`).
+6. **Каждое `data-action` нажимается**: имя действия есть среди `window.*`
+   (диспетчер ищет его там, см. `js/actions.js`). Проверено 116 действий —
+   опечатка в имени иначе просто не нажималась бы. Здесь же проверяется, что у
+   картинки с `data-fallback-show` есть запасной блок с таким `id`.
+7. **CSP**: политика в `index.html` (`<meta http-equiv>`) и заголовок в
+   `vercel.json` совпадают директива за директивой (браузер применяет обе), в
+   `script-src` нет `'unsafe-inline'`/`'unsafe-eval'`, `default-src 'self'`,
+   каждый внешний файл разметки разрешён нужной директивой, `'unsafe-inline'`
+   остался только в `style-src` (ширины полос прогресса задаются атрибутом
+   `style`), а адрес базы из `js/config.js` разрешён в `connect-src`.
+8. **Инструменты на месте**: линтер (`eslint.config.mjs` с запретом встроенных
+   обработчиков), скрипты `build`/`lint` в `package.json`, замок зависимостей
+   (`package-lock.json` нужен для `npm ci`), сборка прогонов в CI
+   (`.github/workflows/ci.yml`) и `.vercelignore`, который не выкидывает с
+   хостинга `index.html`, `css/`, `js/` и не отправляет туда `node_modules/`.
+
+Отчёт: `%TEMP%\rsk-fin\frontend-check.txt`. Код возврата 1 при замечаниях.
 
 ## Что именно проверяет `scale-check.mjs`
 

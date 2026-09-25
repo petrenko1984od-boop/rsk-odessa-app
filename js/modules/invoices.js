@@ -211,7 +211,7 @@ function renderInvoiceTab(view, label, count) {
         ? 'bg-[#15803d] text-white'
         : 'bg-gray-100 text-gray-600 hover:bg-gray-200';
 
-    return `<button type="button" onclick="window.setInvoiceView('${view}')" id="invoice-view-${view}"
+    return `<button type="button" data-action="setInvoiceView" data-arg="${view}" id="invoice-view-${view}"
                     class="px-3 py-1.5 rounded-lg text-xs font-semibold transition ${cls}">${label} (${count})</button>`;
 }
 
@@ -230,7 +230,7 @@ function renderInvoiceHead() {
     // Фильтр периода — только у истории оплат: в очереди долг обязан быть
     // виден целиком, фильтр по дате там был бы ловушкой.
     const periodSelect = invoiceView === 'paid' ? `
-                <select id="invoice-period-filter" onchange="window.setInvoicePeriod(this.value)"
+                <select id="invoice-period-filter" data-action="setInvoicePeriod" data-arg-value data-on="change"
                         title="${t('invoice.periodHint')}"
                         class="text-xs rounded-lg border border-gray-300 bg-white px-2 py-1.5 font-semibold text-gray-700">
                     ${periodOption('all', t('invoice.periodAll'))}
@@ -250,7 +250,7 @@ function renderInvoiceHead() {
                     ${t('common.total')}: ${formatMoney(total)}
                 </span>
                 ${periodSelect}
-                <button type="button" onclick="window.exportMaterialInvoicesToExcel()" id="invoice-export-btn"
+                <button type="button" data-action="exportMaterialInvoicesToExcel" id="invoice-export-btn"
                         title="${t('invoice.exportHint')}"
                         class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs transition shadow">${t('invoice.export')}</button>
             </div>
@@ -286,15 +286,15 @@ function renderInvoiceCard(order) {
     // Кнопка файла — внутри кликабельной карточки: гасим всплытие, иначе клик
     // по «🧾 Открыть счёт» открывал бы ещё и окно подробностей.
     const fileBlock = order.invoice_path
-        ? `<button onclick="event.stopPropagation(); window.viewMaterialInvoice(${order.id})"
-                   onkeydown="event.stopPropagation()"
+        ? `<button data-action="viewMaterialInvoice" data-arg="${order.id}" data-stop
+                   data-skip data-on="keydown"
                    class="text-[11px] font-semibold text-[#15803d] hover:underline">${t('invoice.openFile')}</button>`
         : `<span class="text-[11px] text-amber-700">⚠ ${t('invoice.noFile')}</span>`;
 
     return `
         <div id="material-invoice-card-${order.id}" role="button" tabindex="0"
-             onclick="window.openMaterialInvoiceDetail(${order.id})"
-             onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.openMaterialInvoiceDetail(${order.id}); }"
+             data-action="openMaterialInvoiceDetail" data-arg="${order.id}"
+             data-on="click keydown" data-keys="Enter Space" data-prevent
              class="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2 cursor-pointer transition hover:border-amber-400 hover:shadow-sm">
             <div class="flex flex-wrap justify-between items-start gap-2">
                 <div class="flex items-center gap-2 flex-wrap">
@@ -332,8 +332,8 @@ function renderPaidInvoiceCard(order) {
     // См. renderInvoiceCard(): всплытие гасим, иначе кнопка файла открывала бы
     // ещё и окно подробностей.
     const fileBlock = order.invoice_path
-        ? `<button onclick="event.stopPropagation(); window.viewMaterialInvoice(${order.id})"
-                   onkeydown="event.stopPropagation()"
+        ? `<button data-action="viewMaterialInvoice" data-arg="${order.id}" data-stop
+                   data-skip data-on="keydown"
                    class="text-[11px] font-semibold text-[#15803d] hover:underline">${t('invoice.openFile')}</button>`
         : `<span class="text-[11px] text-gray-400">${t('invoice.noFile')}</span>`;
 
@@ -341,8 +341,8 @@ function renderPaidInvoiceCard(order) {
 
     return `
         <div id="material-invoice-card-${order.id}" role="button" tabindex="0"
-             onclick="window.openMaterialInvoiceDetail(${order.id})"
-             onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); window.openMaterialInvoiceDetail(${order.id}); }"
+             data-action="openMaterialInvoiceDetail" data-arg="${order.id}"
+             data-on="click keydown" data-keys="Enter Space" data-prevent
              class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2 cursor-pointer transition hover:border-emerald-400 hover:shadow-sm">
             <div class="flex flex-wrap justify-between items-start gap-2">
                 <div class="flex items-center gap-2 flex-wrap">
@@ -521,7 +521,7 @@ function renderInvoiceDetail(order) {
     const fileBlock = order.invoice_path
         ? `<div class="flex flex-wrap justify-between items-center gap-2 bg-gray-50 border rounded-lg p-2.5 text-xs">
                 <span class="text-gray-600">🧾 ${escapeHtml(order.invoice_file_name || t('invoice.of'))}</span>
-                <button onclick="window.viewMaterialInvoice(${order.id})"
+                <button data-action="viewMaterialInvoice" data-arg="${order.id}"
                         class="text-[11px] font-semibold text-[#15803d] hover:underline">${t('invoice.openFile')}</button>
             </div>`
         : `<p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">⚠ ${t('invoice.noFile')}</p>`;
@@ -568,17 +568,17 @@ function renderInvoiceDetailActions(order) {
     const buttons = [];
 
     if (order.invoice_path) {
-        buttons.push(`<button type="button" onclick="window.viewMaterialInvoice(${order.id})"
+        buttons.push(`<button type="button" data-action="viewMaterialInvoice" data-arg="${order.id}"
             class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('invoice.openFile')}</button>`);
     }
 
     if (order.payment_status !== 'paid' && canPayInvoices()) {
         buttons.push(`<button type="button" id="material-invoice-pay-btn"
-            onclick="window.markMaterialInvoicePaid(${order.id})"
+            data-action="markMaterialInvoicePaid" data-arg="${order.id}"
             class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('invoice.pay')}</button>`);
     }
 
-    buttons.push(`<button type="button" onclick="hideModal('material-invoice-detail-modal')"
+    buttons.push(`<button type="button" data-action="hideModal" data-arg="material-invoice-detail-modal"
         class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-sm transition">${t('common.close')}</button>`);
 
     container.innerHTML = buttons.join('');

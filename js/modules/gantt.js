@@ -27,7 +27,6 @@ import { can, getEmployee } from '../permissions.js';
 // =====================================================================
 
 let currentGantt = null;
-let currentProjectId = null;
 let currentSections = [];
 let currentViewMode = 'Week';
 
@@ -51,8 +50,7 @@ export function canCloseSection(project) {
 // =====================================================================
 
 export async function loadGanttData(projectId) {
-    currentProjectId = projectId;
-
+    
     const { data, error } = await db.select('sections', {
         filters: { project_id: projectId },
         orderBy: { column: 'id', asc: true }
@@ -124,7 +122,7 @@ export async function renderGantt(project) {
                     <p class="text-xs text-gray-600 mb-3">
                         Установите даты для разделов ниже — они появятся на диаграмме.
                     </p>
-                    <button onclick="window.openEditDatesModal()" 
+                    <button data-action="openEditDatesModal" 
                             class="bg-[#15803d] hover:bg-[#166534] text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
                         📅 Установить даты разделов
                     </button>
@@ -142,15 +140,15 @@ export async function renderGantt(project) {
 
     const controlsHtml = canEditGantt()
         ? `<div class="flex flex-wrap justify-end gap-2 mb-3">
-               <button onclick="window.openEditDatesModal()" 
+               <button data-action="openEditDatesModal" 
                        class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow">
                    ✏️ Редактировать даты
                </button>
-               <button onclick="window.downloadGanttPDF()" 
+               <button data-action="downloadGanttPDF" 
                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow">
                    📥 Скачать PDF
                </button>
-               <select id="gantt-view-mode" onchange="window.changeGanttView()"
+               <select id="gantt-view-mode" data-action="changeGanttView" data-on="change"
                        class="border rounded-lg px-3 py-1.5 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                    <option value="Day" ${currentViewMode === 'Day' ? 'selected' : ''}>📆 День</option>
                    <option value="Week" ${currentViewMode === 'Week' ? 'selected' : ''}>📅 Неделя</option>
@@ -158,11 +156,11 @@ export async function renderGantt(project) {
                </select>
            </div>`
         : `<div class="flex flex-wrap justify-end gap-2 mb-3">
-               <button onclick="window.downloadGanttPDF()" 
+               <button data-action="downloadGanttPDF" 
                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow">
                    📥 Скачать PDF
                </button>
-               <select id="gantt-view-mode" onchange="window.changeGanttView()"
+               <select id="gantt-view-mode" data-action="changeGanttView" data-on="change"
                        class="border rounded-lg px-3 py-1.5 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                    <option value="Day" ${currentViewMode === 'Day' ? 'selected' : ''}>📆 День</option>
                    <option value="Week" ${currentViewMode === 'Week' ? 'selected' : ''}>📅 Неделя</option>
@@ -749,7 +747,7 @@ export function openSectionDetailFromGantt(section) {
         if (!section.actual_end_date && can('close_section')) {
             const currentProject = window.__getCurrentProject?.();
             if (currentProject && currentProject.foreman_id === emp.id) {
-                actionsHtml += `<button onclick="window.openCloseSectionModal(${section.id})" 
+                actionsHtml += `<button data-action="openCloseSectionModal" data-arg="${section.id}" 
                                 class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
                                 ✅ Отметить выполненным
                                 </button>`;
@@ -757,7 +755,7 @@ export function openSectionDetailFromGantt(section) {
         }
 
         if (section.actual_end_date && canEditGantt()) {
-            actionsHtml += `<button onclick="window.uncloseSection(${section.id})" 
+            actionsHtml += `<button data-action="uncloseSection" data-arg="${section.id}" 
                             class="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
                             ↩️ Снять отметку выполнения
                             </button>`;

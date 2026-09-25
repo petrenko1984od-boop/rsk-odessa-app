@@ -70,7 +70,6 @@ let currentFilter = 'active';   // 'active' | 'pending' | 'revision' | 'approved
 // Общий фильтр кассиров (currentFilter выше) при этом не трогаем: у директора
 // и администратора раздел должен открываться на тех же фильтрах, что и раньше.
 let financierView = 'approved';
-let currentRequestId = null;
 // id заявки, которую автор дорабатывает в форме (null — создаётся новая)
 let editingRequestId = null;
 
@@ -274,7 +273,7 @@ async function renderFinancierPanel() {
                 <p class="text-2xl font-bold text-gray-800">${formatMoney(toIssue)}</p>
                 <p class="mt-1 text-[11px] text-gray-500">Одобренных заявок: ${approved.length}</p>
                 <!-- Ведомость пополнений подотчёта: кто, когда и сколько передал -->
-                <button onclick="window.openFinancierTopUpStatement()"
+                <button data-action="openFinancierTopUpStatement"
                         class="mt-2 bg-white hover:bg-emerald-50 text-[#15803d] border border-[#15803d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition">${t('statement.buttonFinancier')}</button>
             </div>
         </div>
@@ -432,7 +431,7 @@ function renderFinancierApprovedHead() {
             ? 'bg-[#15803d] text-white'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200';
 
-        return `<button type="button" onclick="window.setFinancierView('${view}')" id="financier-view-${view}"
+        return `<button type="button" data-action="setFinancierView" data-arg="${view}" id="financier-view-${view}"
                         class="px-3 py-1.5 rounded-lg text-xs font-semibold transition ${cls}">${label} (${count})</button>`;
     };
 
@@ -511,7 +510,7 @@ function renderCashRequestCard(req) {
     const totalSum = Number(req.total_sum) || 0;
 
     return `
-        <button onclick="window.openCashRequestDetail(${req.id})"
+        <button data-action="openCashRequestDetail" data-arg="${req.id}"
                 class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex flex-col gap-3 border-l-4 ${statusInfo.border} hover:bg-emerald-50/50 transition cursor-pointer group">
             <div class="flex justify-between items-start gap-2 w-full">
                 <div class="flex items-center gap-2 flex-wrap">
@@ -556,8 +555,7 @@ export async function openCashRequestDetail(id) {
         return;
     }
 
-    currentRequestId = id;
-
+    
     const statusInfo = getCashRequestStatusInfo(req.status);
     const items = req._items || [];
 
@@ -623,16 +621,16 @@ function renderCashRequestActions(req) {
 
     // Директор (кассир): три решения по заявке, которая ждёт согласования
     if (req.status === 'pending' && canProcessCashRequest()) {
-        buttonsHtml += `<button onclick="window.approveCashRequest(${req.id})" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✅ Одобрить</button>`;
-        buttonsHtml += `<button onclick="window.requestRevisionCashRequest(${req.id})" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✏️ На доработку</button>`;
-        buttonsHtml += `<button onclick="window.rejectCashRequest(${req.id})" class="bg-red-500 hover:bg-red-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">❌ Отклонить</button>`;
+        buttonsHtml += `<button data-action="approveCashRequest" data-arg="${req.id}" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✅ Одобрить</button>`;
+        buttonsHtml += `<button data-action="requestRevisionCashRequest" data-arg="${req.id}" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✏️ На доработку</button>`;
+        buttonsHtml += `<button data-action="rejectCashRequest" data-arg="${req.id}" class="bg-red-500 hover:bg-red-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">❌ Отклонить</button>`;
     }
 
     // Выдача денег по одобренной заявке. Финансист платит со своего
     // подотчёта, поэтому у него кнопка называется «Выдано».
     if (req.status === 'approved' && canIssueCashRequest()) {
         const issueLabel = isFinancier() ? '💵 Выдано' : '💵 Выдать';
-        buttonsHtml += `<button onclick="window.issueCashRequest(${req.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${issueLabel}</button>`;
+        buttonsHtml += `<button data-action="issueCashRequest" data-arg="${req.id}" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${issueLabel}</button>`;
     }
 
     // Директор одобрил — и на этом его работа закончена: деньги выдаёт
@@ -648,13 +646,13 @@ function renderCashRequestActions(req) {
 
     // Автор: доработать заявку, которую директор вернул с причиной
     if (canEditCashRequest(req)) {
-        buttonsHtml += `<button onclick="window.openCashRequestEdit(${req.id})" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✏️ Исправить и отправить</button>`;
+        buttonsHtml += `<button data-action="openCashRequestEdit" data-arg="${req.id}" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✏️ Исправить и отправить</button>`;
     }
 
     // Автор: удалить заявку, которую директор ещё не обработал
     const emp = getEmployee();
     if (emp && req.employee_id === emp.id && (req.status === 'pending' || req.status === 'revision')) {
-        buttonsHtml += `<button onclick="window.deleteCashRequest(${req.id})" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
+        buttonsHtml += `<button data-action="deleteCashRequest" data-arg="${req.id}" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
     }
 
     // Автор: убрать ЗАКОНЧЕННУЮ заявку (выданную или отклонённую) в архив.
@@ -662,7 +660,7 @@ function renderCashRequestActions(req) {
     // на рабочем экране она видна в фильтре «📥 Архив»
     // (см. canArchiveCashRequest() — почему это только автор и только история).
     if (canArchiveCashRequest(req)) {
-        buttonsHtml += `<button onclick="window.archiveCashRequest(${req.id})" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">📥 В архив</button>`;
+        buttonsHtml += `<button data-action="archiveCashRequest" data-arg="${req.id}" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">📥 В архив</button>`;
     }
 
     actionsContainer.innerHTML = buttonsHtml;
@@ -882,13 +880,13 @@ export function addCashRequestItemRow(item = null) {
                 <input type="text" placeholder="Вид работ (Штукатурка стен)" 
                        class="cashreq-item-name w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
             </div>
-            <button type="button" onclick="window.removeCashRequestItemRow('${rowId}')" 
+            <button type="button" data-action="removeCashRequestItemRow" data-arg="${rowId}" 
                     class="text-red-500 hover:text-red-700 px-2 py-1 text-base font-bold shrink-0">✕</button>
         </div>
         <div class="grid grid-cols-3 gap-2">
             <input type="number" step="any" placeholder="Объём" 
                    class="cashreq-item-qty border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                   oninput="window.recalcCashRequestTotal()">
+                   data-action="recalcCashRequestTotal" data-on="input">
             <select class="cashreq-item-unit border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 <option value="м²">м²</option>
                 <option value="м³">м³</option>
@@ -903,7 +901,7 @@ export function addCashRequestItemRow(item = null) {
             </select>
             <input type="number" step="0.01" placeholder="Цена за ед." 
                    class="cashreq-item-price border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                   oninput="window.recalcCashRequestTotal()">
+                   data-action="recalcCashRequestTotal" data-on="input">
         </div>
         <div class="text-[11px] text-gray-500 pl-1">
             Сумма: <span class="cashreq-item-sum font-bold text-[#15803d]">0,00 грн</span>

@@ -8,6 +8,7 @@ import { initLoginScreen } from './auth.js';
 import { initPWA } from './pwa.js';   // установка приложения и обновление версии
 import { initI18n, onLangChange } from './i18n.js';   // язык интерфейса (ru/uk)
 import { initTheme } from './theme.js';               // цветовая схема
+import './actions.js';   // нажатия кнопок по data-action (см. шапку файла, CSP)
 import './settings.js';   // окно «⚙ Настройки»: язык интерфейса и цветовая схема
 import {
     loadPermissions, canSeeTab, canSeeHeaderButton, getNavLabel, getNavOrder,
@@ -24,17 +25,18 @@ import {
 initTheme();
 initI18n();
 
-// Модули разделов
+// Модули разделов. Импортируются ради двух вещей: модуль выполняется и
+// выставляет свои функции на `window` (на них ссылается разметка через
+// data-action, см. js/actions.js), а здесь перечислены только те функции,
+// которые точка входа вызывает сама (обработчики форм и загрузка данных).
 import {
     loadEmployees,
-    openAddEmployeeModal,
     saveNewEmployee,
     confirmDeactivate,
 } from './modules/employees.js';
 
 import {
     loadProjects,
-    openAddProjectModal,
     saveNewProject
 } from './modules/projects.js';
 
@@ -47,50 +49,19 @@ import {
 
 import {
     loadOrders,
-    switchOrdersTab,
-    openNewOrderForm,
-    loadSectionsForOrder,
-    addOrderItemRow,
-    removeOrderItemRow,
-    recalcOrderTotal,
     saveNewOrder,
-    takeOrderToWork,
-    openCloseOrderModal,
-    recalcCloseOrderTotal,
-    closeOrder,
-    archiveOrder,
-    deleteOrder
+    closeOrder
 } from './modules/orders.js';
 
 import {
     loadCashRequests,
-    switchCashRequestsTab,
-    openNewCashRequestForm,
-    loadSectionsForCashRequest,
-    addCashRequestItemRow,
-    removeCashRequestItemRow,
-    recalcCashRequestTotal,
-    saveNewCashRequest,
-    approveCashRequest,
-    requestRevisionCashRequest,
-    rejectCashRequest,
-    issueCashRequest,
-    openCashRequestEdit,
-    deleteCashRequest
+    saveNewCashRequest
 } from './modules/cash-requests.js';
 
 import {
     loadTasks,
-    switchTasksTab,
-    openNewTaskForm,
-    loadSectionsForTask,
     saveNewTask,
-    takeTaskToWork,
-    openCompleteTaskModal,
-    completeTask,
-    cancelTask,
-    deleteTask,
-    addTaskComment
+    completeTask
 } from './modules/tasks.js';
 
 import {
@@ -510,7 +481,7 @@ export async function openMyTasks() {
         const st = statusLabels[t.status] || { text: t.status, cls: 'bg-gray-100' };
         const prio = priorityLabels[t.priority] || '';
         return `
-            <button onclick="window.openTaskDetail(${t.id})" class="w-full text-left bg-white border rounded-lg p-3 text-xs space-y-1 hover:bg-emerald-50/60 transition">
+            <button data-action="openTaskDetail" data-arg="${t.id}" class="w-full text-left bg-white border rounded-lg p-3 text-xs space-y-1 hover:bg-emerald-50/60 transition">
                 <div class="flex justify-between items-start gap-2">
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100">${prio}</span>

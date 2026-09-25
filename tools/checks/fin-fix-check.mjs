@@ -539,8 +539,8 @@ try {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
     failed += 1;
 } finally {
-    try { if (chrome) chrome.kill(); } catch {}
-    try { server.close(); } catch {}
+    try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
+    try { server.close(); } catch { /* сервер уже закрыт */ }
     const outDir = path.join(os.tmpdir(), 'rsk-fin');
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'fin-fix-' + (process.env.FLOW || 'finance') + '.txt'), report.join('\r\n'), 'utf8');

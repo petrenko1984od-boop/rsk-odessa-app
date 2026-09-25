@@ -19,7 +19,7 @@ import {
     formatDate, formatMoney
 } from '../utils.js';
 import {
-    can, requirePermission, getEmployee, isAdmin
+    can, requirePermission, getEmployee
 } from '../permissions.js';
 import {
     renderEstimateUI,
@@ -139,7 +139,7 @@ function renderProjectCard(project) {
         : `<span class="text-[10px] text-gray-400 bg-gray-50 px-2 py-0.5 rounded">📊 Сметы нет</span>`;
 
     return `
-        <button onclick="window.openProjectDetail(${project.id})"
+        <button data-action="openProjectDetail" data-arg="${project.id}"
                 class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex flex-col gap-3 border-l-4 border-[#15803d] hover:bg-emerald-50/50 transition cursor-pointer group">
             <div class="flex justify-between items-start gap-2 w-full">
                 <h3 class="font-bold text-[#166534] text-base group-hover:underline">🏗 ${escapeHtml(project.name)}</h3>

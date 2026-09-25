@@ -1,0 +1,24 @@
+{
+    "name": "rsk-odessa-app",
+    "version": "2.9.0",
+    "private": true,
+    "type": "module",
+    "description": "RSK Odessa — учёт строительства (PWA: HTML + ES-модули + Supabase)",
+    "license": "UNLICENSED",
+    "engines": {
+        "node": ">=22"
+    },
+    "scripts": {
+        "build": "node tools/build-css.mjs",
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix",
+        "check": "node tools/checks/migration-check.mjs && node tools/checks/i18n-check.mjs && node tools/checks/vat-check.mjs && node tools/checks/frontend-check.mjs",
+        "check:db": "node tools/checks/migration-run-check.mjs && node tools/checks/schema-live-check.mjs",
+        "check:browser": "node tools/checks/invoice-check.mjs && node tools/checks/fin-workflow-check.mjs && node tools/checks/scale-check.mjs"
+    },
+    "devDependencies": {
+        "eslint": "^9.13.0",
+        "globals": "^15.11.0",
+        "tailwindcss": "3.4.17"
+    }
+}

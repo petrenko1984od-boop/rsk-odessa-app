@@ -19,7 +19,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, formatMoney, parseNumber
+    formatDate
 } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 import { CONFIG } from '../config.js';
@@ -30,7 +30,6 @@ import { CONFIG } from '../config.js';
 
 let tasksCache = [];
 let currentFilter = 'active';   // 'active' | 'pending' | 'in_progress' | 'done' | 'all'
-let currentTaskId = null;
 
 // =====================================================================
 // ПРАВА
@@ -128,6 +127,18 @@ export async function loadTasks() {
 // =====================================================================
 // ФИЛЬТРАЦИЯ
 // =====================================================================
+
+/**
+ * Просрочена ли задача: дедлайн в прошлом и задача ещё не закрыта.
+ * Раньше это условие было записано дважды (в карточке и в таблице окна
+ * «📋 Задачи»), причём в таблице вызов шёл к функции `isOverdueTask()`,
+ * которой в модуле нет — таблица окна падала с ошибкой. Теперь правило одно.
+ */
+function isTaskOverdue(task) {
+    if (!task || !task.deadline) return false;
+    const today = new Date().toISOString().split('T')[0];
+    return task.deadline < today && task.status !== 'done' && task.status !== 'cancelled';
+}
 
 function getFilteredTasks() {
     if (currentFilter === 'all') return tasksCache;
@@ -240,12 +251,13 @@ export async function openTaskFilterModal(filter) {
                         const projectName = task.project?.name || 'Без объекта';
                         const assigneeName = task.assignee?.name || '—';
                         const deadline = task.deadline ? formatDate(task.deadline) : '—';
-                        const isOverdue = isOverdueTask(task);
+                        const isOverdue = isTaskOverdue(task);
                         const priorityInfo = getTaskPriorityInfo(task.priority);
                         const title = task.title || task.text || '—';
 
                         return `
-                            <tr onclick="window.openTaskDetail(${task.id}); window.hideModal('task-filter-modal');"
+                            <tr data-action="openTaskDetail" data-arg="${task.id}"
+                                data-after="hideModal" data-after-arg="task-filter-modal"
                                 class="cursor-pointer border-b border-gray-200 last:border-0 transition hover:bg-emerald-50/60">
                                 <td class="w-[12%] px-3 py-3 align-top"><span class="inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${priorityInfo.bg} ${priorityInfo.color}">${priorityInfo.label}</span></td>
                                 <td class="w-[24%] px-3 py-3 align-top font-semibold text-gray-800">${escapeHtml(title)}</td>
@@ -307,17 +319,13 @@ function renderTaskCard(task) {
     const authorName = task.author?.name || '—';
 
     // Проверка дедлайна
-    const today = new Date().toISOString().split('T')[0];
-    const isOverdue = task.deadline 
-        && task.deadline < today 
-        && task.status !== 'done' 
-        && task.status !== 'cancelled';
+    const isOverdue = isTaskOverdue(task);
 
     // Индикатор фотоотчёта
     const hasPhoto = !!task.photo_path;
 
     return `
-        <button onclick="window.openTaskDetail(${task.id})"
+        <button data-action="openTaskDetail" data-arg="${task.id}"
             class="flex min-h-[184px] w-full cursor-pointer flex-col gap-3 rounded-xl border border-gray-200 border-l-4 bg-white p-4 text-left shadow-sm transition hover:bg-emerald-50/50 group ${isOverdue ? 'border-l-red-500' : statusInfo.border.replace('border-', 'border-l-')} ">
             <div class="flex justify-between items-start gap-2 w-full">
                 <div class="flex items-center gap-2 flex-wrap">
@@ -357,8 +365,7 @@ export async function openTaskDetail(id) {
         return;
     }
 
-    currentTaskId = id;
-
+    
     const statusInfo = getTaskStatusInfo(task.status);
     const priorityInfo = getTaskPriorityInfo(task.priority);
 
@@ -385,7 +392,7 @@ export async function openTaskDetail(id) {
     const photoHtml = task.photo_path
         ? `<div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-center justify-between">
               <span class="text-xs text-emerald-800 font-semibold">📸 Фотоотчёт прикреплён</span>
-              <button onclick="window.viewTaskPhoto('${escapeHtml(task.photo_path)}')" 
+              <button data-action="viewTaskPhoto" data-arg="${escapeHtml(task.photo_path)}"
                       class="text-xs bg-emerald-100 hover:bg-emerald-200 text-[#15803d] px-3 py-1 rounded font-semibold transition">Посмотреть</button>
            </div>`
         : '';
@@ -406,7 +413,7 @@ export async function openTaskDetail(id) {
             <div class="flex gap-2 pt-1">
                 <input type="text" id="task-comment-input" maxlength="1000" placeholder="Написать комментарий..."
                        class="flex-1 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                <button type="button" onclick="window.addTaskComment(${task.id})"
+                <button type="button" data-action="addTaskComment" data-arg="${task.id}"
                         class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-3 py-2 rounded-lg text-xs transition">Отправить</button>
             </div>
         </div>
@@ -476,22 +483,22 @@ function renderTaskActions(task) {
 
     // Исполнитель: взять в работу
     if (task.status === 'pending' && isAssignee) {
-        buttonsHtml += `<button onclick="window.takeTaskToWork(${task.id})" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">▶ Взять в работу</button>`;
+        buttonsHtml += `<button data-action="takeTaskToWork" data-arg="${task.id}" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">▶ Взять в работу</button>`;
     }
 
     // Исполнитель: выполнить (in_progress)
     if (task.status === 'in_progress' && isAssignee) {
-        buttonsHtml += `<button onclick="window.openCompleteTaskModal(${task.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✅ Отметить выполненной</button>`;
+        buttonsHtml += `<button data-action="openCompleteTaskModal" data-arg="${task.id}" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">✅ Отметить выполненной</button>`;
     }
 
     // Автор / Админ: отменить
     if ((task.status === 'pending' || task.status === 'in_progress') && (isAuthor || isAdminRole)) {
-        buttonsHtml += `<button onclick="window.cancelTask(${task.id})" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">⚫ Отменить</button>`;
+        buttonsHtml += `<button data-action="cancelTask" data-arg="${task.id}" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">⚫ Отменить</button>`;
     }
 
     // Автор / Админ: удалить (только выполненные или отменённые)
     if ((task.status === 'done' || task.status === 'cancelled') && (isAuthor || isAdminRole)) {
-        buttonsHtml += `<button onclick="window.deleteTask(${task.id})" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
+        buttonsHtml += `<button data-action="deleteTask" data-arg="${task.id}" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
     }
 
     actionsContainer.innerHTML = buttonsHtml;
@@ -858,8 +865,7 @@ export async function openCompleteTaskModal(id) {
         return;
     }
 
-    currentTaskId = id;
-
+    
     // Скрываем модалку просмотра
     hideModal('task-detail-modal');
 

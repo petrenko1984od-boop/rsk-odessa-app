@@ -24,3 +24,20 @@ README.md
 database/
 tools/
 pres-check/
+
+# ---- Сборка и инструменты разработки ----
+# Приложению на хостинге нужны только index.html, css/, js/, icons/, sw.js,
+# manifest.json, logo.png. Всё, что нужно для сборки и проверок, остаётся в
+# репозитории, но на публичный хостинг не уезжает:
+#   node_modules/ — зависимости сборки CSS и линтера;
+#   src/          — исходник Tailwind (собирается в css/tailwind.css);
+#   package.json, package-lock.json, eslint.config.mjs, tailwind.config.js,
+#   .github/      — сборка, линтер и непрерывная интеграция.
+# ⚠️ css/tailwind.css здесь быть НЕ должно: это готовый файл приложения.
+node_modules/
+src/
+package.json
+package-lock.json
+eslint.config.mjs
+tailwind.config.js
+.github/

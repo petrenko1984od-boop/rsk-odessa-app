@@ -130,7 +130,17 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        Индексы под эти запросы ставит database/migrate-v2.9-scale-indexes.sql
 //        (index.html → панель «Снабжения», js/i18n.js → надписи панели,
 //        js/modules/orders.js → список заявок).
-const SHELL_REVISION = 'r1';
+//   r2 — фронтенд для прода (внешний вид не меняется, меняется доставка кода):
+//        Tailwind больше не Play CDN, а собранный локально css/tailwind.css
+//        (npm run build, отпечаток сборки сверяет frontend-check); в разметке
+//        не осталось встроенных обработчиков — нажатия идут через data-action
+//        и один диспетчер (js/actions.js), поэтому включена политика
+//        Content-Security-Policy (meta в index.html + заголовок в vercel.json);
+//        появились линтер (eslint.config.mjs) и сборка прогонов в CI
+//        (.github/workflows/ci.yml). Файлы оболочки переустанавливаются у всех,
+//        кто уже установил приложение: css/tailwind.css и js/actions.js
+//        добавлены в APP_SHELL.
+const SHELL_REVISION = 'r2';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
@@ -141,8 +151,10 @@ const APP_SHELL = [
     './manifest.json',
     './logo.png',
     './css/style.css',
+    './css/tailwind.css',
     './css/theme.css',
     './js/main.js',
+    './js/actions.js',
     './js/config.js',
     './js/utils.js',
     './js/i18n.js',
@@ -197,9 +209,9 @@ const OFFLINE_HTML = `<!DOCTYPE html>
             Приложение загрузилось из кэша, но данные объектов приходят с сервера.
             Проверьте связь и попробуйте ещё раз — введённые данные не потеряются.
         </p>
-        <button onclick="location.reload()"
-                style="background:#15803d;color:#fff;border:0;border-radius:.5rem;padding:.75rem 1.5rem;
-                       font-size:.875rem;font-weight:600;cursor:pointer">Обновить</button>
+        <a href="./index.html"
+           style="display:inline-block;background:#15803d;color:#fff;border-radius:.5rem;padding:.75rem 1.5rem;
+                  font-size:.875rem;font-weight:600;text-decoration:none">Обновить</a>
     </div>
 </body>
 </html>`;

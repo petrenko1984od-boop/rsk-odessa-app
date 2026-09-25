@@ -32,7 +32,7 @@ function renderLanguages() {
             : 'bg-white text-gray-700 border-gray-200 hover:border-[#15803d]';
 
         return `
-            <button type="button" onclick="window.chooseLanguage('${lang.code}')"
+            <button type="button" data-action="chooseLanguage" data-arg="${lang.code}"
                     class="flex-1 border-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition ${cls}">
                 ${lang.label}
             </button>
@@ -51,7 +51,7 @@ function renderThemes() {
         const label = getLang() === 'uk' ? theme.labelUk : theme.label;
 
         return `
-            <button type="button" onclick="window.chooseTheme('${theme.id}')"
+            <button type="button" data-action="chooseTheme" data-arg="${theme.id}"
                     title="${label}"
                     class="flex flex-col items-center gap-1 ${isActive ? 'font-bold' : ''}">
                 <span class="w-9 h-9 rounded-full border-2 ${isActive ? 'border-gray-800' : 'border-white'}"

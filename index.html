@@ -3,6 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- =============================================================
+         CONTENT-SECURITY-POLICY (CSP).
+         Что можно: свои файлы + пять проверенных библиотек с CDN (они идут с
+         SRI) + сам Supabase (данные, файлы, realtime) + шрифт Manrope.
+         Что нельзя: чужие скрипты и встроенный код `onclick="..."` — поэтому
+         разметка называет действие через data-action (см. js/actions.js).
+         `style-src` оставляет 'unsafe-inline' осознанно: интерфейс задаёт
+         ширину полос прогресса атрибутом `style`, а вставка СТИЛЯ (в отличие
+         от вставки скрипта) код не выполняет и на старых телефонах
+         (Safari < 15.4) не умеет отдельного `style-src-attr`.
+         Политика ниже совпадает с заголовком на хостинге директива за
+         директивой (иначе браузер применил бы более строгую), поэтому
+         `frame-ancestors` стоит и здесь, хотя из <meta> он не действует —
+         встраивание запрещает заголовок `X-Frame-Options: DENY` и тот же
+         `frame-ancestors` из vercel.json.
+         Та же политика продублирована заголовком на хостинге (vercel.json) —
+         их сверяет tools/checks/frontend-check.mjs, менять надо оба места.
+         ============================================================= -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://*.workers.dev; worker-src 'self' blob:">
     <title>RSK Odessa — Управление строительством</title>
     <link rel="icon" type="image/png" href="./logo.png">
 
@@ -21,7 +41,12 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./css/style.css">
-    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <!-- Tailwind собирается заранее (`npm run build`) и лежит рядом с приложением:
+         cdn.tailwindcss.com больше не подключается. Так стили работают офлайн,
+         CSP не разрешает чужой скрипт, а SRI не нужен вовсе. Место в <head>
+         менять нельзя: css/theme.css подключается последней и перекрашивает
+         утилиты под выбранную цветовую схему. -->
+    <link rel="stylesheet" href="./css/tailwind.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js" integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o" crossorigin="anonymous"></script>
      <!-- Frappe Gantt -->
@@ -71,14 +96,18 @@
         <div class="bg-white rounded-xl shadow-2xl p-8 max-w-sm w-full">
             <div class="text-center mb-6">
                 <img src="./logo.png" alt="RSK Odessa" class="h-20 mx-auto object-contain"
-                     onerror="this.outerHTML='<div class=\'bg-[#15803d] w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl font-bold shadow-lg\'>R</div>'">
+                     data-fallback-show="auth-logo-fallback">
+                <!-- Запасная надпись вместо логотипа: показывается, если картинка
+                     не загрузилась (js/actions.js → обработчик ошибки). -->
+                <div id="auth-logo-fallback"
+                     class="bg-[#15803d] w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl font-bold shadow-lg hidden">R</div>
                 <p class="text-xs text-gray-500 mt-4">Управление строительством</p>
             </div>
 
             <div class="flex bg-gray-100 rounded-lg p-1 mb-4">
-                <button type="button" onclick="switchAuthTab('login')" id="auth-tab-login"
+                <button type="button" data-action="switchAuthTab" data-arg="login" id="auth-tab-login"
                         class="flex-1 py-2 text-sm font-semibold rounded-md transition bg-white text-[#15803d] shadow">Войти</button>
-                <button type="button" onclick="switchAuthTab('register')" id="auth-tab-register"
+                <button type="button" data-action="switchAuthTab" data-arg="register" id="auth-tab-register"
                         class="flex-1 py-2 text-sm font-semibold rounded-md transition text-gray-600 hover:text-gray-800">Регистрация</button>
             </div>
 
@@ -118,8 +147,8 @@
                 <p class="font-semibold text-gray-800 break-all" id="pending-email">—</p>
             </div>
             <div class="flex gap-2 pt-2">
-                <button onclick="location.reload()" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">🔄 Обновить</button>
-                <button onclick="logout()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">🚪 Выйти</button>
+                <button data-action="reload-page" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">🔄 Обновить</button>
+                <button data-action="logout" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">🚪 Выйти</button>
             </div>
         </div>
     </div>
@@ -131,21 +160,24 @@
                 <div class="flex items-center gap-3 shrink-0">
                     <div class="bg-white p-1.5 rounded-lg shadow-sm flex items-center justify-center">
                         <img src="./logo.png" alt="RSK Logo" class="h-8 w-auto object-contain"
-                             onerror="this.outerHTML='<span class=\'text-[#15803d] font-bold text-lg px-1\'>RSK</span>'">
+                             data-fallback-show="header-logo-fallback">
+                        <!-- Запасная надпись вместо логотипа: показывает js/actions.js,
+                             если картинка не загрузилась. -->
+                        <span id="header-logo-fallback" class="text-[#15803d] font-bold text-lg px-1 hidden">RSK</span>
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-2 items-center justify-end min-w-0">
-                    <button onclick="switchTab('tasks')" id="btn-tasks" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Рабочий экран</button>
-                    <button onclick="switchTab('projects')" id="btn-projects" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты</button>
-                    <button onclick="switchTab('employees')" id="btn-employees" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники</button>
-                    <button onclick="switchTab('orders')" id="btn-orders" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение</button>
-                    <button onclick="switchTab('cash-requests')" id="btn-cash-requests" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Финансы</button>
-                    <button onclick="switchTab('registry')" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
-                    <button onclick="openNewOrderForm()" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заказ материалов</button>
-                    <button onclick="openNewCashRequestForm()" id="btn-new-cash-request" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Финансовые запросы</button>
+                    <button data-action="switchTab" data-arg="tasks" id="btn-tasks" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Рабочий экран</button>
+                    <button data-action="switchTab" data-arg="projects" id="btn-projects" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты</button>
+                    <button data-action="switchTab" data-arg="employees" id="btn-employees" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники</button>
+                    <button data-action="switchTab" data-arg="orders" id="btn-orders" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение</button>
+                    <button data-action="switchTab" data-arg="cash-requests" id="btn-cash-requests" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Финансы</button>
+                    <button data-action="switchTab" data-arg="registry" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
+                    <button data-action="openNewOrderForm" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заказ материалов</button>
+                    <button data-action="openNewCashRequestForm" id="btn-new-cash-request" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Финансовые запросы</button>
 
                     <div class="relative">
-                        <button onclick="toggleProfileMenu()" id="profile-btn"
+                        <button data-action="toggleProfileMenu" id="profile-btn"
                                 class="flex items-center gap-2 px-2 py-1.5 bg-[#16a34a] hover:bg-[#166534] rounded-lg text-xs sm:text-sm font-semibold transition shadow text-white">
                             <span id="profile-avatar" class="w-7 h-7 rounded-full bg-white text-[#15803d] flex items-center justify-center font-bold text-xs">?</span>
                             <span id="profile-name-short" class="hidden sm:inline max-w-[80px] truncate">Кабинет</span>
@@ -161,12 +193,12 @@
                                     <span class="text-gray-500 font-bold text-sm ml-1">⚪ 0,00 грн</span>
                                 </div>
                             </div>
-                            <button onclick="openMyOperations()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Авансовый отчёт</span></button>
-                            <button onclick="openMyRequests()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span>Мои заявки</span></button>
-                            <button onclick="openMyTasks()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📌 <span>Мои задачи</span></button>
+                            <button data-action="openMyOperations" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Авансовый отчёт</span></button>
+                            <button data-action="openMyRequests" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span>Мои заявки</span></button>
+                            <button data-action="openMyTasks" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📌 <span>Мои задачи</span></button>
                             <!-- Язык интерфейса и цветовая схема: каждый сотрудник выбирает сам -->
-                            <button onclick="openSettings()" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">⚙ <span>Настройки</span></button>
-                            <button onclick="logout()" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
+                            <button data-action="openSettings" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">⚙ <span>Настройки</span></button>
+                            <button data-action="logout" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
                         </div>
                     </div>
                 </div>
@@ -191,7 +223,7 @@
                         <h2 class="text-lg font-bold text-gray-800">🏗 Объекты</h2>
                         <p class="text-xs text-gray-500">Управление строительными объектами</p>
                     </div>
-                    <button onclick="openAddProjectModal()" id="add-project-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить объект</button>
+                    <button data-action="openAddProjectModal" id="add-project-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить объект</button>
                 </div>
                 <div id="projects-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </section>
@@ -199,7 +231,7 @@
             <!-- КАРТОЧКА ОБЪЕКТА -->
             <section id="tab-project-detail" class="hidden space-y-4">
                 <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d]">
-                    <button onclick="switchTab('projects')" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition">← Назад к списку объектов</button>
+                    <button data-action="switchTab" data-arg="projects" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition">← Назад к списку объектов</button>
                     <button id="card-proj-delete-btn" class="text-red-500 hover:text-red-700 text-xs font-semibold">🗑 Удалить объект</button>
                 </div>
 
@@ -209,14 +241,14 @@
                     </div>
 
                     <div class="flex flex-wrap gap-2 border-b pb-4">
-                        <button onclick="switchProjectSubTab('info')" id="subbtn-info" class="px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow">📌 Общая информация</button>
-                        <button onclick="switchProjectSubTab('planfact')" id="subbtn-planfact" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📊 План-факт</button>
+                        <button data-action="switchProjectSubTab" data-arg="info" id="subbtn-info" class="px-3.5 py-2 bg-[#15803d] text-white rounded-lg text-xs font-semibold transition shadow">📌 Общая информация</button>
+                        <button data-action="switchProjectSubTab" data-arg="planfact" id="subbtn-planfact" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📊 План-факт</button>
                         <!-- «Доп. расходы» — траты, которых нет в смете (раздел «Доп. расходы»).
                              Кнопка намеренно янтарная: её нельзя спутать с разделами сметы.
                              Активный/неактивный стиль задаёт switchProjectSubTab() в js/modules/projects.js. -->
-                        <button onclick="switchProjectSubTab('extra')" id="subbtn-extra" class="px-3.5 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs font-semibold transition shadow">📦 Доп. расходы</button>
-                        <button onclick="switchProjectSubTab('files')" id="subbtn-files" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📁 Файлы</button>
-                        <button onclick="switchProjectSubTab('schedule')" id="subbtn-schedule" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📅 График</button>
+                        <button data-action="switchProjectSubTab" data-arg="extra" id="subbtn-extra" class="px-3.5 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs font-semibold transition shadow">📦 Доп. расходы</button>
+                        <button data-action="switchProjectSubTab" data-arg="files" id="subbtn-files" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📁 Файлы</button>
+                        <button data-action="switchProjectSubTab" data-arg="schedule" id="subbtn-schedule" class="px-3.5 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg text-xs font-semibold transition shadow">📅 График</button>
                     </div>
 
                     <div id="proj-subtab-info" class="space-y-4"></div>
@@ -248,7 +280,7 @@
                         <div class="border-t pt-4 space-y-3">
                             <div class="flex justify-between items-center flex-wrap gap-2">
                                 <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider">📁 Документация по объекту</h3>
-                                <button onclick="window.openUploadFileModal('project')" id="upload-file-btn"
+                                <button data-action="openUploadFileModal" data-arg="project" id="upload-file-btn"
                                         class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">
                                     📤 Загрузить файл
                                 </button>
@@ -278,7 +310,7 @@
                         <h2 class="text-lg font-bold text-gray-800">👥 Сотрудники</h2>
                         <p class="text-xs text-gray-500">Управление персоналом компании</p>
                     </div>
-                    <button onclick="openAddEmployeeModal()" id="add-employee-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить сотрудника</button>
+                    <button data-action="openAddEmployeeModal" id="add-employee-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Добавить сотрудника</button>
                 </div>
                 <div id="employees-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </section>
@@ -292,15 +324,15 @@
                         <h2 class="text-lg font-bold text-gray-800">📋 Задачи</h2>
                         <p class="text-xs text-gray-500">Задачи для прорабов и сотрудников</p>
                     </div>
-                    <button onclick="openNewTaskForm()" id="create-task-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать задачу</button>
+                    <button data-action="openNewTaskForm" id="create-task-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать задачу</button>
                 </div>
 
                 <div class="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-                    <button onclick="switchTasksTab('active')" id="tasks-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
-                    <button onclick="switchTasksTab('pending')" id="tasks-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Новые</button>
-                    <button onclick="switchTasksTab('in_progress')" id="tasks-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔵 В работе</button>
-                    <button onclick="switchTasksTab('done')" id="tasks-filter-done" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выполненные</button>
-                    <button onclick="switchTasksTab('all')" id="tasks-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
+                    <button data-action="switchTasksTab" data-arg="active" id="tasks-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
+                    <button data-action="switchTasksTab" data-arg="pending" id="tasks-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Новые</button>
+                    <button data-action="switchTasksTab" data-arg="in_progress" id="tasks-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔵 В работе</button>
+                    <button data-action="switchTasksTab" data-arg="done" id="tasks-filter-done" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выполненные</button>
+                    <button data-action="switchTasksTab" data-arg="all" id="tasks-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
                 </div>
 
                 <div id="tasks-container" class="grid grid-cols-1 gap-3"></div>
@@ -314,17 +346,17 @@
                         <h2 class="text-lg font-bold text-gray-800">📦 Снабжение</h2>
                         <p class="text-xs text-gray-500">Заявки на материалы</p>
                     </div>
-                    <button onclick="openNewOrderForm()" id="create-order-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
+                    <button data-action="openNewOrderForm" id="create-order-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
                 </div>
 
                 <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
-                    <button onclick="switchOrdersTab('active')" id="orders-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
-                    <button onclick="switchOrdersTab('new')" id="orders-filter-new" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Новые</button>
-                    <button onclick="switchOrdersTab('in_progress')" id="orders-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 В обработке</button>
-                    <button onclick="switchOrdersTab('delivered')" id="orders-filter-delivered" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🚚 Доставлено</button>
-                    <button onclick="switchOrdersTab('closed')" id="orders-filter-closed" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Закрытые</button>
-                    <button onclick="switchOrdersTab('archived')" id="orders-filter-archived" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📥 Архив</button>
-                    <button onclick="switchOrdersTab('all')" id="orders-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
+                    <button data-action="switchOrdersTab" data-arg="active" id="orders-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
+                    <button data-action="switchOrdersTab" data-arg="new" id="orders-filter-new" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Новые</button>
+                    <button data-action="switchOrdersTab" data-arg="in_progress" id="orders-filter-in_progress" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 В обработке</button>
+                    <button data-action="switchOrdersTab" data-arg="delivered" id="orders-filter-delivered" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🚚 Доставлено</button>
+                    <button data-action="switchOrdersTab" data-arg="closed" id="orders-filter-closed" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Закрытые</button>
+                    <button data-action="switchOrdersTab" data-arg="archived" id="orders-filter-archived" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📥 Архив</button>
+                    <button data-action="switchOrdersTab" data-arg="all" id="orders-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
                 </div>
 
                 <!-- Панель списка: поиск, «Показано 1-25 из 137», страницы,
@@ -358,13 +390,13 @@
                               class="hidden items-center text-xs bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg text-gray-700"></span>
                         <!-- Пополнение подотчёта финансиста: директор/кассиры (право cash_issue).
                              Кнопку показывает main.js (applyPermissionsToUI), поэтому по умолчанию скрыта. -->
-                        <button onclick="openTopUpBalanceModal()" id="btn-topup-financier"
+                        <button data-action="openTopUpBalanceModal" id="btn-topup-financier"
                                 class="hidden bg-white hover:bg-emerald-50 text-[#15803d] border border-[#15803d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition">💼 Пополнить баланс финансиста</button>
                         <!-- Ведомость пополнений подотчёта: директор/кассиры (право cash_issue).
                              Показывает main.js, поэтому по умолчанию скрыта. -->
-                        <button onclick="openFinancierTopUpStatement()" id="btn-financier-statement"
+                        <button data-action="openFinancierTopUpStatement" id="btn-financier-statement"
                                 class="hidden bg-white hover:bg-emerald-50 text-[#15803d] border border-[#15803d] px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition" data-i18n="statement.button">📄 Ведомость пополнений</button>
-                        <button onclick="openNewCashRequestForm()" id="create-cash-request-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
+                        <button data-action="openNewCashRequestForm" id="create-cash-request-btn" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Создать заявку</button>
                     </div>
                 </div>
 
@@ -411,17 +443,17 @@
                              ролей — как было. Скрывает js/modules/cash-requests.js →
                              applyFinancierDesktopLayout(). -->
                         <div id="cashreq-filters" class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm">
-                            <button onclick="switchCashRequestsTab('active')" id="cashreq-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
-                            <button onclick="switchCashRequestsTab('pending')" id="cashreq-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Ожидают</button>
-                            <button onclick="switchCashRequestsTab('revision')" id="cashreq-filter-revision" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">✏️ На доработке</button>
-                            <button onclick="switchCashRequestsTab('approved')" id="cashreq-filter-approved" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Одобрены</button>
-                            <button onclick="switchCashRequestsTab('issued')" id="cashreq-filter-issued" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выданы</button>
-                            <button onclick="switchCashRequestsTab('rejected')" id="cashreq-filter-rejected" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">❌ Отклонены</button>
+                            <button data-action="switchCashRequestsTab" data-arg="active" id="cashreq-filter-active" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">🔄 Активные</button>
+                            <button data-action="switchCashRequestsTab" data-arg="pending" id="cashreq-filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🔴 Ожидают</button>
+                            <button data-action="switchCashRequestsTab" data-arg="revision" id="cashreq-filter-revision" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">✏️ На доработке</button>
+                            <button data-action="switchCashRequestsTab" data-arg="approved" id="cashreq-filter-approved" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟡 Одобрены</button>
+                            <button data-action="switchCashRequestsTab" data-arg="issued" id="cashreq-filter-issued" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">🟢 Выданы</button>
+                            <button data-action="switchCashRequestsTab" data-arg="rejected" id="cashreq-filter-rejected" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">❌ Отклонены</button>
                             <!-- «📥 Архив»: заявки, которые их автор убрал со своего
                                  рабочего экрана (выданные и отклонённые). Статус 'archived'
                                  знает версия 2.6.0 — база требует database/migrate-v2.6.sql. -->
-                            <button onclick="switchCashRequestsTab('archived')" id="cashreq-filter-archived" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📥 Архив</button>
-                            <button onclick="switchCashRequestsTab('all')" id="cashreq-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
+                            <button data-action="switchCashRequestsTab" data-arg="archived" id="cashreq-filter-archived" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📥 Архив</button>
+                            <button data-action="switchCashRequestsTab" data-arg="all" id="cashreq-filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">📋 Все</button>
                         </div>
 
                         <div id="cash-requests-container" class="space-y-3"></div>
@@ -453,26 +485,26 @@
 
                 <div class="bg-white p-4 rounded-xl shadow-sm space-y-3">
                     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-                        <select id="reg-filter-project" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все объекты</option></select>
-                        <select id="reg-filter-section" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все разделы</option></select>
-                        <select id="reg-filter-category" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <select id="reg-filter-project" data-action="applyRegistryFilters" data-on="change" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все объекты</option></select>
+                        <select id="reg-filter-section" data-action="applyRegistryFilters" data-on="change" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все разделы</option></select>
+                        <select id="reg-filter-category" data-action="applyRegistryFilters" data-on="change" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">Все категории</option>
                             <option value="materials">📦 Материалы</option>
                             <option value="works">🛠 Работы</option>
                             <option value="delivery">🚚 Доставка</option>
                             <option value="other">📋 Прочее</option>
                         </select>
-                        <select id="reg-filter-payment" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <select id="reg-filter-payment" data-action="applyRegistryFilters" data-on="change" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">Все оплаты</option>
                             <option value="paid">✅ Оплачено</option>
                             <option value="debt">⏳ Ожидает оплаты</option>
                         </select>
-                        <select id="reg-filter-employee" onchange="applyRegistryFilters()" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все сотрудники</option></select>
-                        <input type="date" id="reg-filter-date-from" onchange="applyRegistryFilters()" placeholder="Дата с" class="border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                        <input type="date" id="reg-filter-date-to" onchange="applyRegistryFilters()" placeholder="Дата по" class="border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <select id="reg-filter-employee" data-action="applyRegistryFilters" data-on="change" class="border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"><option value="">Все сотрудники</option></select>
+                        <input type="date" id="reg-filter-date-from" data-action="applyRegistryFilters" data-on="change" placeholder="Дата с" class="border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <input type="date" id="reg-filter-date-to" data-action="applyRegistryFilters" data-on="change" placeholder="Дата по" class="border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                         <div class="flex gap-2">
-                            <button onclick="resetRegistryFilters()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-3 py-2 rounded-lg text-xs transition">🗑 Сброс</button>
-                            <button onclick="exportRegistryToExcel()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition shadow">📥 Excel</button>
+                            <button data-action="resetRegistryFilters" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-3 py-2 rounded-lg text-xs transition">🗑 Сброс</button>
+                            <button data-action="exportRegistryToExcel" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg text-xs transition shadow">📥 Excel</button>
                         </div>
                     </div>
                 </div>
@@ -512,7 +544,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" data-i18n="settings.title">⚙ Настройки приложения</h3>
-                <button onclick="hideModal('settings-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="settings-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
 
             <p class="text-xs text-gray-500" data-i18n="settings.subtitle">
@@ -539,7 +571,7 @@
                 <span id="settings-version" class="font-semibold text-gray-800">RSK Odessa</span>
             </div>
 
-            <button type="button" onclick="hideModal('settings-modal')"
+            <button type="button" data-action="hideModal" data-arg="settings-modal"
                     class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
                     data-i18n="common.close">Закрыть</button>
         </div>
@@ -550,7 +582,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">🏗 Новый объект</h3>
-                <button onclick="hideModal('project-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="project-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="project-form" class="space-y-3">
                 <div>
@@ -564,7 +596,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить</button>
-                    <button type="button" onclick="hideModal('project-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="project-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -575,7 +607,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">👤 Новый сотрудник</h3>
-                <button onclick="hideModal('employee-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="employee-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="employee-form" class="space-y-3">
                 <div>
@@ -599,7 +631,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить</button>
-                    <button type="button" onclick="hideModal('employee-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="employee-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -610,12 +642,12 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">👤 Карточка сотрудника</h3>
-                <button onclick="hideModal('employee-card-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="employee-card-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="employee-card-content" class="space-y-3 text-sm text-gray-800"></div>
             <div class="pt-2 border-t flex justify-between items-center">
                 <button id="card-emp-delete-btn" class="text-red-500 hover:text-red-700 text-xs font-semibold">🗑 Удалить</button>
-                <button onclick="hideModal('employee-card-modal')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+                <button data-action="hideModal" data-arg="employee-card-modal" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
             </div>
         </div>
     </div>
@@ -625,7 +657,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">🚫 Блокировка сотрудника</h3>
-                <button onclick="hideModal('deactivate-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="deactivate-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="deactivate-form" class="space-y-3">
                 <input type="hidden" id="deactivate-emp-id">
@@ -639,7 +671,7 @@
                 </p>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">🚫 Заблокировать</button>
-                    <button type="button" onclick="hideModal('deactivate-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="deactivate-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -650,11 +682,11 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">🔗 Привязка аккаунта</h3>
-                <button onclick="hideModal('link-user-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="link-user-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="link-user-content" class="space-y-3 text-sm text-gray-800"></div>
             <div class="flex gap-2 pt-2 border-t">
-                <button type="button" onclick="hideModal('link-user-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                <button type="button" data-action="hideModal" data-arg="link-user-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
             </div>
         </div>
     </div>
@@ -664,11 +696,11 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">💰 Авансовый отчёт</h3>
-                <button onclick="closeMyOperations()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="closeMyOperations" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="my-operations-content" class="space-y-3 text-gray-800"></div>
             <div class="pt-2 border-t flex justify-end">
-                <button onclick="closeMyOperations()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+                <button data-action="closeMyOperations" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
             </div>
         </div>
     </div>
@@ -678,15 +710,15 @@
         <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📋 Мои заявки</h3>
-                <button onclick="closeMyRequests()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="closeMyRequests" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div class="flex flex-wrap gap-2">
-                <button onclick="switchMyRequestsTab('materials')" id="myreq-tab-materials" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">📦 Материалы</button>
-                <button onclick="switchMyRequestsTab('finance')" id="myreq-tab-finance" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">💰 Финансы</button>
+                <button data-action="switchMyRequestsTab" data-arg="materials" id="myreq-tab-materials" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white">📦 Материалы</button>
+                <button data-action="switchMyRequestsTab" data-arg="finance" id="myreq-tab-finance" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-600 hover:bg-gray-200">💰 Финансы</button>
             </div>
             <div id="my-requests-content" class="space-y-3 text-gray-800"></div>
             <div class="pt-2 border-t flex justify-end">
-                <button onclick="closeMyRequests()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+                <button data-action="closeMyRequests" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
             </div>
         </div>
     </div>
@@ -696,11 +728,11 @@
         <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📌 Мои задачи</h3>
-                <button onclick="closeMyTasks()" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="closeMyTasks" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="my-tasks-content" class="space-y-3 text-gray-800"></div>
             <div class="pt-2 border-t flex justify-end">
-                <button onclick="closeMyTasks()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+                <button data-action="closeMyTasks" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
             </div>
         </div>
     </div>
@@ -710,7 +742,7 @@
         <div class="w-full max-w-2xl space-y-4 overflow-y-auto rounded-xl border border-gray-200 bg-white p-6 shadow-lg max-h-[95vh]">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📋 Новая задача</h3>
-                <button onclick="hideModal('new-task-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="new-task-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="new-task-form" class="space-y-4">
                 <div>
@@ -732,7 +764,7 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Объект:</label>
-                        <select id="new-task-project" onchange="loadSectionsForTask()"
+                        <select id="new-task-project" data-action="loadSectionsForTask" data-on="change"
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">— Без объекта —</option>
                         </select>
@@ -763,7 +795,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать задачу</button>
-                    <button type="button" onclick="hideModal('new-task-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="new-task-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -774,7 +806,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📋 Задача</h3>
-                <button onclick="hideModal('task-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="task-detail-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="task-detail-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="task-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
@@ -786,11 +818,11 @@
         <div class="bg-white rounded-xl shadow-lg max-w-6xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 id="task-filter-title" class="text-lg font-bold text-gray-800">📋 Задачи</h3>
-                <button onclick="hideModal('task-filter-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="task-filter-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="task-filter-content" class="space-y-3 text-sm text-gray-800"></div>
             <div class="pt-2 border-t flex justify-end">
-                <button onclick="hideModal('task-filter-modal')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
+                <button data-action="hideModal" data-arg="task-filter-modal" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-4 py-2 rounded-lg text-xs transition">Закрыть</button>
             </div>
         </div>
     </div>
@@ -800,7 +832,7 @@
         <div class="w-full max-w-2xl space-y-4 overflow-y-auto rounded-xl border border-gray-200 bg-white p-6 shadow-lg max-h-[90vh]">
             <div class="flex items-center justify-between gap-3 border-b pb-3">
                 <h3 id="material-overrun-title" class="text-lg font-bold text-gray-800">🏗 Детали перерасхода</h3>
-                <button onclick="hideModal('material-overrun-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="material-overrun-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="material-overrun-content" class="space-y-3 text-sm text-gray-800"></div>
             <div class="flex justify-end border-t pt-3">
@@ -814,7 +846,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="complete-task-title">✅ Выполнить задачу</h3>
-                <button onclick="hideModal('complete-task-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="complete-task-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="complete-task-form" class="space-y-3">
                 <input type="hidden" id="complete-task-id">
@@ -830,7 +862,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">✅ Отметить выполненной</button>
-                    <button type="button" onclick="hideModal('complete-task-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="complete-task-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -841,13 +873,13 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📦 Новый заказ материалов</h3>
-                <button onclick="hideModal('new-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="new-order-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="new-order-form" class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Объект: *</label>
-                        <select id="new-order-project" onchange="loadSectionsForOrder()" required
+                        <select id="new-order-project" data-action="loadSectionsForOrder" data-on="change" required
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">— Выбери объект —</option>
                         </select>
@@ -873,7 +905,7 @@
                         <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">
                             📦 Позиции: <span id="new-order-items-count" class="text-[#15803d]">1</span>
                         </label>
-                        <button type="button" onclick="addOrderItemRow()" 
+                        <button type="button" data-action="addOrderItemRow" 
                                 class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
                     </div>
                     <div id="new-order-items" class="space-y-2"></div>
@@ -885,7 +917,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать заявку</button>
-                    <button type="button" onclick="hideModal('new-order-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="new-order-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -896,7 +928,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📦 Заявка</h3>
-                <button onclick="hideModal('order-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="order-detail-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="order-detail-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="order-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
@@ -910,7 +942,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="order-invoice-title" data-i18n="order.invoiceTitle">🧾 Счёт поставщика по заявке</h3>
-                <button onclick="hideModal('order-invoice-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="order-invoice-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
 
             <p class="text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg p-2.5" data-i18n="order.invoiceHint">
@@ -919,7 +951,7 @@
                 материалы», а заявка перейдёт в «Ожидает оплаты».
             </p>
 
-            <form id="order-invoice-form" class="space-y-4" onsubmit="saveOrderInvoice(event)">
+            <form id="order-invoice-form" class="space-y-4" data-action="saveOrderInvoice" data-on="submit" data-pass-event>
                 <input type="hidden" id="order-invoice-id">
 
                 <div class="space-y-2">
@@ -949,13 +981,13 @@
                             <label class="flex items-center gap-2 text-sm text-gray-800 cursor-pointer">
                                 <input type="radio" name="order-invoice-vat-mode" value="with_vat"
                                        id="order-invoice-vat-mode-with" checked class="w-4 h-4"
-                                       onchange="window.recalcOrderInvoiceTotal()">
+                                       data-action="recalcOrderInvoiceTotal" data-on="change">
                                 <span data-i18n="order.invoiceVatModeWith">Цены уже с ПДВ</span>
                             </label>
                             <label class="flex items-center gap-2 text-sm text-gray-800 cursor-pointer">
                                 <input type="radio" name="order-invoice-vat-mode" value="without_vat"
                                        id="order-invoice-vat-mode-without" class="w-4 h-4"
-                                       onchange="window.recalcOrderInvoiceTotal()">
+                                       data-action="recalcOrderInvoiceTotal" data-on="change">
                                 <span data-i18n="order.invoiceVatModeWithout">Цены без ПДВ (налог сверху)</span>
                             </label>
                             <label class="flex items-center gap-2 text-xs font-semibold text-gray-600">
@@ -965,7 +997,7 @@
                                 <input type="number" step="0.01" min="0" max="100" id="order-invoice-vat-rate"
                                        list="order-invoice-vat-rates" value="20"
                                        class="w-20 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                                       oninput="window.recalcOrderInvoiceTotal()">
+                                       data-action="recalcOrderInvoiceTotal" data-on="input">
                                 <datalist id="order-invoice-vat-rates"></datalist>
                             </label>
                         </div>
@@ -988,12 +1020,12 @@
                     <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="order.invoiceDeliveryTitle">🚚 Чья доставка</p>
                     <label class="flex items-start gap-2 cursor-pointer text-sm text-gray-800">
                         <input type="radio" name="order-invoice-delivery-type" value="supplier" id="order-invoice-delivery-supplier" checked class="w-4 h-4 mt-0.5"
-                               onchange="window.updateOrderInvoiceDeliveryHints()">
+                               data-action="updateOrderInvoiceDeliveryHints" data-on="change">
                         <span data-i18n="order.invoiceDeliverySupplierOption">🏬 Доставка поставщика — сумма входит в счёт (фирма платит вместе с материалами)</span>
                     </label>
                     <label class="flex items-start gap-2 cursor-pointer text-sm text-gray-800">
                         <input type="radio" name="order-invoice-delivery-type" value="company" id="order-invoice-delivery-company" class="w-4 h-4 mt-0.5"
-                               onchange="window.updateOrderInvoiceDeliveryHints()">
+                               data-action="updateOrderInvoiceDeliveryHints" data-on="change">
                         <span data-i18n="order.invoiceDeliveryCompanyOption">🏢 Доставка компании — в счёт поставщика не входит, это отдельный расход заявки</span>
                     </label>
                     <!-- Подпись и подсказку поля меняет js/modules/orders.js →
@@ -1003,7 +1035,7 @@
                     <label class="block text-xs font-semibold text-gray-600" for="order-invoice-delivery" id="order-invoice-delivery-label" data-i18n-skip>🚚 Стоимость доставки в счёте (грн)</label>
                     <input type="number" step="0.01" min="0" id="order-invoice-delivery" placeholder="0"
                            class="w-full border rounded-lg p-2.5 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                           oninput="window.recalcOrderInvoiceTotal()">
+                           data-action="recalcOrderInvoiceTotal" data-on="input">
                     <p class="text-[11px] text-gray-500" id="order-invoice-delivery-hint" data-i18n-skip>Везёт поставщик: сумма входит в итог счёта и уходит финансисту вместе с материалами. Пусто — доставки нет.</p>
 
                     <!-- Своя доставка (везёт компания) — это деньги объекта, но
@@ -1018,7 +1050,7 @@
                         <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="order.invoiceOwnChargeTitle">💳 Чем списываем свою доставку</p>
                         <select id="order-invoice-own-charge"
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                                onchange="window.updateOrderInvoiceDeliveryHints()">
+                                data-action="updateOrderInvoiceDeliveryHints" data-on="change">
                             <option value="snagach" data-i18n="order.invoiceOwnChargeSnagach">С подотчёта снабженца (я платил)</option>
                             <option value="employee" data-i18n="order.invoiceOwnChargeEmployee">С подотчёта сотрудника</option>
                             <option value="firm" data-i18n="order.invoiceOwnChargeFirm">Платит фирма (безнал)</option>
@@ -1035,7 +1067,7 @@
                             <span data-i18n="order.invoiceOwnDeliveryVat">ПДВ на доставку, %</span>
                             <input type="number" step="0.01" min="0" max="100" id="order-invoice-own-vat-rate" value="0"
                                    class="w-20 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                                   oninput="window.recalcOrderInvoiceTotal()">
+                                   data-action="recalcOrderInvoiceTotal" data-on="input">
                         </label>
                     </div>
                 </div>
@@ -1059,7 +1091,7 @@
 
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить счёт</button>
-                    <button type="button" onclick="hideModal('order-invoice-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition" data-i18n="common.cancel">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="order-invoice-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition" data-i18n="common.cancel">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1070,7 +1102,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="close-order-title">🚚 Доставлено на объект</h3>
-                <button onclick="hideModal('close-order-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="close-order-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <p class="text-xs text-gray-500 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
                 💡 Закрывая закупку, вы подтверждаете, что материалы приехали на объект. Позиции сразу попадут
@@ -1105,12 +1137,12 @@
                     <p class="text-xs font-bold text-gray-700 uppercase tracking-wider">💳 Кто платит: *</p>
                     <label class="flex items-center gap-2 cursor-pointer text-sm">
                         <input type="radio" name="close-order-payment-source" value="company" id="close-order-payment-company" checked class="w-4 h-4"
-                               onchange="window.updateCloseOrderPaymentHints()">
+                               data-action="updateCloseOrderPaymentHints" data-on="change">
                         <span>🏢 <b>Фирма</b> (по счёту / безнал) — позиции будут «Ожидает оплаты» до отметки финансиста</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer text-sm">
                         <input type="radio" name="close-order-payment-source" value="employee" class="w-4 h-4"
-                               onchange="window.updateCloseOrderPaymentHints()">
+                               data-action="updateCloseOrderPaymentHints" data-on="change">
                         <span>💵 <b>Снабженец</b> (наличными из подотчёта) — позиции сразу «Оплачено»</span>
                     </label>
                 </div>
@@ -1121,7 +1153,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Подтвердить доставку</button>
-                    <button type="button" onclick="hideModal('close-order-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="close-order-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1132,7 +1164,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="new-cashreq-modal-title">💰 Новый финансовый запрос</h3>
-                <button onclick="hideModal('new-cashreq-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="new-cashreq-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="new-cashreq-form" class="space-y-4">
                 <!-- Доработка: сюда попадает причина, по которой директор вернул заявку -->
@@ -1140,7 +1172,7 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Объект: *</label>
-                        <select id="new-cashreq-project" onchange="loadSectionsForCashRequest()" required
+                        <select id="new-cashreq-project" data-action="loadSectionsForCashRequest" data-on="change" required
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">— Выбери объект —</option>
                         </select>
@@ -1161,7 +1193,7 @@
                         <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">
                             🛠 Позиции работ: <span id="new-cashreq-items-count" class="text-[#15803d]">1</span>
                         </label>
-                        <button type="button" onclick="addCashRequestItemRow()" 
+                        <button type="button" data-action="addCashRequestItemRow" 
                                 class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
                     </div>
                     <div id="new-cashreq-items" class="space-y-2"></div>
@@ -1177,7 +1209,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Создать заявку</button>
-                    <button type="button" onclick="hideModal('new-cashreq-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="new-cashreq-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1188,7 +1220,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">💰 Финансовый запрос</h3>
-                <button onclick="hideModal('cash-request-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="cash-request-detail-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="cash-request-detail-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="cash-request-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
@@ -1208,7 +1240,7 @@
                     <h3 class="text-lg font-bold text-gray-800" data-i18n="invoice.detailTitle">🧾 Счёт на материалы</h3>
                     <p class="text-xs text-gray-500 mt-0.5" data-i18n="invoice.detailSubtitle">Что за закупка, кто поставщик, когда приехали материалы и оплачен ли счёт.</p>
                 </div>
-                <button onclick="hideModal('material-invoice-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="material-invoice-detail-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="material-invoice-detail-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="material-invoice-detail-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
@@ -1220,7 +1252,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">💼 Пополнить баланс финансиста</h3>
-                <button onclick="hideModal('topup-balance-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="topup-balance-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <p class="text-xs text-gray-500 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">
                 💡 Сумма зачисляется на подотчёт финансиста и ни к какому объекту не привязывается.
@@ -1246,7 +1278,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💼 Пополнить</button>
-                    <button type="button" onclick="hideModal('topup-balance-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="topup-balance-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1263,7 +1295,7 @@
                     <h3 class="text-lg font-bold text-gray-800" data-i18n="statement.title">📄 Ведомость пополнений подотчёта финансиста</h3>
                     <p class="text-xs text-gray-500 mt-0.5" data-i18n="statement.subtitle">Кто, когда и сколько передал денег в подотчёт финансиста.</p>
                 </div>
-                <button onclick="hideModal('financier-statement-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="financier-statement-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
 
             <div id="financier-statement-summary" class="grid grid-cols-2 gap-2"></div>
@@ -1271,10 +1303,10 @@
             <div id="financier-statement-body" class="space-y-2"></div>
 
             <div class="flex gap-2 pt-2 border-t">
-                <button type="button" onclick="exportFinancierTopUpStatement()"
+                <button type="button" data-action="exportFinancierTopUpStatement"
                         class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
                         data-i18n="common.export">📥 Excel</button>
-                <button type="button" onclick="hideModal('financier-statement-modal')"
+                <button type="button" data-action="hideModal" data-arg="financier-statement-modal"
                         class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition"
                         data-i18n="common.close">Закрыть</button>
             </div>
@@ -1286,14 +1318,14 @@
         <div class="bg-white rounded-xl shadow-lg max-w-3xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="cash-expense-title">🛒 Внести расход</h3>
-                <button onclick="hideModal('cash-expense-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="cash-expense-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="cash-expense-form" class="space-y-4">
                 <input type="hidden" id="cash-expense-employee-id">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">Объект:</label>
-                        <select id="cash-expense-project" onchange="loadSectionsForExpense()"
+                        <select id="cash-expense-project" data-action="loadSectionsForExpense" data-on="change"
                                 class="w-full border rounded-lg p-2.5 text-sm bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                             <option value="">— Выбери объект —</option>
                         </select>
@@ -1327,7 +1359,7 @@
                 <div class="border-t border-b py-3 space-y-3">
                     <div class="flex justify-between items-center">
                         <label class="text-xs font-bold text-gray-700 uppercase tracking-wider">📦 Позиции расхода:</label>
-                        <button type="button" onclick="addExpenseItemRow()" 
+                        <button type="button" data-action="addExpenseItemRow" 
                                 class="text-xs bg-emerald-50 text-[#15803d] hover:bg-emerald-100 font-semibold px-2.5 py-1 rounded-lg transition">➕ Добавить позицию</button>
                     </div>
                     <div id="cash-expense-items" class="space-y-2"></div>
@@ -1343,7 +1375,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить расход</button>
-                    <button type="button" onclick="hideModal('cash-expense-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="cash-expense-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1354,7 +1386,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="cash-return-title">↩️ Возврат в кассу</h3>
-                <button onclick="hideModal('cash-return-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="cash-return-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="cash-return-form" class="space-y-3">
                 <input type="hidden" id="cash-return-employee-id">
@@ -1370,7 +1402,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">↩️ Вернуть</button>
-                    <button type="button" onclick="hideModal('cash-return-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="cash-return-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1380,7 +1412,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="upload-file-modal-title">📤 Загрузить файл</h3>
-                <button onclick="hideModal('upload-file-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="upload-file-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="upload-file-form" class="space-y-3">
                 <input type="hidden" id="upload-file-category" value="project">
@@ -1397,7 +1429,7 @@
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">📤 Загрузить</button>
-                    <button type="button" onclick="hideModal('upload-file-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="upload-file-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1408,7 +1440,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📅 Редактирование дат разделов</h3>
-                <button onclick="hideModal('edit-dates-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="edit-dates-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <p class="text-xs text-gray-500 bg-amber-50 p-2.5 rounded-lg border border-amber-200">
                 💡 Укажите даты начала и окончания для каждого раздела. Даты также можно перетаскивать на диаграмме.
@@ -1417,7 +1449,7 @@
                 <div id="edit-dates-content" class="space-y-2"></div>
                 <div class="flex gap-2 pt-2 border-t">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">💾 Сохранить даты</button>
-                    <button type="button" onclick="hideModal('edit-dates-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="edit-dates-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1428,7 +1460,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">📌 Раздел сметы</h3>
-                <button onclick="hideModal('section-detail-gantt-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="section-detail-gantt-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="section-detail-gantt-content" class="space-y-3 text-sm text-gray-800"></div>
             <div id="section-detail-gantt-actions" class="pt-2 border-t flex flex-wrap gap-2 justify-end"></div>
@@ -1440,7 +1472,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" id="extra-cost-detail-title">⚠ Доп. расходы — подробности</h3>
-                <button onclick="hideModal('extra-cost-detail-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="extra-cost-detail-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <div id="extra-cost-detail-content" class="space-y-3 text-sm text-gray-800"></div>
         </div>
@@ -1451,7 +1483,7 @@
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800">✅ Закрытие раздела</h3>
-                <button onclick="hideModal('close-section-modal')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="close-section-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
             <form id="close-section-form" class="space-y-3">
                 <input type="hidden" id="close-section-id">
@@ -1473,7 +1505,7 @@
                 </p>
                 <div class="flex gap-2 pt-2">
                     <button type="submit" class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition">✅ Отметить выполненным</button>
-                    <button type="button" onclick="hideModal('close-section-modal')" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
+                    <button type="button" data-action="hideModal" data-arg="close-section-modal" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition">Отмена</button>
                 </div>
             </form>
         </div>
@@ -1493,15 +1525,15 @@
                     Приложение откроется в отдельном окне, а значок появится на рабочем столе.
                 </p>
             </div>
-            <button type="button" onclick="pwaDismissInstall(true)" title="Больше не предлагать"
+            <button type="button" data-action="pwaDismissInstall" data-arg="true" title="Больше не предлагать"
                     class="text-gray-400 hover:text-gray-600 font-bold text-lg leading-none shrink-0">✕</button>
         </div>
         <div class="flex gap-2 mt-3">
-            <button type="button" id="pwa-install-btn" onclick="pwaInstall()"
+            <button type="button" id="pwa-install-btn" data-action="pwaInstall"
                     class="flex-1 bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2 rounded-lg text-sm transition">
                 📲 Установить
             </button>
-            <button type="button" onclick="pwaDismissInstall(false)"
+            <button type="button" data-action="pwaDismissInstall" data-arg="false"
                     class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg text-sm transition">
                 Позже
             </button>
@@ -1518,11 +1550,11 @@
             </div>
         </div>
         <div class="flex gap-2 mt-3">
-            <button type="button" onclick="pwaApplyUpdate()"
+            <button type="button" data-action="pwaApplyUpdate"
                     class="flex-1 bg-white hover:bg-gray-100 text-[#166534] font-semibold py-2 rounded-lg text-sm transition">
                 Обновить
             </button>
-            <button type="button" onclick="pwaHideUpdate()"
+            <button type="button" data-action="pwaHideUpdate"
                     class="px-3 bg-[#15803d] hover:bg-[#14532d] text-white font-semibold py-2 rounded-lg text-sm transition">
                 Позже
             </button>

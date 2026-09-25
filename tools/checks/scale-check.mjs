@@ -158,11 +158,18 @@ function filterOrders(params) {
     // прошли бы незамеченными (так и случилось в первом прогоне).
     const or = params.or || '';
     if (or && !/^\([^()]+\)$/.test(or)) {
-        return sendJson(res, 400, {
-            code: 'PGRST100',
-            message: 'failed to parse logic tree (' + or + ')',
-            details: null, hint: null
-        });
+        // Ответ отправляет обработчик запроса: бросаем ошибку разбора с кодом
+        // PostgREST, иначе звать `sendJson` отсюда нечем (см. handleMock).
+        const parseError = new Error('failed to parse logic tree (' + or + ')');
+        parseError.pgrest = {
+            status: 400,
+            payload: {
+                code: 'PGRST100',
+                message: 'failed to parse logic tree (' + or + ')',
+                details: null, hint: null
+            }
+        };
+        throw parseError;
     }
 
     const terms = [...String(or).matchAll(/([a-z_]+)\.ilike\.%([^%]*)%/g)]
@@ -262,7 +269,16 @@ function handleMock(req, res, body) {
     // ---- заявки и их позиции ----
     if (p.includes('/rest/v1/orders')) {
         if (req.method !== 'GET') return sendJson(res, 201, { id: 1 });
-        return sendRows(req, res, filterOrders(params));
+        try {
+            return sendRows(req, res, filterOrders(params));
+        } catch (error) {
+            // Ошибка разбора условий (`or=((...))`) — как у настоящего PostgREST:
+            // 400 с кодом PGRST100, а не пустой список.
+            if (error && error.pgrest) {
+                return sendJson(res, error.pgrest.status, error.pgrest.payload);
+            }
+            throw error;
+        }
     }
     if (p.includes('/rest/v1/order_items')) return sendRows(req, res, filterOrderItems(params));
     if (p.includes('/rest/v1/projects')) return sendRows(req, res, [PROJECT]);
@@ -388,13 +404,13 @@ async function pageAction(code, waitMs = 1500) {
 const LIST_STATE = `(() => {
     const container = document.getElementById('orders-container');
     return {
-        cards: container ? container.querySelectorAll('button[onclick*="openOrderDetail"]').length : 0,
+        cards: container ? container.querySelectorAll('button[data-action="openOrderDetail"]').length : 0,
         range: (document.getElementById('orders-range') || {}).textContent || '',
         page: (document.getElementById('orders-page') || {}).textContent || '',
         nextDisabled: !!(document.getElementById('orders-next') || {}).disabled,
         prevDisabled: !!(document.getElementById('orders-prev') || {}).disabled,
         numbers: container
-            ? [...container.querySelectorAll('button[onclick*="openOrderDetail"]')].map((b) => b.textContent.trim().slice(0, 14))
+            ? [...container.querySelectorAll('button[data-action="openOrderDetail"]')].map((b) => b.textContent.trim().slice(0, 14))
             : []
     };
 })()`;
@@ -576,8 +592,8 @@ try {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
     failed += 1;
 } finally {
-    try { if (chrome) chrome.kill(); } catch { }
-    try { server.close(); } catch { }
+    try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
+    try { server.close(); } catch { /* сервер уже закрыт */ }
     const outDir = path.join(os.tmpdir(), 'rsk-fin');
     try {
         fs.mkdirSync(outDir, { recursive: true });

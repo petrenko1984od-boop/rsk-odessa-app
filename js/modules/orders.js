@@ -28,7 +28,7 @@ import {
     refreshDashboardIfVisible
 } from '../utils.js';
 import {
-    can, requirePermission, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
+    can, getEmployee, isAdmin, canSeeHeaderButton, canSeeTab
 } from '../permissions.js';
 import { CONFIG } from '../config.js';
 import { t, onLangChange } from '../i18n.js';
@@ -41,7 +41,6 @@ import { fillSectionsSelect } from './sections.js';
 
 let ordersCache = [];         // Заявки ТЕКУЩЕЙ СТРАНИЦЫ (v2.9.0)
 let currentFilter = 'active'; // Текущий фильтр
-let currentOrderId = null;    // Открытая карточка заявки
 let currentOrder = null;      // Сама открытая заявка (для подсказок в окнах)
 
 // --- страницы и поиск (v2.9.0) --------------------------------------
@@ -413,7 +412,7 @@ function renderOrderCard(order) {
     }
 
     return `
-        <button onclick="window.openOrderDetail(${order.id})"
+        <button data-action="openOrderDetail" data-arg="${order.id}"
                 class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex flex-col gap-3 border-l-4 ${statusInfo.border} hover:bg-emerald-50/50 transition cursor-pointer group">
             <div class="flex justify-between items-start gap-2 w-full">
                 <div class="flex items-center gap-2 flex-wrap">
@@ -532,8 +531,7 @@ export async function openOrderDetail(id) {
         orderDetails.set(id, order);
     }
 
-    currentOrderId = id;
-
+    
     const statusInfo = getStatusInfo(order.status);
     const items = order._items || [];
 
@@ -604,7 +602,7 @@ export async function openOrderDetail(id) {
                    ${escapeHtml(order.invoice_file_name || '—')}
                    ${order.invoice_total ? `· <b>${formatMoney(order.invoice_total)}</b>` : ''}
                    ${order.invoice_uploaded_at ? `· ${formatDate(order.invoice_uploaded_at)}` : ''}
-                   <button onclick="window.viewOrderInvoice(${order.id})"
+                   <button data-action="viewOrderInvoice" data-arg="${order.id}"
                            class="text-[#15803d] font-semibold hover:underline ml-1">${t('common.open')}</button>
                 </p>
             ` : ''}
@@ -635,17 +633,17 @@ function renderOrderActions(order) {
     let buttonsHtml = '';
 
     if (order.status === 'new' && canProcessOrder()) {
-        buttonsHtml += `<button onclick="window.takeOrderToWork(${order.id})" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.takeToWork')}</button>`;
+        buttonsHtml += `<button data-action="takeOrderToWork" data-arg="${order.id}" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.takeToWork')}</button>`;
     }
 
     // Счёт можно загрузить и до доставки, и после: материалы приезжают
     // раньше оплаты, а счёт иногда присылают позже накладной.
     if ((order.status === 'in_progress' || order.status === 'delivered') && canProcessOrder()) {
-        buttonsHtml += `<button onclick="window.openOrderInvoiceModal(${order.id})" class="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.invoiceButton')}</button>`;
+        buttonsHtml += `<button data-action="openOrderInvoiceModal" data-arg="${order.id}" class="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.invoiceButton')}</button>`;
     }
 
     if (order.status === 'in_progress' && canProcessOrder()) {
-        buttonsHtml += `<button onclick="window.openCloseOrderModal(${order.id})" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.deliveredButton')}</button>`;
+        buttonsHtml += `<button data-action="openCloseOrderModal" data-arg="${order.id}" class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.deliveredButton')}</button>`;
     }
 
     // Архив: заявку убирает снабженец ИЛИ её автор (прораб) — см.
@@ -653,12 +651,12 @@ function renderOrderActions(order) {
     // закупку из своего блока «📦 Мои заявки на материалы»: он её создал, а
     // статус 'archived' потом виден в фильтре «📥 Архив».
     if ((order.status === 'delivered' || order.status === 'closed') && canArchiveOrder(order)) {
-        buttonsHtml += `<button onclick="window.archiveOrder(${order.id})" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.toArchive')}</button>`;
+        buttonsHtml += `<button data-action="archiveOrder" data-arg="${order.id}" class="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">${t('order.toArchive')}</button>`;
     }
 
     // Удаление — только Админ + только new
     if (order.status === 'new' && isAdmin()) {
-        buttonsHtml += `<button onclick="window.deleteOrder(${order.id})" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
+        buttonsHtml += `<button data-action="deleteOrder" data-arg="${order.id}" class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold px-4 py-2 rounded-lg text-sm transition">🗑 Удалить</button>`;
     }
 
     actionsContainer.innerHTML = buttonsHtml;
@@ -764,13 +762,13 @@ export function addOrderItemRow() {
                 <input type="text" placeholder="Наименование (Цемент М400)" 
                        class="order-item-name w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
             </div>
-            <button type="button" onclick="window.removeOrderItemRow('${rowId}')" 
+            <button type="button" data-action="removeOrderItemRow" data-arg="${rowId}" 
                     class="text-red-500 hover:text-red-700 px-2 py-1 text-base font-bold shrink-0">✕</button>
         </div>
         <div class="grid grid-cols-2 gap-2">
             <input type="number" step="any" placeholder="Кол-во" 
                    class="order-item-qty border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                   oninput="window.recalcOrderTotal()">
+                   data-action="recalcOrderTotal" data-on="input">
             <select class="order-item-unit border rounded-lg p-2 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
                 <option value="шт">шт</option>
                 <option value="м">м</option>
@@ -937,7 +935,8 @@ async function createOrder(form) {
     // Переключаем на список заявок только у тех, кому он виден: у прораба
     // вкладка «Снабжение» скрыта (право create_order есть, view_orders_tab —
     // нет), иначе сразу после сохранения он получал бы отказ в доступе.
-    if (canSeeTab('orders')) switchTab('orders');
+    // switchTab выставляет js/main.js на window: модуль вкладку только переключает.
+    if (canSeeTab('orders')) window.switchTab('orders');
 }
 
 // =====================================================================
@@ -1005,8 +1004,7 @@ export async function openCloseOrderModal(id) {
         return;
     }
 
-    currentOrderId = id;
-    // Заявку открытой карточки держим отдельно: подсказки в окне доставки
+        // Заявку открытой карточки держим отдельно: подсказки в окне доставки
     // пересчитываются на каждое нажатие радиокнопки (и при смене языка), а
     // списка целиком в браузере больше нет — v2.9.0.
     currentOrder = order;
@@ -1057,7 +1055,7 @@ export async function openCloseOrderModal(id) {
                 <input type="number" step="0.01" placeholder="Цена за ед., грн" 
                        class="close-order-price w-full border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
                        value="${it.unit_price || ''}"
-                       oninput="window.recalcCloseOrderTotal()"
+                       data-action="recalcCloseOrderTotal" data-on="input"
                        required>
                 <!-- Статус оплаты позиций рисует updateCloseOrderPaymentHints(): он
                      зависит от выбранного «кто платит» и пересчитывается на лету.
@@ -1452,7 +1450,7 @@ async function fillInvoiceOwnEmployees(selectedId = null) {
  * В режиме «без ПДВ» показываем цену БЕЗ налога: иначе при повторном
  * сохранении того же счёта налог прибавился бы второй раз.
  */
-function invoiceItemInputPrice(item, priceMode, vatRate) {
+function invoiceItemInputPrice(item, priceMode, _vatRate) {
     const unitPrice = Number(item?.unit_price) || 0;
     if (!unitPrice) return '';
 
@@ -1490,7 +1488,7 @@ export async function openOrderInvoiceModal(orderId) {
     if (currentEl) {
         currentEl.innerHTML = order.invoice_path
             ? `${t('order.invoiceFileCurrent')}: <b>${escapeHtml(order.invoice_file_name || '—')}</b>
-               <button type="button" onclick="window.viewOrderInvoice(${orderId})"
+               <button type="button" data-action="viewOrderInvoice" data-arg="${orderId}"
                        class="text-[#15803d] font-semibold hover:underline ml-1">${t('common.open')}</button>`
             : '';
     }
@@ -1546,7 +1544,7 @@ export async function openOrderInvoiceModal(orderId) {
                     <input type="number" step="0.01" min="0" placeholder="Цена, грн"
                            value="${invoiceItemInputPrice(it, priceMode, vatRate)}"
                            class="order-invoice-price w-24 border rounded-lg p-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                           oninput="window.recalcOrderInvoiceTotal()">
+                           data-action="recalcOrderInvoiceTotal" data-on="input">
                 </div>
             `).join('');
     }

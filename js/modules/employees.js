@@ -107,7 +107,7 @@ function renderEmployeeCard(emp) {
     }
 
     return `
-        <button onclick="window.openEmployeeCard(${emp.id})"
+        <button data-action="openEmployeeCard" data-arg="${emp.id}"
                 class="w-full text-left bg-white rounded-xl shadow-sm border p-4 flex gap-4 items-start border-l-4 ${cardBorder} ${cardOpacity} hover:bg-emerald-50/50 transition cursor-pointer group">
             <div class="w-12 h-12 rounded-full bg-[#15803d] text-white flex items-center justify-center text-base font-bold shrink-0">
                 ${getInitials(emp.name)}
@@ -267,13 +267,13 @@ function renderCardActions(emp) {
 
     if (status === 'active') {
         if (emp.user_id) {
-            buttonsHTML += `<button onclick="window.unlinkAccount(${emp.id})" class="bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🔓 Отвязать аккаунт</button>`;
+            buttonsHTML += `<button data-action="unlinkAccount" data-arg="${emp.id}" class="bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🔓 Отвязать аккаунт</button>`;
         } else {
-            buttonsHTML += `<button onclick="window.openLinkModal(${emp.id})" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🔗 Привязать аккаунт</button>`;
+            buttonsHTML += `<button data-action="openLinkModal" data-arg="${emp.id}" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🔗 Привязать аккаунт</button>`;
         }
-        buttonsHTML += `<button onclick="window.openDeactivateModal(${emp.id})" class="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🚫 Заблокировать</button>`;
+        buttonsHTML += `<button data-action="openDeactivateModal" data-arg="${emp.id}" class="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">🚫 Заблокировать</button>`;
     } else {
-        buttonsHTML += `<button onclick="window.restoreEmployee(${emp.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">♻️ Восстановить</button>`;
+        buttonsHTML += `<button data-action="restoreEmployee" data-arg="${emp.id}" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">♻️ Восстановить</button>`;
     }
 
     actionsDiv.innerHTML = buttonsHTML;
@@ -387,7 +387,7 @@ function renderEmployeeCardExtra({
             ${projects.length
                 ? `<div class="space-y-1">
                        ${projects.map(project => `
-                           <button type="button" onclick="window.openProjectFromEmployeeCard(${project.id})"
+                           <button type="button" data-action="openProjectFromEmployeeCard" data-arg="${project.id}"
                                    class="w-full text-left bg-white border border-gray-200 rounded-lg px-2 py-1.5 font-semibold text-[#15803d] transition hover:bg-emerald-50">
                                🏗 ${escapeHtml(project.name)}
                            </button>
@@ -409,7 +409,7 @@ function renderEmployeeCardExtra({
             <div class="flex justify-between items-center gap-2 flex-wrap">
                 <p class="font-bold text-gray-500 uppercase tracking-wider">🎯 Актуальные задачи: ${tasks.length}</p>
                 ${canAssignTask
-                    ? `<button type="button" onclick="window.openNewTaskForm(${employeeId})"
+                    ? `<button type="button" data-action="openNewTaskForm" data-arg="${employeeId}"
                               class="bg-[#15803d] hover:bg-[#166534] text-white font-semibold px-3 py-1.5 rounded-lg transition shrink-0">➕ Поставить задачу</button>`
                     : ''}
             </div>
@@ -437,7 +437,7 @@ function renderEmployeeCardTask(task) {
     const title = task.title || task.text || '—';
 
     return `
-        <button type="button" onclick="window.openTaskFromCard(${task.id})"
+        <button type="button" data-action="openTaskFromCard" data-arg="${task.id}"
                 class="w-full text-left bg-white border border-gray-200 rounded-lg p-2 space-y-1 transition hover:bg-emerald-50/60">
             <div class="flex items-center gap-1 flex-wrap">
                 <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${priorityInfo.bg} ${priorityInfo.color}">${priorityInfo.label}</span>
@@ -588,7 +588,7 @@ export function openLinkModal(id) {
             💡 Скопируй UID из Supabase Dashboard → <b>Authentication</b> → <b>Users</b>.
         </p>
         <div class="flex gap-2 pt-2">
-            <button onclick="window.confirmLinkAccount(${emp.id})" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">🔗 Привязать</button>
+            <button data-action="confirmLinkAccount" data-arg="${emp.id}" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg text-sm transition">🔗 Привязать</button>
         </div>
     `;
     showModal('link-user-modal');
