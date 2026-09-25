@@ -44,6 +44,11 @@ const SEARCH_DELAY_MS = 350;
  *
  * @param {Object} options
  * @param {string} options.id — префикс id элементов (уникален на страницу)
+ * @param {boolean} [options.showSearch=true] — рисовать ли строку поиска.
+ *        У «Реестра материалов» поиск не показывается: у него 12 колонок и
+ *        семь фильтров, а строка поиска искала бы только по названию — и
+ *        сотрудник ждал бы от неё другого. Фильтры уходят в запрос
+ *        (js/modules/registry.js → registryRowFilters).
  * @param {string} [options.searchValue] — что уже набрано в поиске
  * @param {string} [options.searchPlaceholder] — подсказка в поле поиска.
  *        Готовый текст перевода передаёт сам список (см. js/modules/orders.js):
@@ -57,6 +62,7 @@ const SEARCH_DELAY_MS = 350;
 export function toolbarHtml(options = {}) {
     const {
         id,
+        showSearch = true,
         searchValue = '',
         searchPlaceholder = '',
         page = 1,
@@ -74,11 +80,12 @@ export function toolbarHtml(options = {}) {
 
     return `
         <div class="flex flex-wrap items-center gap-2">
+            ${showSearch ? `
             <div class="flex-1 min-w-[200px]">
                 <input type="search" id="${id}-search" value="${escapeHtml(searchValue)}"
                        placeholder="${escapeHtml(searchPlaceholder || t('pager.searchPlaceholder'))}"
                        class="w-full border rounded-lg px-3 py-1.5 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-            </div>
+            </div>` : ''}
             <label class="text-[11px] text-gray-500 flex items-center gap-1">
                 ${escapeHtml(t('pager.pageSize'))}
                 <select id="${id}-page-size" class="border rounded-lg px-2 py-1.5 text-xs bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">${sizes}

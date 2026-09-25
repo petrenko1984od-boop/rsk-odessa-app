@@ -165,6 +165,11 @@ function rowsFor(table, params) {
     const byEq = (rows, column) => {
         const raw = params[column];
         if (!raw) return rows;
+        // «По списку» (project_id=in.(3), request_id=in.(1,2)) обрабатывает byIn
+        // ниже: здесь такое значение — НЕ равенство, иначе строка «in.(1,2)» не
+        // нашла бы ни одной строки и позиции заявок пропали бы из карточек
+        // (списки читаются через selectAllPaged/selectPage — с v2.9.0 их больше).
+        if (String(raw).startsWith('in.')) return rows;
         return rows.filter((row) => String(row[column]) === String(raw).replace(/^eq\./, ''));
     };
 
@@ -199,9 +204,19 @@ function rowsFor(table, params) {
                 payer: employee(row.payer_employee_id)
             }));
         }
-        case 'order_items': return byEq(store.orderItems, 'order_id');
+        case 'order_items': {
+            let rows = store.orderItems.slice();
+            rows = byIn(rows, 'order_id');
+            rows = byEq(rows, 'order_id');
+            return rows;
+        }
         case 'cash_requests': return byEq(cashRequestRows(), 'id');
-        case 'cash_request_items': return byEq(store.cashRequestItems, 'request_id');
+        case 'cash_request_items': {
+            let rows = store.cashRequestItems.slice();
+            rows = byIn(rows, 'request_id');
+            rows = byEq(rows, 'request_id');
+            return rows;
+        }
         case 'cash_operations': {
             let rows = store.cashOperations.slice();
             rows = byEq(rows, 'operation_type');

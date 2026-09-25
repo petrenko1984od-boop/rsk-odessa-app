@@ -83,8 +83,9 @@ GitHub → **Settings → Secrets and variables → Actions → New repository s
 
 1. Supabase → New project (тот же регион, что боевой).
 2. Применить схему по порядку: `database/schema.sql` → `migrate-v2.4.sql` →
-   … → `migrate-v2.9-scale-indexes.sql` → `migrate-v2.9-ops-monitoring.sql`
-   (см. `database/README.md`). Это «пустая, но правильная» база.
+   … → `migrate-v2.9-scale-indexes.sql` → `migrate-v2.9-ops-monitoring.sql` →
+   `migrate-v2.9-registry-view.sql` (см. `database/README.md`). Это «пустая, но
+   правильная» база.
 3. Auth → Providers → Email: **выключить «Confirm email»** (как на боевом —
    иначе вход после регистрации падает с `Email not confirmed`).
 4. Завести тестового администратора и тестовый объект. **Боевые данные сюда

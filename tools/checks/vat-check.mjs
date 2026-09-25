@@ -370,10 +370,23 @@ async function main() {
         /p_employee_id: employeeId \|\| null/.test(ordersJs) &&
         /if p_charge = 'employee' then\s*\r?\n\s*payer_id := p_employee_id;/.test(migrationV28));
 
-    const moneyModules = ['cash.js', 'dashboard.js', 'registry.js'].filter(name =>
+    // Реестр с v2.9.0 считает свою доставку НЕ в браузере, а в виде базы
+    // (database/migrate-v2.9-registry-view.sql): строка заявки уступает расходу
+    // подотчёта прямо в SQL — иначе одна сумма попадала бы в деньги дважды.
+    // Поэтому общая проверка js/utils.js нужна двум модулям, а третье место
+    // (реестр) стережёт SQL.
+    const moneyModules = ['cash.js', 'dashboard.js'].filter(name =>
         /ownDeliveryCoveredOrderIds\(|isOwnDeliveryCovered\(/.test(read('js', 'modules', name)));
-    ok('реестр, план-факт подотчёта и дашборд пользуются общей проверкой своей доставки',
-        moneyModules.length === 3, moneyModules.join(', '));
+    ok('план-факт подотчёта и дашборд пользуются общей проверкой своей доставки',
+        moneyModules.length === 2, moneyModules.join(', '));
+
+    const registryViewSql = read('database', 'migrate-v2.9-registry-view.sql');
+    ok('реестр исключает строку своей доставки в ВИДЕ базы (сумма считается один раз)',
+        /source = 'own_delivery'/.test(registryViewSql) &&
+        /rsk_delivery_kind\([^)]*\) = 'company'/.test(registryViewSql) &&
+        /exists \(/.test(registryViewSql) &&
+        !/ownDeliveryCoveredOrderIds\(|isOwnDeliveryCovered\(/
+            .test(read('js', 'modules', 'registry.js')));
 
     const helperOwners = jsFiles()
         .filter(file => /export function (ownDeliveryCoveredOrderIds|isOwnDeliveryCovered)\b/

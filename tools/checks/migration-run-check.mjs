@@ -399,6 +399,287 @@ if (fs.existsSync(ARCHIVE)) {
     ok('есть файл database/migrate-v2.6.sql', false, ARCHIVE);
 }
 
+// --- database/migrate-v2.9-registry-view.sql: ВИД РЕЕСТРА В POSTGRES ---------
+// С v2.9.0 раздел «📊 Реестр» читает строки из вида public.registry_rows
+// страницами, а итог берёт командой public.registry_totals. Раньше эта логика
+// жила в браузере (js/modules/registry.js), и в SQL её легко испортить:
+// перепутать свою и поставщикову доставку, посчитать одну сумму дважды
+// (строка заявки + расход подотчёта) или забыть security_invoker — тогда вид
+// выполнялся бы от имени владельца и ОБОШЁЛ RLS, показав расходы всех объектов.
+// Прогон собирает маленькую, но полную картину реестра: заявка фирмы со счётом,
+// своя доставка, уже оплаченная из подотчёта, заявка, оплаченная сотрудником,
+// прямой расход без позиций и новая заявка (в реестр ей рано).
+const REGISTRY_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.9-registry-view.sql');
+
+if (!fs.existsSync(REGISTRY_MIGRATION)) {
+    ok('есть файл database/migrate-v2.9-registry-view.sql', false, REGISTRY_MIGRATION);
+} else {
+    const registrySql = fs.readFileSync(REGISTRY_MIGRATION, 'utf8');
+    const db5 = new PGlite();
+
+    // Роли: миграция выдаёт права роли authenticated и отбирает их у anon.
+    // В Supabase обе роли уже есть, в пустом Postgres их создаём сами.
+    await db5.exec(`
+        create role authenticated;
+        create role anon;
+
+        create table public.employees (id bigint primary key, name text);
+        create table public.projects (id bigint primary key, name text);
+        create table public.sections (
+            id bigint primary key,
+            project_id bigint references public.projects(id),
+            name text
+        );
+        create table public.orders (
+            id bigint primary key,
+            request_number text not null unique,
+            project_id bigint references public.projects(id),
+            section_id bigint references public.sections(id),
+            status text not null default 'new',
+            supplier text,
+            payment_source text not null default 'company',
+            payment_status text default 'paid',
+            created_by_employee_id bigint references public.employees(id),
+            closed_at timestamptz,
+            delivered_at timestamptz,
+            created_at timestamptz not null default now()
+        );
+        create table public.order_items (
+            id bigint primary key,
+            order_id bigint not null references public.orders(id),
+            name text not null,
+            unit text,
+            qty numeric not null default 0,
+            unit_price numeric not null default 0,
+            total_price numeric not null default 0,
+            payment_status text,
+            vat_amount numeric not null default 0,
+            delivery_kind text
+        );
+        create table public.cash_operations (
+            id bigint primary key,
+            employee_id bigint references public.employees(id),
+            operation_type text not null,
+            amount numeric not null default 0,
+            description text,
+            category text,
+            items jsonb not null default '[]'::jsonb,
+            project_id bigint references public.projects(id),
+            section_id bigint references public.sections(id),
+            order_id bigint references public.orders(id),
+            source text,
+            vat_amount numeric not null default 0,
+            operation_date date not null default current_date,
+            created_at timestamptz not null default now()
+        );
+    `);
+
+    await db5.exec(`
+        insert into public.employees (id, name) values
+            (1, 'Прораб Петренко'), (2, 'Снабженец Ищенко');
+        insert into public.projects (id, name) values (1, 'Объект А');
+        insert into public.sections (id, project_id, name) values (1, 1, 'Раздел 1');
+
+        insert into public.orders
+            (id, request_number, project_id, section_id, status, supplier, payment_source,
+             payment_status, created_by_employee_id, delivered_at)
+        values
+            (1, 'З-1/26', 1, 1, 'delivered', 'ТОВ Будпостач', 'company', 'debt', 1, '2026-02-01T08:00:00Z'),
+            (2, 'З-2/26', 1, 1, 'delivered', 'ТОВ Пісок', 'company', 'paid', 1, '2026-02-02T08:00:00Z'),
+            (3, 'З-3/26', 1, 1, 'closed', 'ТОВ Цемент', 'employee', 'paid', 1, '2026-02-03T08:00:00Z'),
+            (4, 'З-4/26', 1, 1, 'new', null, 'company', 'debt', 1, null);
+
+        insert into public.order_items
+            (id, order_id, name, unit, qty, unit_price, total_price, vat_amount, delivery_kind, payment_status)
+        values
+            (11, 1, 'Кирпич', 'шт', 100, 10, 1000, 166.67, null, 'debt'),
+            (12, 1, 'Доставка', 'усл.', 1, 500, 500, 0, 'supplier', 'debt'),
+            (13, 2, 'Доставка компании', 'усл.', 1, 900, 900, 0, 'company', 'paid'),
+            (14, 3, 'Цемент', 'меш', 10, 200, 2000, 0, null, 'paid'),
+            (15, 4, 'Песок', 'т', 1, 100, 100, 0, null, 'debt');
+
+        insert into public.cash_operations
+            (id, employee_id, operation_type, amount, description, category, items,
+             project_id, section_id, order_id, source, vat_amount, operation_date)
+        values
+            -- Своя доставка по заявке 2, уже оплаченная из подотчёта: её сумма
+            -- должна попасть в реестр РАСХОДОМ, а строка заявки (id 13) исчезнуть.
+            (21, 2, 'expense', 900, 'Своя доставка по заявке З-2/26', 'delivery',
+                '[{"name": "Доставка компании", "unit": "усл.", "qty": 1, "price": 900, "sum": 900}]'::jsonb,
+                1, 1, 2, 'own_delivery', 150, '2026-02-02'),
+            -- Заявка, оплаченная сотрудником: деньги живут в расходе с позициями.
+            (22, 2, 'expense', 2000, 'Заявка З-3/26 (ТОВ Цемент)', 'materials',
+                '[{"name": "Цемент", "unit": "меш", "qty": 10, "price": 200, "sum": 2000}]'::jsonb,
+                1, 1, 3, 'order', 0, '2026-02-03'),
+            -- Прямой расход без позиций: одна строка по комментарию операции.
+            (23, 1, 'expense', 300, 'Прочие расходы (бензин)', 'other', '[]'::jsonb,
+                1, 1, null, 'manual', 0, '2026-02-04'),
+            -- Выдача подотчёта: в реестре её быть не должно.
+            (24, 1, 'issue', 5000, 'Подотчёт', null, '[]'::jsonb,
+                1, 1, null, null, 0, '2026-02-05');
+    `);
+
+    let registryError = null;
+    try { await db5.exec(registrySql); }
+    catch (error) { registryError = error; }
+
+    ok('migrate-v2.9-registry-view.sql: выполняется на настоящем Postgres без ошибок',
+        registryError === null, registryError ? registryError.message : '');
+
+    const registryRows = (await db5.query(`
+        select kind, source_number, name, unit, qty, unit_price, total_sum,
+               category, payment, supplier, project_name, employee_name
+        from public.registry_rows
+        order by entry_at, row_key
+    `)).rows;
+
+    const rowOf = (name) => registryRows.find((row) => row.name === name) || null;
+
+    ok('реестр: пять строк — две позиции заявки, расход-своя доставка, расход-заявка и прямой расход',
+        registryRows.length === 5,
+        registryRows.map((row) => row.kind + ':' + row.name).join(' | '));
+
+    ok('реестр: своя доставка посчитана ОДИН раз (строка заявки уступила расходу подотчёта)',
+        registryRows.filter((row) => row.name === 'Доставка компании').length === 1 &&
+        rowOf('Доставка компании')?.kind === 'own_delivery' &&
+        rowOf('Доставка компании')?.source_number === 'З-2/26',
+        JSON.stringify(rowOf('Доставка компании') || {}));
+
+    ok('реестр: позиция доставленной фирмой заявки — материалы с долгом и поставщиком',
+        rowOf('Кирпич')?.kind === 'order' &&
+        rowOf('Кирпич')?.category === 'materials' &&
+        rowOf('Кирпич')?.payment === 'debt' &&
+        rowOf('Кирпич')?.supplier === 'ТОВ Будпостач' &&
+        Number(rowOf('Кирпич')?.total_sum) === 1000,
+        JSON.stringify(rowOf('Кирпич') || {}));
+
+    ok('реестр: доставка поставщика — отдельная категория (фильтр «Категория» её видит)',
+        rowOf('Доставка')?.category === 'delivery' &&
+        Number(rowOf('Доставка')?.total_sum) === 500 &&
+        rowOf('Доставка')?.source_number === 'З-1/26',
+        JSON.stringify(rowOf('Доставка') || {}));
+
+    ok('реестр: заявка с оплатой сотрудником показана расходом с номером и поставщиком заявки',
+        rowOf('Цемент')?.kind === 'order_employee' &&
+        rowOf('Цемент')?.source_number === 'З-3/26' &&
+        rowOf('Цемент')?.supplier === 'ТОВ Цемент' &&
+        rowOf('Цемент')?.payment === 'paid',
+        JSON.stringify(rowOf('Цемент') || {}));
+
+    ok('реестр: прямой расход без позиций — одна строка по комментарию (кол-во 1)',
+        rowOf('Прочие расходы (бензин)')?.kind === 'expense' &&
+        rowOf('Прочие расходы (бензин)')?.source_number === '💰 Расход' &&
+        rowOf('Прочие расходы (бензин)')?.unit === '—' &&
+        Number(rowOf('Прочие расходы (бензин)')?.qty) === 1 &&
+        Number(rowOf('Прочие расходы (бензин)')?.total_sum) === 300,
+        JSON.stringify(rowOf('Прочие расходы (бензин)') || {}));
+
+    ok('реестр: новая заявка (до «Доставлено на объект») и выдача подотчёта в реестр не попали',
+        rowOf('Песок') === null && !registryRows.some((row) => row.name === 'Подотчёт'),
+        registryRows.map((row) => row.name).join(', '));
+
+    // ---- Итоги считаются по ВСЕМУ набору, а не по странице списка ----------
+    const totals = (await db5.query('select * from public.registry_totals()')).rows[0];
+
+    ok('registry_totals: количество и сумма по всем строкам реестра (1000 + 500 + 900 + 2000 + 300)',
+        Number(totals?.rows_count) === 5 && Number(totals?.total_sum) === 4700,
+        JSON.stringify(totals || {}));
+
+    ok('registry_totals: НДС сложен справочно (166.67 по кирпичу + 150 по своей доставке)',
+        Number(totals?.total_vat) === 316.67,
+        String(totals?.total_vat));
+
+    const debtTotals = (await db5.query(
+        "select * from public.registry_totals(p_payment => 'debt')"
+    )).rows[0];
+
+    ok('registry_totals: фильтр «Ожидает оплаты» считает только долг (кирпич + доставка поставщика)',
+        Number(debtTotals?.rows_count) === 2 && Number(debtTotals?.total_sum) === 1500,
+        JSON.stringify(debtTotals || {}));
+
+    const deliveryTotals = (await db5.query(
+        "select * from public.registry_totals(p_project_id => 1, p_category => 'delivery')"
+    )).rows[0];
+
+    ok('registry_totals: фильтры «объект + категория» работают как в списке',
+        Number(deliveryTotals?.rows_count) === 2 && Number(deliveryTotals?.total_sum) === 1400,
+        JSON.stringify(deliveryTotals || {}));
+
+    const periodTotals = (await db5.query(
+        "select * from public.registry_totals(p_date_from => '2026-02-03')"
+    )).rows[0];
+
+    ok('registry_totals: период считает только строки внутри границ (цемент + прочие расходы)',
+        Number(periodTotals?.rows_count) === 2 && Number(periodTotals?.total_sum) === 2300,
+        JSON.stringify(periodTotals || {}));
+
+    // ---- Вид не обходит RLS и закрыт от анонимного ключа -------------------
+    const viewInfo = (await db5.query(`
+        select c.reloptions,
+               has_table_privilege('authenticated', 'public.registry_rows', 'SELECT') as can_auth,
+               has_table_privilege('anon', 'public.registry_rows', 'SELECT') as can_anon
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relname = 'registry_rows'
+    `)).rows[0];
+
+    ok('вид реестра: security_invoker = true (права и RLS проверяются у читающего)',
+        (viewInfo?.reloptions || []).includes('security_invoker=true'),
+        String(viewInfo?.reloptions || 'настройки не заданы'));
+
+    ok('вид реестра: authenticated читает, anon — нет',
+        viewInfo?.can_auth === true && viewInfo?.can_anon === false,
+        JSON.stringify({ auth: viewInfo?.can_auth, anon: viewInfo?.can_anon }));
+
+    const totalsPrivilege = (await db5.query(`
+        select has_function_privilege('authenticated',
+                   'public.registry_totals(bigint,bigint,text,text,bigint,date,date)', 'EXECUTE') as can_auth,
+               has_function_privilege('anon',
+                   'public.registry_totals(bigint,bigint,text,text,bigint,date,date)', 'EXECUTE') as can_anon
+    `)).rows[0];
+
+    ok('registry_totals: команда доступна authenticated и недоступна anon',
+        totalsPrivilege?.can_auth === true && totalsPrivilege?.can_anon === false,
+        JSON.stringify(totalsPrivilege || {}));
+
+    // ---- Повторный запуск безопасен (вид пересоздаётся, права возвращаются) --
+    let registryRerun = null;
+    try { await db5.exec(registrySql); }
+    catch (error) { registryRerun = error; }
+
+    const rowsAfterRerun = (await db5.query('select count(*)::int as n from public.registry_rows')).rows[0];
+    const viewInfoRerun = (await db5.query(`
+        select c.reloptions,
+               has_table_privilege('authenticated', 'public.registry_rows', 'SELECT') as can_auth
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relname = 'registry_rows'
+    `)).rows[0];
+
+    ok('migrate-v2.9-registry-view.sql: повторный запуск безопасен (строки и права на месте)',
+        registryRerun === null && Number(rowsAfterRerun?.n) === 5 &&
+        viewInfoRerun?.can_auth === true &&
+        (viewInfoRerun?.reloptions || []).includes('security_invoker=true'),
+        registryRerun ? registryRerun.message : String(rowsAfterRerun?.n));
+
+    // Анонимный ключ не должен даже видеть структуру: SELECT отозван.
+    let anonRead = null;
+    try {
+        await db5.exec('set role anon');
+        await db5.query('select count(*) from public.registry_rows');
+    } catch (error) {
+        anonRead = error;
+    } finally {
+        try { await db5.exec('reset role'); } catch { /* роль могла не переключиться */ }
+    }
+
+    ok('вид реестра: под ролью anon чтение отклонено базой',
+        anonRead !== null && /permission denied/i.test(String(anonRead.message)),
+        anonRead ? anonRead.message : 'запрос прошёл — анонимный ключ увидел реестр');
+
+    await db5.close();
+}
+
 log('--- ИТОГ ---');
 log(failed === 0
     ? '  ВСЁ ВЕРНО: миграция применяется на настоящем Postgres и защищена от обрыва наполовину'

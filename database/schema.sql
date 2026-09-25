@@ -345,6 +345,47 @@ left join cash_operations o on o.employee_id = e.id
 group by e.id, e.name;
 
 -- =====================================================================
+-- ПРЕДСТАВЛЕНИЕ: строки «Реестра материалов» (v2.9.0)
+-- =====================================================================
+-- Одна строка вида = одна строка таблицы раздела «📊 Реестр»: позиция заявки,
+-- оплаченной фирмой, или позиция расхода кассы (у расхода без позиций — сам
+-- расход). Раздел читает их СТРАНИЦЕЙ (js/modules/registry.js →
+-- db.selectPage('registry_rows', …)), а не всей таблицей.
+--
+-- Полное определение — database/migrate-v2.9-registry-view.sql (это файл,
+-- который применяют в SQL Editor). Здесь состав, чтобы схему можно было
+-- прочитать целиком:
+--
+--   kind           order | order_employee | own_delivery | expense — пометка строки
+--   source_number  номер заявки или «💰 Расход»
+--   order_id, row_key, entry_at, entry_date — источник, ключ строки и дата
+--                  (заявки: delivered_at || closed_at || created_at;
+--                   расходы: operation_date)
+--   name, unit, qty, unit_price, total_sum, vat_amount
+--   category       materials | works | delivery | other
+--   payment        paid | debt («Ожидает оплаты») | company («🏢 Вне счёта»)
+--   supplier, project_id, project_name, section_id, section_name,
+--   employee_id, employee_name
+--
+-- ⚠️ security_invoker = true. Без этого вид выполнялся бы от имени владельца и
+--    ОБХОДИЛ RLS: сотрудник увидел бы расходы всех объектов, хотя политика
+--    rsk_cash_operations_select пускает к полному реестру только Администратора,
+--    Директора, Главного инженера, Снабженца, Инженера ПТО и Финансиста
+--    (database/migrate-v2.7-rls-finance.sql). Права на чтение вида выданы роли
+--    authenticated, анонимному ключу — нет.
+-- ⚠️ Своя доставка, уже оплаченная из подотчёта (cash_operations.source =
+--    'own_delivery'), попадает в реестр РАСХОДОМ, а строка заявки («Доставка
+--    компании») из вида исключается: иначе одна сумма считалась бы дважды.
+--
+-- Итог по ВСЕМУ отфильтрованному набору (а не по видимой странице) считает
+-- команда public.registry_totals(p_project_id, p_section_id, p_category,
+-- p_payment, p_employee_id, p_date_from, p_date_to) → rows_count, total_sum,
+-- total_vat. Вспомогательные функции вида — public.rsk_delivery_kind(text, text)
+-- (та же логика, что в js/utils.js → getDeliveryItemType) и
+-- public.rsk_json_amount(jsonb, text) (разбор чисел из позиций расхода).
+-- =====================================================================
+
+-- =====================================================================
 -- СВЯЗИ, которые ожидает фронтенд
 -- =====================================================================
 --   sections.project_id            -> projects.id

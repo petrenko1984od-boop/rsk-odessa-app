@@ -3,12 +3,28 @@
 // =====================================================================
 // Сводная таблица всех закупок и расходов.
 //
-// Источники данных (не хранит, а собирает):
-//   1. Заявки с payment_source = 'company' (delivered + closed + archived)
+// Источники данных — вид базы public.registry_rows
+// (database/migrate-v2.9-registry-view.sql). Вид собирает те же строки, что
+// раньше собирал этот модуль в браузере:
+//   1. Позиции заявок с payment_source = 'company' (delivered + closed + archived)
 //   2. Расходы из cash_operations (source = 'manual')
-//   3. Заявки с payment_source = 'employee' (уже в cash_operations)
+//   3. Заявки с payment_source = 'employee' (деньги лежат в cash_operations)
 //
-// ⚠️ ВАЖНО: 
+// ЧТО ИЗМЕНИЛОСЬ В v2.9.0. Раньше здесь грузились ВСЕ заявки, ВСЕ их позиции
+// и ВСЕ расходы кассы, а фильтры, «Записей: N» и «Итого» считались по этому
+// массиву в браузере. Теперь:
+//   * список — db.selectPage('registry_rows', …): база отдаёт ровно 25 строк
+//     (страница) и общее количество, а не десятки тысяч строк;
+//   * фильтры (объект, раздел, категория, оплата, сотрудник, период) уходят
+//     в запрос и работают ДО выгрузки;
+//   * «Записей» и «Итого» считает команда public.registry_totals(…): по всему
+//     отфильтрованному набору, а не по видимой странице — иначе сумма была бы
+//     меньше настоящей, а за такие цифры отвечает бухгалтер;
+//   * выгрузка в Excel — db.selectAllPaged(…): страницами, с потолком и
+//     предупреждением, если строк больше потолка.
+//
+// ⚠️ ЛОГИКА СТРОК ЖИВЁТ В ВИДЕ БАЗЫ. Правила ниже описаны и там — менять их
+//    надо вместе, иначе реестр и план-факт начнут считать по-разному:
 //   - Архивные заявки ТОЖЕ попадают в реестр (архив ≠ удаление)
 //   - Материалы попадают в реестр сразу после «Доставлено на объект», даже
 //     если счёт ещё не оплачен: тогда оплата = 'debt' («Ожидает оплаты»),
@@ -28,36 +44,61 @@
 //     cash_operations (source = 'own_delivery'), поэтому строка заявки в реестр
 //     НЕ попадает — вместо неё показывается расход с пометкой «🚚 Своя
 //     доставка». Иначе одна сумма стояла бы в таблице дважды.
-//   - НДС: у строки показывается «в т.ч. ПДВ» (order_items.vat_amount /
-//     cash_operations.vat_amount). Сумма при этом ВСЕГДА с налогом — колонка
-//     «Сумма» остаётся деньгами к оплате, поэтому итоги реестра не меняются.
+//   - НДС: у строки показывается «в т.ч. ПДВ» (vat_amount). Сумма при этом
+//     ВСЕГДА с налогом — колонка «Сумма» остаётся деньгами к оплате, поэтому
+//     итоги реестра не меняются.
 // =====================================================================
 
 import { db } from '../database.js';
-import { CONFIG } from '../config.js';
+import { renderToolbar } from '../pagination.js';
 import {
     log, toast, escapeHtml, formatMoney,
-    formatDate, roundMoney, isDeliveryItem, getDeliveryItemType,
-    isOwnDeliveryCovered, ownDeliveryCoveredOrderIds
+    formatDate, roundMoney
 } from '../utils.js';
 
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
 
-let registryCache = [];
-// Текст предупреждения, если заявки не загрузились (например, в базе нет
-// колонок v2.4.0 — не применена миграция). Показывается над таблицей.
+let registryCache = [];   // строки ТЕКУЩЕЙ СТРАНИЦЫ (v2.9.0)
+// Текст предупреждения над таблицей: ошибка загрузки (например, в базе нет
+// вида — не применена миграция) или усечённая выгрузка в Excel.
 let registryWarning = '';
 let filters = {
-    project: '',
-    section: '',
+    projectId: '',
+    sectionId: '',
     category: '',
     payment: '',
-    employee: '',
+    employeeId: '',
     dateFrom: '',
     dateTo: ''
 };
+
+// --- страницы и итоги (v2.9.0) ---------------------------------------
+let registryPage = 1;                      // текущая страница, с 1
+let registryPageSize = db.PAGE_SIZE;       // строк на странице (слой ограничивает 100)
+let registryTotal = null;                  // сколько строк всего (null — база не сообщила)
+// Итог по ВСЕМУ отфильтрованному набору от команды базы. null — команда не
+// ответила: показываем прочерк, а не сумму одной страницы.
+let registryTotals = { count: null, sum: null };
+
+// Справочники для фильтров (объекты, разделы, сотрудники). Загружаются при
+// открытии раздела: фильтровать по названию нельзя — «Дом на Ленина» может
+// быть у двух объектов, поэтому в условия запроса уходит id.
+let registryFilterOptions = { projects: [], sections: [], employees: [] };
+
+/** Сколько строк максимум выгружаем в Excel (см. db.selectAllPaged). */
+const REGISTRY_EXPORT_LIMIT = 5000;
+
+// Колонки вида. Перечислены явно: реестр читается страницами, и «*» отдавал бы
+// лишние поля на каждую строку.
+const REGISTRY_COLUMNS = `
+    kind, source_number, order_id, row_key, entry_at, entry_date,
+    name, unit, qty, unit_price, total_sum, vat_amount,
+    category, payment, supplier,
+    project_id, project_name, section_id, section_name,
+    employee_id, employee_name
+`;
 
 // Человекочитаемые названия категорий (таблица реестра + экспорт в Excel)
 const CATEGORY_LABELS = {
@@ -71,326 +112,284 @@ const CATEGORY_LABELS = {
 // ЗАГРУЗКА
 // =====================================================================
 
+/**
+ * Условия запроса к виду: только заполненные фильтры. Пустое поле фильтра —
+ * это отсутствующее условие, а не «пустая строка»: иначе база не нашла бы
+ * ничего.
+ */
+function registryRowFilters() {
+    const conditions = {};
+
+    if (filters.projectId) conditions.project_id = Number(filters.projectId);
+    if (filters.sectionId) conditions.section_id = Number(filters.sectionId);
+    if (filters.category) conditions.category = filters.category;
+    if (filters.payment) conditions.payment = filters.payment;
+    if (filters.employeeId) conditions.employee_id = Number(filters.employeeId);
+    if (filters.dateFrom) conditions['entry_date.gte'] = filters.dateFrom;
+    if (filters.dateTo) conditions['entry_date.lte'] = filters.dateTo;
+
+    return conditions;
+}
+
+/** Те же условия для команды итогов (у неё параметры, а не условия запроса). */
+function registryTotalsParams() {
+    return {
+        p_project_id: filters.projectId ? Number(filters.projectId) : null,
+        p_section_id: filters.sectionId ? Number(filters.sectionId) : null,
+        p_category: filters.category || null,
+        p_payment: filters.payment || null,
+        p_employee_id: filters.employeeId ? Number(filters.employeeId) : null,
+        p_date_from: filters.dateFrom || null,
+        p_date_to: filters.dateTo || null
+    };
+}
+
+/**
+ * Понятное объяснение отказа чтения реестра. Частые случаи:
+ *   * вид не создан — PostgREST отвечает «Could not find the table
+ *     'public.registry_rows' in the schema cache» (PGRST205), а база — 42P01:
+ *     значит не применена database/migrate-v2.9-registry-view.sql;
+ *   * команды итогов нет — PGRST202 («function not found»);
+ *   * остальное (например, нет колонок v2.4.0) объяснит db.explainError():
+ *     он называет файл нужной миграции.
+ */
+function explainRegistryError(error) {
+    const text = String(error?.message || error || '');
+
+    if (/registry_rows|PGRST205|42P01/i.test(text)) {
+        return 'база не знает вид public.registry_rows. Выполните '
+            + 'database/migrate-v2.9-registry-view.sql в Supabase → SQL Editor '
+            + '(он создаёт вид реестра и команду итогов) и обновите страницу.';
+    }
+
+    if (/registry_totals|PGRST202/i.test(text)) {
+        return 'база не знает команду public.registry_totals — итог по реестру '
+            + 'посчитать нечем. Выполните database/migrate-v2.9-registry-view.sql '
+            + 'в Supabase → SQL Editor.';
+    }
+
+    return db.explainError(error);
+}
+
+/**
+ * Строка вида → строка таблицы. Имена колонок базы (snake_case) остаются в
+ * базе, а показ и выгрузка работают с привычными полями — так разметку
+ * таблицы и экспорт в Excel не пришлось переписывать.
+ */
+function mapRegistryRow(row) {
+    return {
+        _source: row.kind,
+        _orderNumber: row.source_number || '—',
+        _orderId: row.order_id,
+        rowKey: row.row_key,
+        date: row.entry_at,
+        name: row.name || '—',
+        unit: row.unit || 'шт',
+        qty: Number(row.qty) || 0,
+        unitPrice: Number(row.unit_price) || 0,
+        sum: Number(row.total_sum) || 0,
+        vat: Number(row.vat_amount) || 0,
+        category: row.category || '',
+        supplier: row.supplier || '—',
+        project: row.project_name || '—',
+        projectId: row.project_id,
+        section: row.section_name || '—',
+        sectionId: row.section_id,
+        employee: row.employee_name || '—',
+        // 'company' — доставка компании: суммы в счёте поставщика не было,
+        // поэтому её нельзя показывать как долг фирмы.
+        payment: row.payment || 'paid'
+    };
+}
+
 export async function loadRegistry() {
     log.info('Загрузка реестра материалов...');
 
-    const items = [];       // готовые строки таблицы
-    // Строки заявок собираем отдельно: их добавим ПОСЛЕ расходов. Причина —
-    // своя доставка: если за неё уже заплатили из подотчёта, её деньги лежат
-    // расходом кассы, и строку заявки показывать нельзя (сумма удвоилась бы).
-    // Узнать об этом можно только по загруженным операциям (шаг 2).
-    const orderRows = [];
+    // Справочники для фильтров читаются тем же заходом: сотрудник открывает
+    // раздел и сразу видит и список, и чем фильтровать.
+    const [pageResult, totalsResult] = await Promise.all([
+        db.selectPage('registry_rows', {
+            select: REGISTRY_COLUMNS,
+            filters: registryRowFilters(),
+            // Дата — первым, ключ строки — вторым: строки реестра делят одну
+            // дату (позиции одной заявки, расходы одного дня), и без второго
+            // поля страница могла показать строку дважды, а другую пропустить.
+            orderBy: [
+                { column: 'entry_at', asc: false },
+                { column: 'row_key', asc: false }
+            ],
+            page: registryPage,
+            pageSize: registryPageSize
+        }),
+        db.rpc('registry_totals', registryTotalsParams()),
+        loadRegistryFilterOptions()
+    ]);
 
-    // ============================================================
-    // 1. Заявки с оплатой фирмой (status: closed ИЛИ archived)
-    //    ⚠️ .in не работает — загружаем всё, фильтруем в JS
-    // ============================================================
-    const { data: allOrders, error: ordersError } = await db.select('orders', {
-        select: `
-            id, request_number, project_id, section_id, 
-            supplier, payment_source, payment_status, closed_at, delivered_at,
-            invoice_path, status, created_at,
-            project:projects ( id, name ),
-            section:sections ( id, name ),
-            created_by_emp:employees!orders_created_by_employee_id_fkey ( id, name )
-        `,
-        filters: {
-            payment_source: 'company',
-            'status.in': ['delivered', 'closed', 'archived']   // фильтруем на сервере, а не в JS
-        }
-    });
+    if (pageResult.error) {
+        // Без объяснения реестр просто оказался бы пустым — сотрудник решил бы,
+        // что данные пропали. db.explainError() превращает техническую ошибку
+        // в инструкцию, что делать (например, назвать файл миграции).
+        registryWarning = '⚠ Реестр не загрузился: ' + explainRegistryError(pageResult.error);
+        log.error('Ошибка загрузки реестра:', pageResult.error.message);
+        registryCache = [];
+        registryTotal = null;
+        registryTotals = { count: null, sum: null };
+        renderRegistryFilters();
+        renderRegistry();
+        return;
+    }
 
-    if (ordersError) {
-        // Без объяснения реестр просто оказался бы без заявок (а расходы на
-        // месте) — сотрудник решил бы, что данные пропали. db.explainError()
-        // превращает техническую ошибку в инструкцию, что делать.
-        registryWarning = '⚠ Заявки на материалы не загрузились: ' + db.explainError(ordersError);
-        log.error('Ошибка загрузки заявок для реестра:', ordersError.message);
+    registryWarning = '';
+    registryCache = (pageResult.data || []).map(mapRegistryRow);
+    registryTotal = pageResult.count;
+
+    // Последнюю строку страницы могли оплатить или убрать в архив, а фильтр
+    // остался: показываем предыдущую страницу, а не пустой экран.
+    if (registryCache.length === 0 && registryPage > 1) {
+        registryPage -= 1;
+        return loadRegistry();
+    }
+
+    // Команда вернёт либо массив строк (PostgREST отдаёт таблицу как массив),
+    // либо один объект — берём первую строку в обоих случаях.
+    const totals = Array.isArray(totalsResult.data) ? totalsResult.data[0] : totalsResult.data;
+
+    if (totalsResult.error || !totals) {
+        // Цифра «Итого» — та, по которой сверяются с бухгалтерией. Молча
+        // подставить сумму одной страницы нельзя: покажем прочерк и скажем.
+        log.error('Ошибка подсчёта итога реестра:',
+            totalsResult.error?.message || 'база не вернула результат');
+        registryTotals = { count: null, sum: null };
+        registryWarning = '⚠ Итог по реестру не посчитался: '
+            + (totalsResult.error ? explainRegistryError(totalsResult.error) : 'база не вернула результат.');
     } else {
-        registryWarning = '';
+        registryTotals = {
+            count: Number(totals.rows_count) || 0,
+            sum: Number(totals.total_sum) || 0
+        };
     }
 
-    // Фильтруем только delivered + closed + archived
-    const firmOrders = (allOrders || []).filter(o =>
-        o.status === 'delivered' || o.status === 'closed' || o.status === 'archived'
-    );
-
-    if (firmOrders.length > 0) {
-        // Загружаем order_items для этих заявок
-        const orderIds = firmOrders.map(o => o.id);
-        const { data: allOrderItems } = await db.select('order_items', {
-            select: 'id, order_id, name, unit, qty, unit_price, total_price, payment_status',
-            filters: { 'order_id.in': orderIds }
-        });
-
-        // Фильтруем items по нашим заявкам
-        const orderMap = {};
-        firmOrders.forEach(o => { orderMap[o.id] = o; });
-
-        const orderItems = (allOrderItems || []).filter(it => 
-            orderMap[it.order_id]
-        );
-
-        orderItems.forEach(it => {
-            const order = orderMap[it.order_id];
-            if (!order) return;
-
-            // Доставка приходит отдельной позицией заявки, поэтому её и
-            // показываем категорией «🚚 Доставка»: фильтр «Категория» тогда
-            // видит реальные суммы доставки.
-            const deliveryType = getDeliveryItemType(it);
-            // Доставку компании поставщик не выставлял: её сумма в счёт
-            // (и в долг фирмы перед поставщиком) не входила, поэтому у строки
-            // своя отметка оплаты и в «Поставщике» прочерк.
-            const companyDelivery = deliveryType === CONFIG.DELIVERY_ITEM.TYPE.COMPANY;
-
-            orderRows.push({
-                _source: 'order',
-                _orderNumber: order.request_number,
-                _orderId: order.id,
-                order_id: order.id,
-                date: order.delivered_at || order.closed_at || order.created_at,
-                name: it.name,
-                unit: it.unit || 'шт',
-                qty: it.qty,
-                unitPrice: it.unit_price || 0,
-                sum: it.total_price || 0,
-                // НДС внутри суммы (v2.5.0). У строк, созданных раньше, ноль —
-                // колонка «в т.ч. ПДВ» тогда показывает прочерк.
-                vat: Number(it.vat_amount) || 0,
-                category: deliveryType ? 'delivery' : 'materials',
-                supplier: companyDelivery ? '—' : (order.supplier || '—'),
-                project: order.project?.name || '—',
-                projectId: order.project_id,
-                section: order.section?.name || '—',
-                sectionId: order.section_id,
-                employee: order.created_by_emp?.name || '—',
-                // Статус оплаты берём у заявки: «Ожидает оплаты» держится до
-                // отметки финансиста по счёту, а не по каждой позиции.
-                payment: companyDelivery
-                    ? 'company'
-                    : (order.payment_status || it.payment_status || 'paid')
-            });
-        });
-    }
-
-    // ============================================================
-    // 2. Все расходы из cash_operations (source = 'manual' или 'order')
-    //    Заявки, оплаченные сотрудником, уже здесь (source = 'order')
-    // ============================================================
-    const { data: expenses, error: expError } = await db.select('cash_operations', {
-        select: `
-            id, employee_id, amount, category, project_id, section_id,
-            items, source, order_id, operation_date, created_at, description,
-            employee:employees ( id, name ),
-            project:projects ( id, name ),
-            section:sections ( id, name )
-        `,
-        filters: { operation_type: 'expense' }
-    });
-
-    if (expError) {
-        log.error('Ошибка загрузки расходов:', expError.message);
-    }
-
-    if (expenses && expenses.length > 0) {
-        // Номера заявок для source='order'
-        const orderIdsForNumbers = expenses.filter(e => e.order_id).map(e => e.order_id);
-        let orderNumbersMap = {};
-        if (orderIdsForNumbers.length > 0) {
-            const { data: ordersData } = await db.select('orders', {
-                select: 'id, request_number, supplier',
-                filters: { 'id.in': orderIdsForNumbers }
-            });
-            (ordersData || []).forEach(o => { 
-                if (orderIdsForNumbers.includes(o.id)) {
-                    orderNumbersMap[o.id] = o;
-                }
-            });
-        }
-
-        expenses.forEach(exp => {
-            const expItems = Array.isArray(exp.items) ? exp.items : [];
-
-            // Источник
-            let sourceLabel = '💰 Расход';
-            let supplier = '—';
-            if (exp.source === 'order' && exp.order_id) {
-                const orderInfo = orderNumbersMap[exp.order_id];
-                sourceLabel = orderInfo ? orderInfo.request_number : '—';
-                supplier = orderInfo?.supplier || '—';
-            } else if (exp.source === 'own_delivery' && exp.order_id) {
-                // Своя доставка: расход создало само приложение при сохранении
-                // счёта (js/modules/orders.js). Поставщика нет — везли своими
-                // силами, поэтому в «Поставщике» прочерк, а в «Источнике» —
-                // номер заявки, к которой расход относится.
-                const orderInfo = orderNumbersMap[exp.order_id];
-                sourceLabel = orderInfo ? orderInfo.request_number : '—';
-                supplier = '—';
-            }
-
-            // Тип строки: заявка, оплаченная сотрудником, прямой расход или
-            // своя доставка из подотчёта (у неё своя пометка в таблице).
-            const rowSource = exp.source === 'own_delivery'
-                ? 'own_delivery'
-                : (exp.source === 'order' ? 'order_employee' : 'expense');
-
-            if (expItems.length > 0) {
-                expItems.forEach(it => {
-                    items.push({
-                        _source: rowSource,
-                        _orderNumber: sourceLabel,
-                        _orderId: exp.order_id,
-                        date: exp.operation_date || exp.created_at,
-                        name: it.name,
-                        unit: it.unit || 'шт',
-                        qty: it.qty,
-                        unitPrice: it.price || 0,
-                        sum: it.sum || 0,
-                        vat: Number(exp.vat_amount) || 0,
-                        // Заявку оплатил снабженец из подотчёта — позиции пришли
-                        // из cash_operation (category там одна на операцию),
-                        // поэтому доставку тоже показываем её категорией.
-                        category: isDeliveryItem(it) ? 'delivery' : exp.category,
-                        supplier: supplier,
-                        project: exp.project?.name || '—',
-                        projectId: exp.project_id,
-                        section: exp.section?.name || '—',
-                        sectionId: exp.section_id,
-                        employee: exp.employee?.name || '—',
-                        payment: 'paid'
-                    });
-                });
-            } else {
-                items.push({
-                    _source: rowSource,
-                    _orderNumber: sourceLabel,
-                    _orderId: exp.order_id,
-                    date: exp.operation_date || exp.created_at,
-                    name: exp.description || '—',
-                    unit: '—',
-                    qty: 1,
-                    unitPrice: exp.amount,
-                    sum: exp.amount,
-                    vat: Number(exp.vat_amount) || 0,
-                    category: exp.category,
-                    supplier: supplier,
-                    project: exp.project?.name || '—',
-                    projectId: exp.project_id,
-                    section: exp.section?.name || '—',
-                    sectionId: exp.section_id,
-                    employee: exp.employee?.name || '—',
-                    payment: 'paid'
-                });
-            }
-        });
-    }
-
-    // ---- Строки заявок: добавляем после расходов ----
-    // Своя доставка, оплаченная из подотчёта, уже показана строкой расхода
-    // (source = 'own_delivery'), поэтому строку заявки пропускаем: иначе одна
-    // и та же сумма стояла бы в таблице дважды. Заявки, где доставку ещё не
-    // оплатили (или платит фирма), проходят как раньше — «🏢 Вне счёта».
-    const coveredOwnDelivery = ownDeliveryCoveredOrderIds(expenses || []);
-
-    orderRows.forEach(row => {
-        if (isOwnDeliveryCovered(row, coveredOwnDelivery)) {
-            log.info(`Реестр: своя доставка по заявке ${row._orderNumber} — деньги в расходе подотчёта, строку заявки не показываем`);
-            return;
-        }
-        items.push(row);
-    });
-
-    // Сортируем по дате (сначала новые)
-    items.sort((a, b) => {
-        const dateA = new Date(a.date || 0).getTime();
-        const dateB = new Date(b.date || 0).getTime();
-        return dateB - dateA;
-    });
-
-    registryCache = items;
-    log.info(`Загружено записей в реестр: ${registryCache.length}`);
+    log.info(`Загружено строк реестра: ${registryCache.length} из ${registryTotal ?? 'неизвестно'}`);
 
     renderRegistryFilters();
     renderRegistry();
+}
+
+/**
+ * Справочники для фильтров. Это небольшие таблицы (объекты, разделы,
+ * сотрудники), поэтому их можно прочитать целиком — в отличие от самого
+ * реестра, который читается страницей.
+ */
+async function loadRegistryFilterOptions() {
+    const [projects, sections, employees] = await Promise.all([
+        db.select('projects', { select: 'id, name', orderBy: { column: 'name', asc: true } }),
+        db.select('sections', { select: 'id, project_id, name', orderBy: { column: 'name', asc: true } }),
+        db.select('employees', { select: 'id, name', orderBy: { column: 'name', asc: true } })
+    ]);
+
+    registryFilterOptions = {
+        projects: projects.data || [],
+        sections: sections.data || [],
+        employees: employees.data || []
+    };
+
+    // Справочники — не причина не показать реестр: если они не пришли, фильтры
+    // останутся пустыми, а список и итоги будут работать.
+    [projects, sections, employees].forEach((result, index) => {
+        if (result.error) {
+            log.warn('Не удалось загрузить справочник для фильтров реестра:',
+                ['объекты', 'разделы', 'сотрудники'][index], result.error.message);
+        }
+    });
+
+    return registryFilterOptions;
 }
 
 // =====================================================================
 // ФИЛЬТРЫ
 // =====================================================================
 
+/**
+ * Заполняет списки фильтров. Объекты и сотрудники — из справочников, а разделы
+ * только выбранного объекта: у крупного объекта их сотни, и список «разделы
+ * всех объектов» был бы бесполезен.
+ */
 function renderRegistryFilters() {
-    const projects = [...new Set(registryCache.map(i => i.project))].filter(Boolean).sort();
     const projectsSel = document.getElementById('reg-filter-project');
     if (projectsSel) {
-        const current = projectsSel.value;
-        projectsSel.innerHTML = '<option value="">Все объекты</option>' +
-            projects.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
-        projectsSel.value = current;
+        projectsSel.innerHTML = '<option value="">Все объекты</option>' + registryFilterOptions.projects
+            .map(project => `<option value="${project.id}">${escapeHtml(project.name || '—')}</option>`)
+            .join('');
+        projectsSel.value = registryFilterOptions.projects
+            .some(project => String(project.id) === filters.projectId) ? filters.projectId : '';
     }
 
-    const sections = [...new Set(registryCache.map(i => i.section))].filter(Boolean).sort();
+    const sectionOptions = registryFilterOptions.sections.filter(section =>
+        !filters.projectId || String(section.project_id) === filters.projectId);
+
     const sectionsSel = document.getElementById('reg-filter-section');
     if (sectionsSel) {
-        const current = sectionsSel.value;
-        sectionsSel.innerHTML = '<option value="">Все разделы</option>' +
-            sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
-        sectionsSel.value = current;
+        sectionsSel.innerHTML = '<option value="">Все разделы</option>' + sectionOptions
+            .map(section => `<option value="${section.id}">${escapeHtml(section.name || '—')}</option>`)
+            .join('');
+        sectionsSel.value = sectionOptions
+            .some(section => String(section.id) === filters.sectionId) ? filters.sectionId : '';
     }
 
-    const employees = [...new Set(registryCache.map(i => i.employee))].filter(Boolean).sort();
-    const empSel = document.getElementById('reg-filter-employee');
-    if (empSel) {
-        const current = empSel.value;
-        empSel.innerHTML = '<option value="">Все сотрудники</option>' +
-            employees.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('');
-        empSel.value = current;
+    const employeesSel = document.getElementById('reg-filter-employee');
+    if (employeesSel) {
+        employeesSel.innerHTML = '<option value="">Все сотрудники</option>' + registryFilterOptions.employees
+            .map(employee => `<option value="${employee.id}">${escapeHtml(employee.name || '—')}</option>`)
+            .join('');
+        employeesSel.value = registryFilterOptions.employees
+            .some(employee => String(employee.id) === filters.employeeId) ? filters.employeeId : '';
     }
 }
 
 export function applyRegistryFilters() {
-    filters.project = document.getElementById('reg-filter-project')?.value || '';
-    filters.section = document.getElementById('reg-filter-section')?.value || '';
+    filters.projectId = document.getElementById('reg-filter-project')?.value || '';
+    filters.sectionId = document.getElementById('reg-filter-section')?.value || '';
     filters.category = document.getElementById('reg-filter-category')?.value || '';
     filters.payment = document.getElementById('reg-filter-payment')?.value || '';
-    filters.employee = document.getElementById('reg-filter-employee')?.value || '';
+    filters.employeeId = document.getElementById('reg-filter-employee')?.value || '';
     filters.dateFrom = document.getElementById('reg-filter-date-from')?.value || '';
     filters.dateTo = document.getElementById('reg-filter-date-to')?.value || '';
 
-    renderRegistry();
+    // Смена объекта меняет список разделов: раздел другого объекта надо снять,
+    // иначе фильтр искал бы строки, которых в выбранном объекте нет.
+    if (filters.sectionId && filters.projectId) {
+        const section = registryFilterOptions.sections
+            .find(item => String(item.id) === filters.sectionId);
+        if (section && String(section.project_id) !== filters.projectId) filters.sectionId = '';
+    }
+
+    // Другой фильтр — другой набор строк: возвращаемся на первую страницу,
+    // иначе с пятой страницы старого фильтра сотрудник попадёт в пустоту.
+    // Промис загрузки возвращаем наружу: так прогоны (tools/checks) могут
+    // дождаться ответа базы, а не читать таблицу «на глазок» через паузу.
+    registryPage = 1;
+    return loadRegistry();
 }
 
 export function resetRegistryFilters() {
-    document.getElementById('reg-filter-project').value = '';
-    document.getElementById('reg-filter-section').value = '';
-    document.getElementById('reg-filter-category').value = '';
-    document.getElementById('reg-filter-payment').value = '';
-    document.getElementById('reg-filter-employee').value = '';
-    document.getElementById('reg-filter-date-from').value = '';
-    document.getElementById('reg-filter-date-to').value = '';
+    filters = {
+        projectId: '',
+        sectionId: '',
+        category: '',
+        payment: '',
+        employeeId: '',
+        dateFrom: '',
+        dateTo: ''
+    };
 
-    filters = { project: '', section: '', category: '', payment: '', employee: '', dateFrom: '', dateTo: '' };
-    renderRegistry();
-}
-
-function getFilteredData() {
-    return registryCache.filter(item => {
-        if (filters.project && item.project !== filters.project) return false;
-        if (filters.section && item.section !== filters.section) return false;
-        if (filters.category && item.category !== filters.category) return false;
-        if (filters.payment && item.payment !== filters.payment) return false;
-        if (filters.employee && item.employee !== filters.employee) return false;
-
-        if (filters.dateFrom) {
-            const itemDate = (item.date || '').split('T')[0];
-            if (itemDate < filters.dateFrom) return false;
-        }
-        if (filters.dateTo) {
-            const itemDate = (item.date || '').split('T')[0];
-            if (itemDate > filters.dateTo) return false;
-        }
-        return true;
+    ['reg-filter-project', 'reg-filter-section', 'reg-filter-category', 'reg-filter-payment',
+        'reg-filter-employee', 'reg-filter-date-from', 'reg-filter-date-to'].forEach(id => {
+        const field = document.getElementById(id);
+        if (field) field.value = '';
     });
+
+    registryPage = 1;
+    return loadRegistry();
 }
 
 // =====================================================================
@@ -401,25 +400,28 @@ export function renderRegistry() {
     const tbody = document.getElementById('registry-tbody');
     if (!tbody) return;
 
-    // Предупреждение о неполных данных (например, база без колонок v2.4.0)
+    // Предупреждение о неполных данных (например, база без вида реестра —
+    // не применена миграция) или о том, что выгрузка обрезана потолком.
     const warningEl = document.getElementById('registry-warning');
     if (warningEl) {
         warningEl.textContent = registryWarning;
         warningEl.classList.toggle('hidden', !registryWarning);
     }
 
-    const data = getFilteredData();
-
-    const totalSum = roundMoney(data.reduce((sum, i) => sum + (Number(i.sum) || 0), 0));
+    // «Записей» и «Итого» пришли командой базы по ВСЕМУ набору: на экране
+    // только страница, и считать по ней нельзя. Нет ответа — прочерк, а не
+    // чужая сумма.
     const countEl = document.getElementById('registry-count');
     const sumEl = document.getElementById('registry-total-sum');
-    if (countEl) countEl.textContent = data.length;
-    if (sumEl) sumEl.textContent = formatMoney(totalSum);
+    if (countEl) countEl.textContent = registryTotals.count === null ? '—' : registryTotals.count;
+    if (sumEl) sumEl.textContent = registryTotals.sum === null ? '—' : formatMoney(registryTotals.sum);
 
-    if (data.length === 0) {
+    renderRegistryToolbar();
+
+    if (registryCache.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="11" class="text-center text-gray-400 py-6 text-sm">
+                <td colspan="12" class="text-center text-gray-400 py-6 text-sm">
                     Нет данных в реестре
                 </td>
             </tr>
@@ -427,7 +429,34 @@ export function renderRegistry() {
         return;
     }
 
-    tbody.innerHTML = data.map(item => renderRegistryRow(item)).join('');
+    tbody.innerHTML = registryCache.map(item => renderRegistryRow(item)).join('');
+}
+
+/**
+ * Панель списка: «Показано 1-25 из 137», размер страницы и «‹ Назад / Вперёд ›».
+ * Разметку и события даёт общий модуль js/pagination.js. Поиска у реестра нет:
+ * колонок двенадцать, а фильтров семь — строка поиска искала бы только по
+ * названию, и сотрудник ждал бы от неё другого.
+ */
+function renderRegistryToolbar() {
+    renderToolbar('registry-toolbar', {
+        id: 'registry',
+        showSearch: false,
+        page: registryPage,
+        pageSize: registryPageSize,
+        count: registryTotal,
+        rowsOnPage: registryCache.length,
+
+        onPage: (page) => {
+            registryPage = page;
+            loadRegistry();
+        },
+        onPageSize: (size) => {
+            registryPageSize = Math.min(Number(size) || db.PAGE_SIZE, db.MAX_PAGE_SIZE);
+            registryPage = 1;
+            loadRegistry();
+        }
+    });
 }
 
 function renderRegistryRow(item) {
@@ -483,12 +512,41 @@ function renderRegistryRow(item) {
 // ЭКСПОРТ В EXCEL
 // =====================================================================
 
-export function exportRegistryToExcel() {
-    const data = getFilteredData();
+export async function exportRegistryToExcel() {
+    // Выгрузка берёт ВСЕ строки под фильтром, а не видимую страницу: «скачать
+    // по фильтру» значит «выгрузить ровно то, что видно», иначе в файле
+    // оказалась бы четверть реестра. Читаем страницами с потолком — если строк
+    // больше потолка, честно скажем об этом, а не выгрузим половину молча.
+    const { data: fetchedRows, error, fetched, truncated } = await db.selectAllPaged('registry_rows', {
+        select: REGISTRY_COLUMNS,
+        filters: registryRowFilters(),
+        orderBy: [
+            { column: 'entry_at', asc: false },
+            { column: 'row_key', asc: false }
+        ],
+        maxRows: REGISTRY_EXPORT_LIMIT
+    });
+
+    if (error) {
+        toast('Не удалось выгрузить реестр: ' + db.explainError(error), 'error');
+        return;
+    }
+
+    const data = (fetchedRows || []).map(mapRegistryRow);
 
     if (data.length === 0) {
         toast('Нет данных для выгрузки', 'warning');
         return;
+    }
+
+    if (truncated) {
+        // Молчаливое усечение в деньгах — это неверный итог, за который
+        // отвечает бухгалтер: говорим и в файле (предупреждение на экране), и
+        // всплывающим сообщением.
+        registryWarning = `⚠ В Excel попали не все строки: показаны первые ${fetched}. `
+            + 'Сузьте период или другой фильтр и повторите выгрузку.';
+        renderRegistry();
+        toast(`Показаны первые ${fetched} строк — строк больше, уточните фильтр`, 'warning');
     }
 
     if (typeof XLSX === 'undefined') {
@@ -624,3 +682,5 @@ export function updateRegistryBadge() {
 window.applyRegistryFilters = applyRegistryFilters;
 window.resetRegistryFilters = resetRegistryFilters;
 window.exportRegistryToExcel = exportRegistryToExcel;
+
+

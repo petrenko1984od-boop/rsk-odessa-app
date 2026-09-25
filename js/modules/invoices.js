@@ -38,6 +38,10 @@ let invoiceCache = [];
 let paidInvoiceCache = [];
 // Ошибка основной очереди: вместо пустого списка показываем её текст
 let invoiceError = null;
+// Предупреждение о неполном списке: строк в базе больше, чем приложение
+// читает за один раз (v2.9.0). Показывается в заголовке панели — счёт, не
+// попавший в очередь, это неоплаченный счёт, и молчать об этом нельзя.
+let invoiceWarning = '';
 
 // Активное меню блока: 'open' — ⏳ Ожидают оплату, 'paid' — ✅ Оплаченные.
 // Выбор живёт в модуле (а не в DOM): панель перерисовывается целиком и после
@@ -51,6 +55,11 @@ let invoicePeriod = 'all';
 // (js/modules/cash.js → MY_OPERATIONS_LIMIT): фильтр периода и выгрузка
 // работают по этому окну, поэтому 50 строк для сверки с банком мало.
 const PAID_INVOICES_LIMIT = 500;
+
+// Потолок очереди «⏳ Ожидают оплату» (v2.9.0). Долг должен быть виден целиком,
+// поэтому потолок заведомо выше истории; если счетов всё же больше, панель
+// предупреждает об этом (invoiceWarning), а не показывает часть долга молча.
+const OPEN_INVOICES_LIMIT = 1000;
 
 /** Может ли текущий пользователь отмечать счета оплаченными. */
 export function canPayInvoices() {
@@ -84,23 +93,28 @@ const INVOICE_COLUMNS = `
  * Счета, ожидающие оплаты: заявки фирмы со статусом оплаты 'debt'.
  * Счёт без файла тоже показываем — снабженец мог его не приложить, но
  * оплачивать всё равно нужно.
+ *
+ * Строки читаются страницами с потолком (db.selectAllPaged): раньше это был
+ * один запрос «вся таблица под фильтром». Если счетов больше потолка —
+ * возвращаем truncated, и панель говорит об этом (invoiceWarning).
  */
 async function loadOpenInvoices() {
-    const { data, error } = await db.select('orders', {
+    const { data, error, fetched, truncated } = await db.selectAllPaged('orders', {
         select: INVOICE_COLUMNS,
         filters: {
             payment_source: 'company',
             payment_status: 'debt'
         },
-        orderBy: { column: 'created_at', asc: false }
+        orderBy: { column: 'created_at', asc: false },
+        maxRows: OPEN_INVOICES_LIMIT
     });
 
     if (error) {
         log.error('Ошибка загрузки счетов на материалы:', error.message);
-        return { invoices: [], error };
+        return { invoices: [], error, fetched: 0, truncated: false };
     }
 
-    return { invoices: data || [], error: null };
+    return { invoices: data || [], error: null, fetched, truncated };
 }
 
 /**
@@ -113,26 +127,26 @@ async function loadOpenInvoices() {
  * оплаты).
  */
 async function loadPaidInvoices() {
-    const { data, error } = await db.select('orders', {
+    const { data, error, fetched, truncated } = await db.selectAllPaged('orders', {
         select: INVOICE_COLUMNS,
         filters: {
             payment_source: 'company',
             payment_status: 'paid'
         },
         orderBy: { column: 'paid_at', asc: false },
-        limit: PAID_INVOICES_LIMIT
+        maxRows: PAID_INVOICES_LIMIT
     });
 
     if (error) {
         log.error('Ошибка загрузки оплаченных счетов:', error.message);
-        return { invoices: [], error };
+        return { invoices: [], error, fetched: 0, truncated: false };
     }
 
     const invoices = (data || []).filter(
         row => row.invoice_uploaded_at || row.invoice_path || row.invoice_total
     );
 
-    return { invoices, error: null };
+    return { invoices, error: null, fetched, truncated };
 }
 
 // =====================================================================
@@ -389,9 +403,16 @@ function paintMaterialInvoices() {
 
     const head = renderInvoiceHead();
 
+    // Предупреждение о неполном списке (v2.9.0): строк в базе больше, чем
+    // приложение читает за один раз. Счёт, не попавший в очередь, — это
+    // неоплаченный счёт, поэтому об этом говорим прямо в панели.
+    const warning = invoiceWarning
+        ? `<p class="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-300 rounded-lg p-2">${escapeHtml(invoiceWarning)}</p>`
+        : '';
+
     if (invoiceError) {
         panel.innerHTML = `<div class="bg-white rounded-xl shadow-sm border border-red-200 p-4 space-y-2">
-            ${head}<p class="text-xs text-red-600">Не удалось загрузить счета: ${escapeHtml(db.explainError(invoiceError))}</p></div>`;
+            ${head}${warning}<p class="text-xs text-red-600">Не удалось загрузить счета: ${escapeHtml(db.explainError(invoiceError))}</p></div>`;
         return;
     }
 
@@ -416,6 +437,7 @@ function paintMaterialInvoices() {
     panel.innerHTML = `
         <div class="bg-white rounded-xl shadow-sm border ${boxBorder} p-4 space-y-3">
             ${head}
+            ${warning}
             ${visible.length === 0
                 ? `<p class="text-xs text-gray-500">${emptyText}</p>`
                 : visible.map(card).join('')}
@@ -456,6 +478,16 @@ export async function renderMaterialInvoices() {
     invoiceCache = open.invoices;
     invoiceError = open.error;
     paidInvoiceCache = paid.invoices;
+
+    // Предупреждение о неполном списке (v2.9.0): очередь долга важнее истории,
+    // поэтому о ней сообщаем первой.
+    invoiceWarning = open.truncated
+        ? t('invoice.truncatedOpen', { rows: open.fetched, limit: OPEN_INVOICES_LIMIT })
+        : paid.truncated
+            ? t('invoice.truncatedPaid', { rows: paid.fetched, limit: PAID_INVOICES_LIMIT })
+            : '';
+
+    if (invoiceWarning) log.error('Список счетов обрезан потолком загрузки:', invoiceWarning);
 
     paintMaterialInvoices();
 }

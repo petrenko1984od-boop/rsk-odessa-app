@@ -185,7 +185,21 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        добавлен js/modules/diagnostics.js, а изменился ещё и
 //        css/tailwind.css (новые классы раздела) — строка-отпечаток в конце
 //        файла.
-const SHELL_REVISION = 'r7';
+//   r8 — списки читаются страницами и с потолком загрузки:
+//        * «📊 Реестр» собирает строки ВИД БАЗЫ public.registry_rows, а модуль
+//          читает их страницей (db.selectPage) с фильтрами в запросе; «Записей»
+//          и «Итого» считает команда public.registry_totals по всему набору, а
+//          не по видимой странице (database/migrate-v2.9-registry-view.sql,
+//          js/modules/registry.js, js/pagination.js, js/database.js,
+//          index.html, js/i18n.js);
+//        * задачи рабочего экрана прораба — по странице на колонку
+//          («Показать ещё»), заявки на материалы и задачи читаются страницами
+//          с потолком и честным предупреждением, если строк больше
+//          (js/modules/dashboard.js, js/modules/tasks.js,
+//          js/modules/cash-requests.js, js/modules/invoices.js).
+//        Оболочка переустанавливается потому, что изменились все эти файлы и
+//        css/tailwind.css — строка-отпечаток в конце файла.
+const SHELL_REVISION = 'r8';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

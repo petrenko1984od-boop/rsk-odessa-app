@@ -65,6 +65,16 @@ import { fillSectionsSelect } from './sections.js';
 
 let cashRequestsCache = [];
 let currentFilter = 'active';   // 'active' | 'pending' | 'revision' | 'approved' | 'issued' | 'rejected' | 'all'
+
+// Потолки загрузки (v2.9.0). Заявки читаются страницами (db.selectAllPaged), но
+// с потолком: каждая строка тянет связи (объект, раздел, автор, согласовавший),
+// и «вся таблица за одним запросом» — это выгрузка, а не список. Строк больше
+// потолка — над списком появляется предупреждение (см. loadCashRequests), а не
+// молчаливая потеря части заявок. Позиции читаются только для видимых заявок,
+// поэтому их потолок выше.
+const CASH_REQUESTS_MAX_ROWS = 3000;
+const CASH_REQUEST_ITEMS_MAX_ROWS = 10000;
+
 // Что показывает БЛОК 2 рабочего стола финансиста: 'approved' — заявки,
 // одобренные директором (к выдаче), 'issued' — уже выданные (история).
 // Общий фильтр кассиров (currentFilter выше) при этом не трогаем: у директора
@@ -172,7 +182,10 @@ export async function loadCashRequests() {
     // она осталась бы видимой у роли, которой её не видно
     updateCreateCashRequestButton();
 
-    const { data, error } = await db.select('cash_requests', {
+    // Строки читаем страницами с потолком (db.selectAllPaged): раньше здесь
+    // одним запросом выгружалась ВСЯ таблица заявок. Если заявок больше
+    // потолка — предупреждаем над списком, а не показываем часть молча.
+    const { data, error, fetched, truncated } = await db.selectAllPaged('cash_requests', {
         select: `
             *,
             project:projects ( id, name ),
@@ -180,12 +193,14 @@ export async function loadCashRequests() {
             employee:employees!cash_requests_employee_id_fkey ( id, name, position ),
             approver:employees!cash_requests_approved_by_employee_id_fkey ( id, name )
         `,
-        orderBy: { column: 'created_at', asc: false }
+        orderBy: { column: 'created_at', asc: false },
+        maxRows: CASH_REQUESTS_MAX_ROWS
     });
 
     if (error) {
         log.error('Ошибка загрузки заявок финансов:', error.message);
         toast('Не удалось загрузить заявки', 'error');
+        showCashRequestsWarning('');
         return;
     }
 
@@ -193,14 +208,30 @@ export async function loadCashRequests() {
     const all = data || [];
     cashRequestsCache = all.filter(canSeeCashRequest);
 
-    // Догружаем позиции одним запросом
+    if (truncated) {
+        log.error(`Заявок больше ${CASH_REQUESTS_MAX_ROWS}: показаны первые ${fetched}`);
+        showCashRequestsWarning(t('cashreq.truncated', {
+            rows: cashRequestsCache.length,
+            limit: CASH_REQUESTS_MAX_ROWS
+        }));
+    } else {
+        showCashRequestsWarning('');
+    }
+
+    // Догружаем позиции одним запросом — и только для тех заявок, которые
+    // видит сотрудник. Раньше читалась ВСЯ таблица позиций, а лишние строки
+    // выбрасывались уже в браузере.
     if (cashRequestsCache.length > 0) {
         const requestIds = cashRequestsCache.map(r => r.id);
-        const { data: items } = await db.select('cash_request_items');
+
+        const { data: items } = await db.selectAllPaged('cash_request_items', {
+            filters: { 'request_id.in': requestIds },
+            orderBy: { column: 'id', asc: true },
+            maxRows: CASH_REQUEST_ITEMS_MAX_ROWS
+        });
 
         const itemsMap = {};
         (items || []).forEach(it => {
-            if (!requestIds.includes(it.request_id)) return;
             if (!itemsMap[it.request_id]) itemsMap[it.request_id] = [];
             itemsMap[it.request_id].push(it);
         });
@@ -221,6 +252,18 @@ export async function loadCashRequests() {
 
     // Счета на материалы — очередь оплаты финансиста (директор видит её тоже)
     await renderMaterialInvoices();
+}
+
+/**
+ * Предупреждение над списком заявок: строк в базе больше, чем приложение
+ * читает за один раз. Место под него есть в index.html (#cashreq-warning).
+ */
+function showCashRequestsWarning(text) {
+    const el = document.getElementById('cashreq-warning');
+    if (!el) return;
+
+    el.textContent = text || '';
+    el.classList.toggle('hidden', !text);
 }
 
 /**

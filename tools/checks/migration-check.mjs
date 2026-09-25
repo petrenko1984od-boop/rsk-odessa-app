@@ -844,6 +844,158 @@ function main() {
             v29Copy.clean, v29Copy.detail);
     }
 
+    // --- 3к. Миграция v2.9.0: вид «Реестра» и серверные итоги ----------------
+    // Повод: раздел «📊 Реестр» собирал строки в БРАУЗЕРЕ из четырёх выгрузок
+    // (заявки, их позиции, все расходы кассы, номера заявок для расходов), а
+    // фильтры, «Записей» и «Итого» считались по загруженному массиву. С v2.9.0
+    // строки отдаёт ВИД БАЗЫ public.registry_rows, страницу списка читает
+    // db.selectPage, итог считает команда public.registry_totals. Проверяется и
+    // SQL, и связка с кодом, и главное — что вид НЕ обходит RLS (иначе
+    // сотрудник увидел бы расходы всех объектов).
+    const REGISTRY_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.9-registry-view.sql');
+    const registryJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'registry.js'), 'utf8');
+    const configJsForRegistry = fs.readFileSync(path.join(ROOT, 'js', 'config.js'), 'utf8');
+    // index.html читаем заново: объявление из блока v2.9.0 выше живёт внутри
+    // своего if и здесь не видно (там проверялись страницы заявок).
+    const indexHtmlV29 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+
+    if (!fs.existsSync(REGISTRY_MIGRATION)) {
+        ok('есть файл database/migrate-v2.9-registry-view.sql', false, REGISTRY_MIGRATION);
+    } else {
+        const v29Reg = fs.readFileSync(REGISTRY_MIGRATION, 'utf8');
+        const v29RegFlat = v29Reg.replace(/\s+/g, ' ');
+
+        // 1. Вид пересоздаётся и объявлен security_invoker: без второго он
+        //    выполнялся бы от имени владельца и обошёл бы политики RLS.
+        ok('v2.9.0 (реестр): вид пересоздаётся и объявлен security_invoker = true',
+            /drop view if exists public\.registry_rows;/.test(v29Reg) &&
+            /create view public\.registry_rows with \(security_invoker = true\) as/.test(v29RegFlat));
+
+        // 2. Источники строк: заявки фирмы (delivered/closed/archived — архив в
+        //    реестре тоже есть) и расходы кассы; своя доставка, оплаченная из
+        //    подотчёта, из вида исключается — иначе сумма считалась бы дважды.
+        ok('v2.9.0 (реестр): строки берутся из заявок фирмы и расходов кассы',
+            /payment_source = 'company'/.test(v29Reg) &&
+            /status in \('delivered', 'closed', 'archived'\)/.test(v29Reg) &&
+            /operation_type = 'expense'/.test(v29Reg) &&
+            /jsonb_array_elements/.test(v29Reg));
+
+        ok('v2.9.0 (реестр): своя доставка, оплаченная из подотчёта, учтена один раз',
+            /source = 'own_delivery'/.test(v29Reg) &&
+            /and not \(\s*\n?\s*public\.rsk_delivery_kind\([^)]*\) = 'company'/.test(v29Reg) &&
+            /exists \(/.test(v29Reg));
+
+        // 3. Имена строк доставки совпадают с js/config.js: по ним вид отличает
+        //    «Доставка» от «Доставка компании», и переименование в коде без
+        //    правки вида сломало бы категорию «🚚 Доставка» и «🏢 Вне счёта».
+        //    Берём их ИЗ БЛОКА DELIVERY_ITEM: в config.js есть и другие NAME
+        //    (например, служебный раздел «Доп. расходы»).
+        const deliveryBlock = (configJsForRegistry.match(/DELIVERY_ITEM:\s*\{[\s\S]*?\n {4}\},/) || [''])[0];
+        const deliveryName = (deliveryBlock.match(/\bNAME:\s*'([^']+)'/) || [])[1];
+        const deliveryCompanyName = (deliveryBlock.match(/COMPANY_NAME:\s*'([^']+)'/) || [])[1];
+        ok('v2.9.0 (реестр): названия доставки в SQL совпадают с js/config.js',
+            !!deliveryName && !!deliveryCompanyName &&
+            v29Reg.includes("= '" + deliveryName.toLowerCase() + "'") &&
+            v29Reg.includes("= '" + deliveryCompanyName.toLowerCase() + "'"),
+            'config: ' + deliveryName + ' / ' + deliveryCompanyName);
+
+        // 4. Права: читают вошедшие (authenticated), анонимный ключ — нет.
+        ok('v2.9.0 (реестр): вид и команды закрыты от anon и открыты authenticated',
+            /revoke all on table public\.registry_rows from public, anon, authenticated;/.test(v29Reg) &&
+            /grant select on table public\.registry_rows to authenticated;/.test(v29Reg) &&
+            /revoke all on function public\.registry_totals/.test(v29Reg) &&
+            /grant execute on function public\.registry_totals\([^)]*\)\s*\n?\s*to authenticated;/
+                .test(v29Reg) &&
+            /grant execute on function public\.rsk_delivery_kind/.test(v29Reg) &&
+            /grant execute on function public\.rsk_json_amount/.test(v29Reg) &&
+            !/to anon\b/.test(v29Reg));
+
+        const registryFuncs = ['rsk_delivery_kind', 'rsk_json_amount', 'registry_totals']
+            .filter((name) => new RegExp('create or replace function public\\.' + name + '\\b').test(v29Reg));
+        ok('v2.9.0 (реестр): объявлены вспомогательные функции и команда итогов',
+            registryFuncs.length === 3, registryFuncs.join(', '));
+
+        ok('v2.9.0 (реестр): у команд фиксированный search_path, итог — security invoker',
+            (v29Reg.match(/set search_path = pg_catalog, public/g) || []).length >= 3 &&
+            /security invoker/.test(v29Reg) && /\bstable\b/.test(v29Reg));
+
+        // 5. Самопроверка и перезагрузка схемы PostgREST: без notify новый вид и
+        //    команда не появятся в API (приложение получало бы PGRST205/PGRST202).
+        ok('v2.9.0 (реестр): есть самопроверка с MISSING и reload schema',
+            v29Reg.includes('БЛОК 5. САМОПРОВЕРКА') &&
+            /'registry_rows: %'/.test(v29Reg) &&
+            /registry_totals: %/.test(v29Reg) &&
+            /MISSING - нет вида public\.registry_rows/.test(v29Reg) &&
+            /notify pgrst, 'reload schema';/.test(v29Reg));
+
+        const v29RegCopy = copyIssues(v29Reg);
+        ok('migrate-v2.9-registry-view.sql чистый для копирования (кавычки, пробелы, скобки, $$)',
+            v29RegCopy.clean, v29RegCopy.detail);
+
+        // 6. Цикл «код ↔ вид»: список читается страницей вида, итог — командой
+        //    базы, выгрузка — страницами с потолком. Прежних выгрузок целых
+        //    таблиц в модуле быть не должно: именно из-за них раздел открывался
+        //    минутами на большой базе.
+        ok('v2.9.0 (реестр): список читается страницей вида, итог — командой базы',
+            /db\.selectPage\('registry_rows'/.test(registryJs) &&
+            /pageSize: registryPageSize/.test(registryJs) &&
+            /db\.rpc\('registry_totals'/.test(registryJs) &&
+            /db\.selectAllPaged\('registry_rows'/.test(registryJs) &&
+            !/db\.select\('orders'/.test(registryJs) &&
+            !/db\.select\('order_items'/.test(registryJs) &&
+            !/db\.select\('cash_operations'/.test(registryJs));
+
+        ok('v2.9.0 (реестр): фильтры и сортировка уходят в запрос, а не в браузер',
+            /filters: registryRowFilters\(\)/.test(registryJs) &&
+            /'entry_date\.gte'/.test(registryJs) && /'entry_date\.lte'/.test(registryJs) &&
+            /column: 'entry_at', asc: false/.test(registryJs) &&
+            /column: 'row_key', asc: false/.test(registryJs));
+
+        ok('v2.9.0 (реестр): панель списка есть в разметке, поиск у реестра выключен',
+            /id="registry-toolbar"/.test(indexHtmlV29) &&
+            /showSearch: false/.test(registryJs) &&
+            /showSearch = true/.test(fs.readFileSync(path.join(ROOT, 'js', 'pagination.js'), 'utf8')));
+
+        ok('v2.9.0 (реестр): database/schema.sql описывает вид и команду итогов',
+            /registry_rows/.test(schema) && /registry_totals/.test(schema) &&
+            /security_invoker/.test(schema) && /migrate-v2\.9-registry-view\.sql/.test(schema));
+    }
+
+    // --- 3л. Потолки загрузки в остальных списках (v2.9.0) -------------------
+    // Задачи, заявки финансов, счета и рабочий экран прораба читались целыми
+    // таблицами. Теперь они читаются страницами с потолком и ПРЕДУПРЕЖДАЮТ,
+    // если строк больше: молчаливая потеря части списка недопустима (в счетах
+    // это неоплаченный долг, в задачах — задание, про которое забыли).
+    const tasksJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'tasks.js'), 'utf8');
+    const cashReqJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'cash-requests.js'), 'utf8');
+    const invoicesJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'invoices.js'), 'utf8');
+    const dashboardJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'dashboard.js'), 'utf8');
+
+    ok('v2.9.0: задачи читаются страницами с потолком и предупреждают о неполном списке',
+        /db\.selectAllPaged\('tasks'/.test(tasksJs) && /maxRows: TASKS_MAX_ROWS/.test(tasksJs) &&
+        /truncated/.test(tasksJs) && /id="tasks-warning"/.test(indexHtmlV29));
+
+    ok('v2.9.0: заявки финансов читаются страницами, позиции — только для видимых заявок',
+        /db\.selectAllPaged\('cash_requests'/.test(cashReqJs) &&
+        /maxRows: CASH_REQUESTS_MAX_ROWS/.test(cashReqJs) &&
+        /db\.selectAllPaged\('cash_request_items'/.test(cashReqJs) &&
+        /'request_id\.in': requestIds/.test(cashReqJs) &&
+        /cashreq\.truncated/.test(cashReqJs) && /id="cashreq-warning"/.test(indexHtmlV29));
+
+    ok('v2.9.0: счета читаются страницами с потолком и предупреждают о неполном списке',
+        /db\.selectAllPaged\('orders'/.test(invoicesJs) &&
+        /maxRows: OPEN_INVOICES_LIMIT/.test(invoicesJs) &&
+        /maxRows: PAID_INVOICES_LIMIT/.test(invoicesJs) &&
+        /invoice\.truncatedOpen/.test(invoicesJs) && /invoiceWarning/.test(invoicesJs));
+
+    ok('v2.9.0: задачи рабочего экрана прораба листаются страницами по статусам',
+        /db\.selectPage\('tasks'/.test(dashboardJs) &&
+        /foremanTaskPages\[status\]/.test(dashboardJs) &&
+        /assignee_employee_id: employeeId/.test(dashboardJs) &&
+        /showMoreForemanTasks/.test(dashboardJs) &&
+        /id="foreman-tasks"/.test(dashboardJs) &&
+        /db\.selectAllPaged\('orders'/.test(dashboardJs));
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'

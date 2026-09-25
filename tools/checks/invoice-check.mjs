@@ -5,6 +5,12 @@
 //   3. финансист видит счёт в блоке «Счета на материалы» и жмёт «Оплачено»;
 //   4. директор пополняет подотчёт → «Ведомость пополнений»;
 //   5. «Настройки»: язык uk/ru и цветовая схема (data-theme + перекраска).
+//
+// С v2.9.0 строки «📊 Реестра» отдаёт ВИД БАЗЫ public.registry_rows, страница
+// списка приходит через db.selectPage (limit/offset), а «Записей» и «Итого»
+// считает команда public.registry_totals по всему набору. Мок повторяет это
+// правило (registryViewRows/handleRpc): иначе прогон проверял бы не то, что
+// увидит сотрудник.
 // =====================================================================
 import http from 'node:http';
 import fs from 'node:fs';
@@ -82,6 +88,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //    с PGRST200, то есть список заявок не загружается вообще.
 const missingColumns = { orders: [] };
 let brokenOrdersJoin = false;
+
+// 4. missingRegistryView — миграция вида не применена: база не знает
+//    public.registry_rows, и PostgREST отвечает PGRST205 («Could not find the
+//    table ... in the schema cache»). Раздел «📊 Реестр» обязан назвать файл
+//    миграции, а не показать пустую таблицу (js/modules/registry.js).
+let missingRegistryView = false;
 
 // 3. checkViolationOrders — база отклонила запись по CHECK-ограничению (23514):
 //    на orders.status висело СТАРОЕ ограничение со списком без 'delivered'.
@@ -196,6 +208,7 @@ function rowsFor(table, params) {
                 : store.employees.map((e) => e.id);
             return ids.map((id) => ({ employee_id: id, name: employee(id)?.name || '—', balance: balanceOf(id) }));
         }
+        case 'registry_rows': return registryFilteredRows(params);
         default: return [];
     }
 }
@@ -294,6 +307,192 @@ function insertRows(table, payload) {
     return Array.isArray(payload) ? created : created[0];
 }
 
+// -------------------- вид «Реестра» (v2.9.0) ---------------------------------
+// Раздел «📊 Реестр» больше не собирает строки в браузере: их отдаёт ВИД БАЗЫ
+// public.registry_rows (database/migrate-v2.9-registry-view.sql), страницу и
+// итог считают PostgREST и команда public.registry_totals. Мок повторяет то же
+// правило — иначе прогон проверял бы не то, что увидит сотрудник.
+
+/** Вид доставки позиции: как js/utils.js → getDeliveryItemType() и SQL-вид. */
+function registryDeliveryKind(row) {
+    const kind = String(row?.delivery_kind || '').trim().toLowerCase();
+    if (kind === 'company') return 'company';
+    if (kind === 'supplier') return 'supplier';
+
+    const name = String(row?.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (name === 'доставка') return 'supplier';
+    if (name === 'доставка компании') return 'company';
+    return null;
+}
+
+const nameOf = (list, id) => (list.find((row) => row.id === id) || {}).name || '—';
+
+/** Строки вида public.registry_rows по данным мока (без фильтров и страницы). */
+function registryViewRows() {
+    // Заявки, где своя доставка уже оплачена из подотчёта: строка заявки из
+    // реестра уходит, вместо неё показывается расход (иначе сумма — дважды).
+    const coveredOwnDelivery = new Set(store.cash_operations
+        .filter((op) => op.source === 'own_delivery' && op.order_id != null)
+        .map((op) => String(op.order_id)));
+
+    const rows = [];
+
+    store.orders
+        .filter((order) => order.payment_source === 'company' &&
+            ['delivered', 'closed', 'archived'].includes(order.status))
+        .forEach((order) => {
+            store.order_items
+                .filter((item) => item.order_id === order.id)
+                .forEach((item) => {
+                    const delivery = registryDeliveryKind(item);
+                    if (delivery === 'company' && coveredOwnDelivery.has(String(order.id))) return;
+
+                    const date = order.delivered_at || order.closed_at || order.created_at;
+
+                    rows.push({
+                        kind: 'order',
+                        source_number: order.request_number,
+                        order_id: order.id,
+                        row_key: 'order_item:' + item.id,
+                        entry_at: date,
+                        entry_date: String(date || '').slice(0, 10),
+                        name: item.name,
+                        unit: item.unit || 'шт',
+                        qty: Number(item.qty) || 0,
+                        unit_price: Number(item.unit_price) || 0,
+                        total_sum: Number(item.total_price) || 0,
+                        vat_amount: Number(item.vat_amount) || 0,
+                        category: delivery ? 'delivery' : 'materials',
+                        payment: delivery === 'company'
+                            ? 'company'
+                            : (order.payment_status || item.payment_status || 'paid'),
+                        supplier: delivery === 'company' ? '—' : (order.supplier || '—'),
+                        project_id: order.project_id,
+                        project_name: nameOf(store.projects, order.project_id),
+                        section_id: order.section_id,
+                        section_name: nameOf(store.sections, order.section_id),
+                        employee_id: order.created_by_employee_id,
+                        employee_name: nameOf(store.employees, order.created_by_employee_id)
+                    });
+                });
+        });
+
+    return rows.concat(registryExpenseRows());
+}
+
+/** Расходы кассы: у каждого — своя строка реестра (позиции лежат в items). */
+function registryExpenseRows() {
+    const rows = [];
+
+    store.cash_operations
+        .filter((op) => op.operation_type === 'expense')
+        .forEach((op) => {
+            const items = Array.isArray(op.items) ? op.items : [];
+            const order = store.orders.find((row) => row.id === op.order_id) || null;
+            const date = op.operation_date || op.created_at;
+
+            const base = {
+                order_id: op.order_id ?? null,
+                entry_at: date,
+                entry_date: String(date || '').slice(0, 10),
+                vat_amount: Number(op.vat_amount) || 0,
+                payment: 'paid',
+                project_id: op.project_id ?? null,
+                project_name: nameOf(store.projects, op.project_id),
+                section_id: op.section_id ?? null,
+                section_name: nameOf(store.sections, op.section_id),
+                employee_id: op.employee_id ?? null,
+                employee_name: nameOf(store.employees, op.employee_id)
+            };
+
+            const kind = op.source === 'own_delivery' ? 'own_delivery'
+                : (op.source === 'order' ? 'order_employee' : 'expense');
+            const sourceNumber = (op.source === 'order' || op.source === 'own_delivery')
+                ? (order ? order.request_number : '—')
+                : '💰 Расход';
+
+            if (items.length === 0) {
+                rows.push({
+                    ...base,
+                    kind,
+                    source_number: sourceNumber,
+                    row_key: 'cash_op:' + op.id + ':0',
+                    name: op.description || '—',
+                    unit: '—',
+                    qty: 1,
+                    unit_price: Number(op.amount) || 0,
+                    total_sum: Number(op.amount) || 0,
+                    category: op.category || '',
+                    supplier: '—'
+                });
+                return;
+            }
+
+            items.forEach((item, index) => {
+                rows.push({
+                    ...base,
+                    kind,
+                    source_number: sourceNumber,
+                    row_key: 'cash_op:' + op.id + ':' + (index + 1),
+                    name: item.name || '—',
+                    unit: item.unit || 'шт',
+                    qty: Number(item.qty) || 0,
+                    unit_price: Number(item.price ?? item.unit_price) || 0,
+                    total_sum: Number(item.sum ?? item.total_price) || 0,
+                    category: registryDeliveryKind(item) ? 'delivery' : (op.category || ''),
+                    supplier: op.source === 'order' && order ? (order.supplier || '—') : '—'
+                });
+            });
+        });
+
+    return rows;
+}
+
+/** Условия запроса к виду: eq и границы даты — так их ставит supabase-js. */
+function registryFilteredRows(params = {}) {
+    const matches = (row, key) => params[key] === undefined ||
+        String(row[key]) === String(String(params[key]).replace(/^eq\./, ''));
+
+    return registryViewRows()
+        .filter((row) => ['project_id', 'section_id', 'category', 'payment', 'employee_id']
+            .every((key) => matches(row, key)))
+        .filter((row) => !params['entry_date.gte'] || row.entry_date >= params['entry_date.gte'])
+        .filter((row) => !params['entry_date.lte'] || row.entry_date <= params['entry_date.lte'])
+        // Порядок как просит js/modules/registry.js: дата, затем ключ строки
+        // (одной даты мало — строки её делят между собой).
+        .sort((a, b) => String(b.entry_at).localeCompare(String(a.entry_at)) ||
+            String(b.row_key).localeCompare(String(a.row_key)));
+}
+
+/**
+ * Серверные команды v2.9.0. Итог «Реестра» считает БАЗА по всему набору под
+ * фильтром, а не по странице списка (PostgREST отдаёт таблицу как массив).
+ */
+function handleRpc(name, payload, res) {
+    if (name === 'registry_totals') {
+        const params = payload || {};
+        const matches = (row, column, value) => value === undefined || value === null ||
+            String(row[column]) === String(value);
+
+        const rows = registryViewRows()
+            .filter((row) => matches(row, 'project_id', params.p_project_id) &&
+                matches(row, 'section_id', params.p_section_id) &&
+                matches(row, 'category', params.p_category) &&
+                matches(row, 'payment', params.p_payment) &&
+                matches(row, 'employee_id', params.p_employee_id))
+            .filter((row) => !params.p_date_from || row.entry_date >= params.p_date_from)
+            .filter((row) => !params.p_date_to || row.entry_date <= params.p_date_to);
+
+        return sendJson(res, 200, [{
+            rows_count: rows.length,
+            total_sum: rows.reduce((sum, row) => sum + row.total_sum, 0),
+            total_vat: rows.reduce((sum, row) => sum + row.vat_amount, 0)
+        }]);
+    }
+
+    return sendJson(res, 200, null);
+}
+
 // --------------------------------- мок Supabase ---------------------------------
 function handleMock(req, res, body) {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -333,11 +532,25 @@ function handleMock(req, res, body) {
         return sendJson(res, 200, { Key: decodeURIComponent(stored), path: decodeURIComponent(stored) });
     }
 
+    // ---- Серверные команды (RPC, v2.9.0) ----
+    // Итог «Реестра материалов» считает база (public.registry_totals), а не
+    // браузер по видимой странице: см. js/modules/registry.js.
+    if (p.startsWith('/rest/v1/rpc/')) {
+        return handleRpc(decodeURIComponent(p.split('/rest/v1/rpc/')[1]), payload, res);
+    }
+
     const table = (p.match(/\/rest\/v1\/([a-z_]+)/) || [])[1] || null;
     if (!table) return sendJson(res, 200, []);
 
     // ---- Чтение ----
     if (req.method === 'GET') {
+        if (table === 'registry_rows' && missingRegistryView) {
+            return sendJson(res, 400, {
+                code: 'PGRST205', details: null, hint: null,
+                message: "Could not find the table 'public.registry_rows' in the schema cache"
+            });
+        }
+
         if (table === 'orders' && brokenOrdersJoin) {
             return sendJson(res, 400, {
                 code: 'PGRST200', details: null, hint: null,
@@ -778,13 +991,36 @@ async function main() {
         registryFlat.includes('🚚 Доставка') && registryFlat.includes('1 500,00'),
         registryFlat.slice(0, 260));
 
+    // С v2.9.0 строки реестра отдаёт ВИД базы, фильтры уходят в запрос, а итог
+    // считает команда public.registry_totals — проверяем, что мок получил и
+    // страницу списка (limit/offset), и запрос итога.
+    const registryPageRequest = requests.find((r) => r.method === 'GET' &&
+        r.target.startsWith('/rest/v1/registry_rows') && /limit=/.test(r.target));
+    ok('реестр читается страницей (в запрос уходит limit/offset)',
+        !!registryPageRequest,
+        registryPageRequest ? registryPageRequest.target.slice(0, 160) : 'запроса нет');
+
+    const totalsRequest = requests.find((r) => r.method === 'POST' &&
+        r.target.startsWith('/rest/v1/rpc/registry_totals'));
+    ok('итог реестра считает команда базы по всему набору',
+        !!totalsRequest, totalsRequest ? totalsRequest.target : 'запроса нет');
+
+    const registryHeader = (await evaluate(
+        '(' + text('registry-count') + ') + "|" + (' + text('registry-total-sum') + ')'
+    )).replace(/\s+/g, ' ');
+    ok('«Записей» и «Итого» взяты из команды базы (3 строки, 15 500,00)',
+        registryHeader.startsWith('3|') && registryHeader.includes('15 500'),
+        registryHeader);
+
     // Фильтр «Категория → 🚚 Доставка» теперь действительно что-то находит:
     // раньше этот пункт в фильтре был, а строк с такой категорией не появлялось.
-    const deliveryOnly = await evaluate('(() => {' +
+    // Фильтры стали условием запроса, поэтому ждём ответа базы:
+    // applyRegistryFilters() возвращает промис загрузки страницы.
+    await evaluate('(() => {' +
         'const sel = document.getElementById("reg-filter-category");' +
         'sel.value = "delivery";' +
-        'window.applyRegistryFilters();' +
-        'return document.getElementById("registry-tbody").innerText; })()');
+        'return window.applyRegistryFilters(); })()');
+    const deliveryOnly = await evaluate(text('registry-tbody'));
     ok('фильтр реестра «🚚 Доставка» оставляет только строку доставки',
         deliveryOnly.includes('Доставка') && !deliveryOnly.includes('Кирпич'),
         deliveryOnly.replace(/\n/g, ' | ').slice(0, 160));
@@ -1141,14 +1377,18 @@ async function main() {
 
     await evaluate('window.hideModal("order-invoice-modal")');
 
-    // 3. Реестр материалов не смог загрузить заявки — плашка над таблицей
-    await loginAs(8, 'Директор: реестр на «старой» базе');
+    // 3. Реестр: база не знает вид (миграция вида не применена). Раздел обязан
+    //    назвать НУЖНЫЙ файл — database/migrate-v2.9-registry-view.sql, — а не
+    //    показать пустую таблицу без объяснений.
+    missingRegistryView = true;
+    await loginAs(8, 'Директор: реестр без вида public.registry_rows');
     await evaluate('window.switchTab("registry")');
     await sleep(1600);
     const registryWarn = await evaluate(text('registry-warning'));
-    ok('«Реестр материалов» объясняет, почему нет заявок',
-        registryWarn.includes('migrate-v2.4.sql'),
+    ok('«Реестр материалов» называет файл миграции, если вида нет в базе',
+        registryWarn.includes('migrate-v2.9-registry-view.sql'),
         registryWarn.replace(/\n/g, ' ').slice(0, 200));
+    missingRegistryView = false;
 
     // 4. Рабочий стол финансиста: очередь счетов не загрузилась
     await loginAs(9, 'Финансист: база не обновлена');

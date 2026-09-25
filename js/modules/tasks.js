@@ -31,6 +31,14 @@ import { CONFIG } from '../config.js';
 let tasksCache = [];
 let currentFilter = 'active';   // 'active' | 'pending' | 'in_progress' | 'done' | 'all'
 
+// Сколько задач максимум загружаем за один показ раздела (v2.9.0).
+// Читаются страницами (db.selectAllPaged), но с потолком: 3000 задач — это
+// уже больше, чем сотрудник просматривает с экрана, а каждая строка тянет
+// связи (объект, раздел, автор, исполнитель). Строк больше потолка — над
+// списком появляется предупреждение (см. loadTasks), а не молчаливая потеря
+// части задач.
+const TASKS_MAX_ROWS = 3000;
+
 // =====================================================================
 // ПРАВА
 // =====================================================================
@@ -99,7 +107,12 @@ export async function loadTasks() {
         tasksContainer.innerHTML = '<div class="app-loading app-loading-card text-sm"><span class="app-spinner" aria-hidden="true"></span><span>Загрузка задач...</span></div>';
     }
 
-    const { data, error } = await db.select('tasks', {
+    // Строки читаем страницами с потолком (db.selectAllPaged): «все задачи»
+    // одним запросом — это выгрузка всей таблицы на каждый показ раздела.
+    // Потолок 3000 задач — заведомо больше, чем просматривают с экрана; если
+    // строк больше, честно предупреждаем (см. ниже), а не показываем часть
+    // списка молча.
+    const { data, error, fetched, truncated } = await db.selectAllPaged('tasks', {
         select: `
             *,
             project:projects ( id, name ),
@@ -107,12 +120,14 @@ export async function loadTasks() {
             author:employees!tasks_author_employee_id_fkey ( id, name, position ),
             assignee:employees!tasks_assignee_employee_id_fkey ( id, name, position )
         `,
-        orderBy: { column: 'created_at', asc: false }
+        orderBy: { column: 'created_at', asc: false },
+        maxRows: TASKS_MAX_ROWS
     });
 
     if (error) {
         log.error('Ошибка загрузки задач:', error.message);
         toast('Не удалось загрузить задачи', 'error');
+        showTasksWarning('');
         return;
     }
 
@@ -120,9 +135,32 @@ export async function loadTasks() {
     const all = data || [];
     tasksCache = all.filter(canSeeTask);
 
+    if (truncated) {
+        // Сотрудник не должен решить, что задач больше нет: говорим, что
+        // показаны не все, и что делать (уточнить фильтр).
+        log.error(`Задач больше ${TASKS_MAX_ROWS}: показаны первые ${fetched}`);
+        showTasksWarning(`⚠ Показаны не все задачи: загружено ${tasksCache.length}, `
+            + `а в базе их больше ${TASKS_MAX_ROWS}. Старые задачи не показаны — уточните фильтр по статусу.`);
+    } else {
+        showTasksWarning('');
+    }
+
     log.info(`Загружено задач: ${tasksCache.length}`);
     renderTasks();
 }
+
+/**
+ * Предупреждение над списком задач. Заполняется при загрузке (строк больше
+ * потолка) — место под него есть в index.html (#tasks-warning).
+ */
+function showTasksWarning(text) {
+    const el = document.getElementById('tasks-warning');
+    if (!el) return;
+
+    el.textContent = text || '';
+    el.classList.toggle('hidden', !text);
+}
+
 
 // =====================================================================
 // ФИЛЬТРАЦИЯ

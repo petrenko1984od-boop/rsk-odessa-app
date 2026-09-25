@@ -104,7 +104,114 @@ function renderOperations(operations, employees) {
     }).join('');
 }
 
-function renderForemanTasks(tasks, projects) {
+// =====================================================================
+// ЗАДАЧИ РАБОЧЕГО ЭКРАНА ПРОРАБА (v2.9.0)
+// =====================================================================
+// Раньше здесь грузилась ВСЯ таблица задач: браузер получал задачи всех
+// сотрудников и объектов, а нужные отбирались фильтром в браузере. Теперь у
+// каждой колонки (Новые / В работе / Законченные) своя СТРАНИЦА из базы
+// (db.selectPage: limit/offset + count), а «сколько всего» приходит от базы.
+// Кнопка «Показать ещё» догружает следующую страницу ЭТОЙ колонки.
+const FOREMAN_TASKS_PAGE_SIZE = 10;
+const FOREMAN_TASK_STATUSES = ['pending', 'in_progress', 'done'];
+
+// Состояние блока: страница, уже загруженные строки и общее количество по
+// каждому статусу (null — база не сообщила количество).
+let foremanTaskPages = { pending: 1, in_progress: 1, done: 1 };
+let foremanTaskRows = { pending: [], in_progress: [], done: [] };
+let foremanTaskTotals = { pending: null, in_progress: null, done: null };
+
+// Объекты и исполнитель последнего показа: нужны кнопке «Показать ещё», чтобы
+// догрузить строки без перерисовки всего рабочего экрана.
+let foremanTaskProjects = [];
+let foremanTaskAssigneeId = null;
+
+// Потолок загрузки заявок на материалы для блока прораба и текст
+// предупреждения, если строк больше (показывается в блоке).
+const FOREMAN_ORDERS_MAX_ROWS = 3000;
+let foremanOrdersWarning = '';
+
+// Потолок для сводных выборок рабочего экрана (задачи подразделения): список
+// читается страницами (db.selectAllPaged), но не бесконечно — это обзор, а не
+// выгрузка. Строк больше потолка — в консоль уходит предупреждение, а на экране
+// остаются последние задачи (свежие сверху).
+const DASHBOARD_SUMMARY_MAX_ROWS = 3000;
+
+/**
+ * Читает страницы указанных статусов и складывает результат в состояние.
+ *
+ * Фильтры (исполнитель, объекты, статус) уходят в запрос: если фильтровать
+ * прочитанное в браузере, «Всего: 3» считалось бы по всем задачам, а в
+ * колонке было бы 0 строк.
+ */
+async function loadForemanTaskPages(projectIds, employeeId, statuses) {
+    if (projectIds.length === 0) {
+        statuses.forEach(status => {
+            foremanTaskRows[status] = [];
+            foremanTaskTotals[status] = 0;
+        });
+        return;
+    }
+
+    const results = await Promise.all(statuses.map(status => db.selectPage('tasks', {
+        // Поля только для карточки блока: полная строка задачи здесь не нужна
+        // (описание, история, комментарии читает модуль задач при открытии).
+        select: 'id, title, project_id, status, deadline, created_at',
+        filters: {
+            assignee_employee_id: employeeId,
+            'project_id.in': projectIds,
+            status
+        },
+        orderBy: { column: 'created_at', asc: false },
+        page: foremanTaskPages[status],
+        pageSize: FOREMAN_TASKS_PAGE_SIZE
+    })));
+
+    statuses.forEach((status, index) => {
+        const result = results[index];
+
+        if (result.error) {
+            log.error(`Ошибка загрузки задач «${status}» с рабочего экрана:`, result.error.message);
+            foremanTaskTotals[status] = null;
+            return;
+        }
+
+        foremanTaskRows[status] = result.data || [];
+        foremanTaskTotals[status] = result.count;
+    });
+}
+
+/**
+ * Задачи блока прораба: только его задачи по объектам, где он ответственный.
+ * @param {number[]} projectIds — объекты прораба
+ * @param {number} employeeId — исполнитель (он же прораб)
+ */
+async function loadForemanTasks(projectIds, employeeId) {
+    foremanTaskAssigneeId = employeeId;
+    await loadForemanTaskPages(projectIds, employeeId, FOREMAN_TASK_STATUSES);
+}
+
+/**
+ * «Показать ещё» в колонке задач (data-action="showMoreForemanTasks"):
+ * догружает следующую страницу ТОЛЬКО этой колонки и перерисовывает блок
+ * задач. Остальные блоки рабочего экрана не трогаем — их данные уже на экране.
+ */
+export async function showMoreForemanTasks(status) {
+    if (!FOREMAN_TASK_STATUSES.includes(status)) return;
+    if (foremanTaskProjects.length === 0 || !foremanTaskAssigneeId) return;
+
+    foremanTaskPages[status] += 1;
+    await loadForemanTaskPages(
+        foremanTaskProjects.map(project => project.id),
+        foremanTaskAssigneeId,
+        [status]
+    );
+
+    const container = document.getElementById('foreman-tasks');
+    if (container) container.innerHTML = renderForemanTasks(foremanTaskProjects);
+}
+
+function renderForemanTasks(projects) {
     const projectMap = new Map((projects || []).map(project => [project.id, project.name]));
     const groups = [
         // `badge` — целые имена классов, а не сборка из `tone`: Tailwind
@@ -116,20 +223,31 @@ function renderForemanTasks(tasks, projects) {
     ];
 
     return groups.map(group => {
-        const groupTasks = tasks.filter(task => task.status === group.status);
+        const tasks = foremanTaskRows[group.status] || [];
+        const total = foremanTaskTotals[group.status];
+        // Кнопка «Показать ещё» — только когда база сообщила, что строк больше,
+        // чем уже загружено.
+        const more = typeof total === 'number' && tasks.length < total;
+
         return `
             <section class="min-w-0 rounded-xl bg-white p-5 shadow-sm">
                 <div class="flex items-center justify-between gap-2 border-b pb-3">
                     <h3 class="text-sm font-bold text-gray-800">${group.title}</h3>
-                    <span class="rounded-full ${group.badge} px-2 py-1 text-xs font-bold">${groupTasks.length}</span>
+                    <span class="rounded-full ${group.badge} px-2 py-1 text-xs font-bold">${typeof total === 'number' ? total : tasks.length}</span>
                 </div>
                 <div class="mt-2 space-y-2">
-                    ${groupTasks.length ? groupTasks.map(task => `
+                    ${tasks.length ? tasks.map(task => `
                         <button data-action="openTaskDetail" data-arg="${task.id}" class="w-full rounded-lg border p-3 text-left transition hover:bg-emerald-50/60">
                             <p class="text-sm font-semibold text-gray-800">${escapeHtml(task.title || task.text || 'Без названия')}</p>
                             <p class="mt-1 text-xs text-gray-500">${escapeHtml(projectMap.get(task.project_id) || 'Объект не указан')}${task.deadline ? ` · Срок: ${formatDate(task.deadline)}` : ''}</p>
                         </button>
                     `).join('') : '<p class="py-3 text-sm text-gray-500">Заданий нет.</p>'}
+                    ${more ? `
+                        <button type="button" data-action="showMoreForemanTasks" data-arg="${group.status}"
+                                class="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-[#15803d] transition hover:bg-emerald-100">
+                            Показать ещё (${tasks.length} из ${total})
+                        </button>
+                    ` : ''}
                 </div>
             </section>
         `;
@@ -547,6 +665,7 @@ function renderMyMaterialOrdersBody() {
     })), materialsFilter, 'setMyMaterialsFilter');
 
     return `${chips}
+        ${foremanOrdersWarning ? `<p class="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-900">${escapeHtml(foremanOrdersWarning)}</p>` : ''}
         <div class="space-y-2">
             ${cards || `<p class="py-3 text-sm text-gray-500">${MATERIAL_EMPTY[materialsFilter] || MATERIAL_EMPTY.all}</p>`}
         </div>
@@ -575,15 +694,29 @@ export function setMyMaterialsFilter(filter) {
  * покажет задачи и заявки на финансирование, а причина останется в консоли.
  */
 async function loadForemanOrders(projectIds) {
-    const { data, error } = await db.select('orders', {
+    // Строки читаются страницами с потолком (db.selectAllPaged): «все заявки по
+    // объектам прораба» одним запросом — это выгрузка. Если строк больше
+    // потолка, предупреждаем в блоке (foremanOrdersWarning), а не теряем часть
+    // заявок молча.
+    const { data, error, fetched, truncated } = await db.selectAllPaged('orders', {
         select: 'id, request_number, project_id, section_id, status, supplier, total_sum, created_at, section:sections ( id, name )',
         filters: { 'project_id.in': projectIds },
-        orderBy: { column: 'created_at', asc: false }
+        orderBy: { column: 'created_at', asc: false },
+        maxRows: FOREMAN_ORDERS_MAX_ROWS
     });
 
     if (error) {
         log.error('Ошибка загрузки заявок на материалы с рабочего экрана:', error.message);
+        foremanOrdersWarning = '';
         return [];
+    }
+
+    if (truncated) {
+        log.error(`Заявок на материалы больше ${FOREMAN_ORDERS_MAX_ROWS}: показаны первые ${fetched}`);
+        foremanOrdersWarning = `⚠ Показаны не все заявки на материалы: загружено ${fetched}, `
+            + `а по вашим объектам их больше ${FOREMAN_ORDERS_MAX_ROWS}. Отработанные заявки можно убрать в архив.`;
+    } else {
+        foremanOrdersWarning = '';
     }
 
     return data || [];
@@ -966,11 +1099,7 @@ export async function loadDashboard() {
         const isForeman = employee?.position === 'Прораб';
 
         if (isForeman) {
-            const [tasksResult, projectsResult] = await Promise.all([
-                db.select('tasks', {
-                    filters: { assignee_employee_id: employee.id },
-                    orderBy: { column: 'created_at', asc: false }
-                }),
+            const [projectsResult] = await Promise.all([
                 db.select('projects', { select: 'id, name, foreman_id', filters: { foreman_id: employee.id } }),
                 // Заявки на финансирование наполняют кэш модуля cash-requests:
                 // из него же открываются карточки заявок (openCashRequestDetail)
@@ -978,15 +1107,23 @@ export async function loadDashboard() {
             ]);
 
             const projects = projectsResult.data || [];
-            const projectIds = new Set(projects.map(project => project.id));
-            const foremanTasks = (tasksResult.data || []).filter(task => projectIds.has(task.project_id));
-            const myCashRequests = getCashRequestsCache().filter(req => req.employee_id === employee.id);
+            const projectIds = projects.map(project => project.id);
 
-            // Заявки на материалы — только по объектам прораба: фильтр уходит в
-            // базу (project_id.in), поэтому чужие закупки сюда не попадут.
-            const myOrders = projectIds.size
-                ? await loadForemanOrders([...projectIds])
-                : [];
+            // Открытие рабочего экрана всегда показывает НАЧАЛО списка задач:
+            // страницы колонок сбрасываются, а «Показать ещё» листает дальше
+            // (см. showMoreForemanTasks).
+            FOREMAN_TASK_STATUSES.forEach(status => { foremanTaskPages[status] = 1; });
+            foremanTaskProjects = projects;
+
+            // Задачи и заявки на материалы — по объектам прораба: фильтры
+            // (project_id.in) уходят в базу, поэтому чужие данные сюда не
+            // попадут, а браузер не получает таблицы целиком.
+            const [, myOrders] = await Promise.all([
+                loadForemanTasks(projectIds, employee.id),
+                projectIds.length ? loadForemanOrders(projectIds) : Promise.resolve([])
+            ]);
+
+            const myCashRequests = getCashRequestsCache().filter(req => req.employee_id === employee.id);
 
             // Данные последнего рендера: из них работают фильтры блоков
             // (window.setMyFinanceFilter / window.setMyMaterialsFilter) —
@@ -1010,8 +1147,8 @@ export async function loadDashboard() {
                          финансирование, 3) заявки на материалы. Второй и третий
                          сворачиваются кнопкой в заголовке («Скрыть»), выбор
                          запоминается в localStorage: см. toggleDashboardBlock(). -->
-                    <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
-                        ${renderForemanTasks(foremanTasks, projects)}
+                    <div id="foreman-tasks" class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
+                        ${renderForemanTasks(projects)}
                     </div>
                     ${renderMyCashRequests()}
                     ${renderMyMaterialOrders()}
@@ -1083,7 +1220,15 @@ export async function loadDashboard() {
         db.select('sections', { select: 'id, project_id, plan_total' }),
         db.select('cash_operations', { filters: { operation_type: 'expense' } }),
         db.select('employee_cash_balance', { select: 'employee_id, balance' }),
-        db.select('tasks', { select: 'id, title, project_id, status, deadline, created_at' }),
+        // Задачи подразделения — страницами с потолком: «все задачи» одним
+        // запросом на каждый показ рабочего экрана — это выгрузка таблицы.
+        // Порядок (свежие сверху) задаёт и страницы: без него база вправе
+        // отдать строки в любом порядке.
+        db.selectAllPaged('tasks', {
+            select: 'id, title, project_id, status, deadline, created_at',
+            orderBy: { column: 'created_at', asc: false },
+            maxRows: DASHBOARD_SUMMARY_MAX_ROWS
+        }),
         db.select('cash_operations', { select: 'id, employee_id, project_id, operation_type, amount, operation_date, created_at', orderBy: { column: 'created_at', asc: false }, limit: 20 }),
         db.select('employees', { select: 'id, name, position' }),
         // Свои заявки на финансирование — блок на рабочем экране (кэш модуля)
@@ -1161,6 +1306,9 @@ export async function loadDashboard() {
 
 window.loadDashboard = loadDashboard;
 window.toggleDashboardBlock = toggleDashboardBlock;
+// «Показать ещё» в колонках задач рабочего экрана прораба (v2.9.0):
+// догружает следующую страницу колонки из базы.
+window.showMoreForemanTasks = showMoreForemanTasks;
 window.openMaterialOverrunDetail = openMaterialOverrunDetail;
 // Фильтры блоков рабочего экрана: «💰 Мои заявки на финансирование»
 // (все / поданы / одобрены / на пересмотр / отклонены / выданы / архив) и

@@ -329,6 +329,29 @@ function applyFilter(query, key, value) {
 }
 
 
+/**
+ * Сортировка запроса.
+ *
+ * Колонка может быть одна ({ column: 'created_at', asc: false }) или несколько
+ * ([{ column: 'entry_at', asc: false }, { column: 'row_key', asc: false }]).
+ * Список нужен там, где одного поля мало: у вида «Реестр материалов» строки
+ * делят одну дату, и без второго поля они «прыгали» бы между страницами
+ * (одна и та же строка пришли бы дважды, а другая — ни разу).
+ */
+function applyOrderBy(query, orderBy) {
+    if (!orderBy) return query;
+
+    const list = Array.isArray(orderBy) ? orderBy : [orderBy];
+    let result = query;
+
+    for (const item of list) {
+        if (!item || !item.column) continue;
+        result = result.order(item.column, { ascending: item.asc !== false });
+    }
+
+    return result;
+}
+
 // =====================================================================
 // УНИВЕРСАЛЬНЫЕ CRUD-ОПЕРАЦИИ
 // =====================================================================
@@ -370,7 +393,7 @@ export async function select(table, options = {}) {
 
         // Сортировка
         if (orderBy) {
-            query = query.order(orderBy.column, { ascending: orderBy.asc !== false });
+            query = applyOrderBy(query, orderBy);
         }
 
         // Лимит
@@ -467,6 +490,8 @@ export function textSearch(columns, text) {
  *
  * @param {string} table
  * @param {Object} options — { select, filters, orderBy, page, pageSize }
+ *        orderBy — { column, asc } ИЛИ список таких объектов: у вида реестра
+ *        одной колонки мало, строки делят дату (см. applyOrderBy).
  * @returns {Promise<{ data, error, count, page, pageSize, totalPages, hasMore, from, to }>}
  *
  * count — сколько строк подходит под фильтр ВСЕГО (null, если база не
@@ -503,7 +528,7 @@ export async function selectPage(table, options = {}) {
         }
 
         if (orderBy) {
-            query = query.order(orderBy.column, { ascending: orderBy.asc !== false });
+            query = applyOrderBy(query, orderBy);
         }
 
         const { data, error, count } = await query.range(from, to);
@@ -585,7 +610,7 @@ export async function selectAllPaged(table, options = {}) {
             }
 
             if (orderBy) {
-                query = query.order(orderBy.column, { ascending: orderBy.asc !== false });
+                query = applyOrderBy(query, orderBy);
             }
 
             const { data, error } = await query.range(from, from + size - 1);
