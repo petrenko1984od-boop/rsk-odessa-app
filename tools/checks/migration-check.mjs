@@ -14,6 +14,20 @@
 //      комментариев).
 //   3. Миграция и database/schema.sql должны описывать одну и ту же схему:
 //      колонки, нужные коду v2.4.0, обязаны быть в обоих файлах.
+//   4. v2.7.0 (migrate-v2.7-rls-finance.sql) включает RLS на финансы: anon-ключ
+//      публичен по дизайну, поэтому политики — единственное, что защищает
+//      cash_requests/cash_operations. Проверяем, что RLS включён И форсирован,
+//      каждая политика сначала снимается (файл запускают повторно), права anon
+//      отобраны, а функции-контекста недоступны роли public. Там же сверяется
+//      матрица прав приложения (js/permissions.js → ROLE_PERMISSIONS) со
+//      списками ролей в политиках: право и политика — два независимых списка, и
+//      расхождение («кнопка есть, а база запись отклоняет») видно только в бою.
+//   5. v2.8.0 (migrate-v2.8-finance-rpc-audit.sql) переносит запись в команды
+//      RPC и закрывает прямой INSERT. Список команд живёт в коде
+//      (js/database.js → RPC), и он обязан совпадать с файлом миграции: опечатка
+//      даёт PGRST202 уже в бою. Тем же блоком стерегутся закрытые прямой записи,
+//      журнал audit_log, ключ идемпотентности и отсутствие прямых insert в
+//      orders/cash_requests в исходниках приложения.
 //
 // Запуск (из папки tools/checks):  node migration-check.mjs
 // Код возврата 1, если есть замечания — удобно для автопроверки перед выкладкой.
@@ -69,8 +83,40 @@ function codeLines(text) {
 const TYPOGRAPHIC = /[\u00AB\u00BB\u2018\u2019\u201A\u201B\u201C\u201D\u201E\u2039\u203A]/u;
 const INVISIBLE = /[\u00A0\u2007\u202F\u200B\u200C\u200D\u2060\uFEFF]/u;
 
+/**
+ * «Готов ли файл к копированию в SQL Editor»: типографские кавычки и невидимые
+ * пробелы (в коде, вне комментариев), баланс скобок и чётное число разделителей
+ * `$$` у do-блоков. Вынести в функцию пришлось после v2.7.0: файлов, которые
+ * администратор копирует целиком, стало три, а такая проверка была написана
+ * только внутри блока v2.6.0.
+ */
+function copyIssues(text) {
+    const typo = codeLines(text).filter((line) => TYPOGRAPHIC.test(line.code));
+    const invisible = codeLines(text).filter((line) => INVISIBLE.test(line.code));
+
+    // Скобки считаем по «голому» SQL: комментарии и строковые литералы
+    // выбрасываем, иначе скобка из подсказки ('ИТОГО (грн)') сломала бы подсчёт.
+    const stripped = linesOf(text)
+        .map((line) => {
+            const comment = line.indexOf('--');
+            return comment === -1 ? line : line.slice(0, comment);
+        })
+        .join('\n')
+        .replace(/'(?:[^']|'')*'/g, "''");
+    const even = (open, close) => stripped.split(open).length === stripped.split(close).length;
+
+    return {
+        typo,
+        invisible,
+        clean: typo.length === 0 && invisible.length === 0 &&
+            even('(', ')') && ((text.match(/\$\$/g) || []).length % 2 === 0),
+        detail: [...typo, ...invisible]
+            .map((line) => line.number + ': ' + line.code.trim().slice(0, 50)).join(' | ')
+    };
+}
+
 function main() {
-    log('Проверка миграции базы: ' + path.relative(ROOT, MIGRATION));
+    log('Проверка миграций базы (v2.4.0 … v2.8.0): ' + path.relative(ROOT, MIGRATION));
 
     if (!fs.existsSync(MIGRATION)) {
         ok('файл миграции существует', false, MIGRATION);
@@ -373,6 +419,284 @@ function main() {
             /'archived'/.test(dashboardJs));
     }
 
+    // --- 3ж. Миграция v2.7.0: RLS на финансы и кассовые операции ---
+    // Повод: anon-ключ Supabase публичен по дизайну, и до v2.7.0 таблицы
+    // cash_requests и cash_operations защищала только «секретность» адреса
+    // проекта. Файл включает RLS, отбирает права у anon и создаёт политики по
+    // ролям; часть из них — ВРЕМЕННЫЕ (прямая запись), их затем снимает v2.8.0.
+    const RLS_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.7-rls-finance.sql');
+    const RLS_TABLES = ['cash_requests', 'cash_operations'];
+    const RLS_POLICY_COUNT = { cash_requests: 6, cash_operations: 9 };
+
+    if (!fs.existsSync(RLS_MIGRATION)) {
+        ok('есть файл database/migrate-v2.7-rls-finance.sql', false, RLS_MIGRATION);
+    } else {
+        const v27 = fs.readFileSync(RLS_MIGRATION, 'utf8');
+
+        ok('v2.7.0: есть функция-контекст сотрудника (id и роль)',
+            /create or replace function public\.rsk_current_employee_id\(\)/.test(v27) &&
+            /create or replace function public\.rsk_current_employee_role\(\)/.test(v27) &&
+            /returns bigint/.test(v27) && /returns text/.test(v27));
+
+        // Считаем только в КОДЕ: слова «SECURITY DEFINER» и «search_path»
+        // встречаются и в комментариях файла — там они объясняют, зачем это.
+        const v27Code = codeLines(v27).map((line) => line.code).join('\n');
+        const definers = (v27Code.match(/security definer/gi) || []).length;
+        const searchPaths = (v27Code.match(/set search_path\s*=\s*pg_catalog,\s*public/gi) || []).length;
+        ok('v2.7.0: функции SECURITY DEFINER с фиксированным search_path',
+            definers >= 2 && searchPaths >= definers,
+            'definer: ' + definers + ', search_path: ' + searchPaths);
+
+        ok('v2.7.0: функции доступны только authenticated (revoke from public + grant execute)',
+            ['rsk_current_employee_id', 'rsk_current_employee_role'].every((fn) =>
+                new RegExp('revoke all on function public\\.' + fn + '\\(\\) from public').test(v27) &&
+                new RegExp('grant execute on function public\\.' + fn + '\\(\\) to authenticated').test(v27)));
+
+        ok('v2.7.0: у anon отобраны права на обе финансовые таблицы',
+            RLS_TABLES.every((table) =>
+                new RegExp('revoke all on table public\\.' + table + ' from anon').test(v27)));
+
+        ok('v2.7.0: RLS включён и форсирован для обеих таблиц (владелец таблицы тоже под политиками)',
+            RLS_TABLES.every((table) =>
+                new RegExp('alter table public\\.' + table + ' enable row level security').test(v27) &&
+                new RegExp('alter table public\\.' + table + ' force row level security').test(v27)));
+
+        const v27Created = (v27.match(/create policy\s+([a-z_0-9]+)/gi) || [])
+            .map((line) => line.replace(/^create policy\s+/i, ''));
+        const v27Dropped = (v27.match(/drop policy if exists\s+([a-z_0-9]+)/gi) || [])
+            .map((line) => line.replace(/^drop policy if exists\s+/i, ''));
+        const v27NotDropped = v27Created.filter((name) => !v27Dropped.includes(name));
+        ok('v2.7.0: каждая политика сначала снимается (drop policy if exists) — файл можно запускать повторно',
+            v27Created.length > 0 && v27NotDropped.length === 0,
+            v27NotDropped.join(', ') || 'политик: ' + v27Created.length);
+
+        const v27Policies = {};
+        RLS_TABLES.forEach((table) => {
+            v27Policies[table] = (v27.match(
+                new RegExp('create policy\\s+\\S+\\s+on public\\.' + table + '\\b', 'g')) || []).length;
+        });
+        ok('v2.7.0: политики покрывают обе таблицы (6 у заявок, 9 у операций)',
+            RLS_TABLES.every((table) => v27Policies[table] === RLS_POLICY_COUNT[table]),
+            RLS_TABLES.map((table) => table + ': ' + v27Policies[table] +
+                '/' + RLS_POLICY_COUNT[table]).join(', '));
+
+        ok('v2.7.0: в конце есть самопроверка (RLS enabled+forced, список политик, права anon)',
+            /relforcerowsecurity/.test(v27) && /from pg_policies/.test(v27) &&
+            /has_table_privilege\('anon'/.test(v27));
+
+        ok('v2.7.0: просит PostgREST перечитать политики (notify pgrst)',
+            /notify\s+pgrst\s*,\s*'reload schema'/i.test(v27));
+
+        const v27Copy = copyIssues(v27);
+        ok('migrate-v2.7-rls-finance.sql чистый для копирования (кавычки, пробелы, скобки, $$)',
+            v27Copy.clean, v27Copy.detail);
+
+        // --- Сверка с матрицей прав приложения (js/permissions.js) ---
+        // Право в коде и роль в политике — два независимых списка, и расхождение
+        // видно только в бою: кнопка есть, а база запись отклоняет («new row
+        // violates row-level security policy»), либо наоборот — политика шире
+        // интерфейса. Проверяем четыре пути ПРЯМОЙ записи (v2.8.0 их не
+        // закрывает, они разрешены политиками v2.7.0):
+        //   * пополнение подотчёта кассой — js/modules/cash.js → addIssue →
+        //     createOperation (operation_type = 'issue'), право cash_issue;
+        //   * расход и возврат «за себя» — addExpenseMulti / addReturn
+        //     (source = 'manual' либо NULL), права cash_expense_self,
+        //     cash_return_self (Финансист может только возврат);
+        //   * закрытие заявки с оплатой из подотчёта — js/modules/orders.js →
+        //     closeOrder (source = 'order'), право process_order.
+        const rolePerms = {};
+        let parsedRole = null;
+        const permsBlock = fs.readFileSync(path.join(ROOT, 'js', 'permissions.js'), 'utf8')
+            .match(/const ROLE_PERMISSIONS = \{([\s\S]*?)\r?\n\};/);
+        if (permsBlock) {
+            linesOf(permsBlock[1]).forEach((line) => {
+                const code = line.replace(/\s*\/\/.*$/, '');
+                const role = code.match(/^\s*'([^']+)':\s*\[/);
+                if (role) { parsedRole = role[1]; rolePerms[parsedRole] = []; return; }
+                const perm = code.match(/^\s*'([a-z_0-9]+)'\s*,?\s*$/);
+                if (perm && parsedRole) rolePerms[parsedRole].push(perm[1]);
+            });
+        }
+
+        const rolesWith = (perm) => Object.keys(rolePerms).filter((role) => rolePerms[role].includes(perm));
+        const policyBlock = (name) => {
+            const start = v27Code.indexOf('create policy ' + name);
+            if (start === -1) return null;
+            const next = v27Code.indexOf('create policy ', start + 1);
+            return v27Code.slice(start, next === -1 ? v27Code.length : next);
+        };
+        const policyRoles = (name) => {
+            const block = policyBlock(name);
+            if (block === null) return null;
+            const list = block.match(/rsk_current_employee_role\(\)\s*in\s*\(([^)]*)\)/);
+            return list ? [...list[1].matchAll(/'([^']+)'/g)].map((match) => match[1]) : [];
+        };
+        const missingRoles = (roles, allowed) => roles.filter((role) => !allowed.includes(role));
+        const sameSet = (a, b) => a.length === b.length && a.every((role) => b.includes(role));
+
+        const cashierPolicyRoles = policyRoles('rsk_cash_operations_insert_cashier');
+        const selfPolicyRoles = policyRoles('rsk_cash_operations_insert_self');
+        const selfBlock = policyBlock('rsk_cash_operations_insert_self') || '';
+        const issueRoles = rolesWith('cash_issue');
+        const expenseRoles = rolesWith('cash_expense_self');
+        const returnRoles = rolesWith('cash_return_self');
+        const processRoles = rolesWith('process_order');
+        const returnAllowed = (selfPolicyRoles || []).concat('Финансист');
+
+        ok('v2.7.0: матрица прав прочитана из js/permissions.js (роли сверяются с политиками)',
+            Object.keys(rolePerms).length >= 6 && issueRoles.length > 0 && expenseRoles.length > 0 &&
+            returnRoles.length > 0 && processRoles.length > 0,
+            'ролей: ' + Object.keys(rolePerms).length + ', cash_issue: ' + issueRoles.join(', '));
+
+        ok('v2.7.0: право cash_issue совпадает с политикой кассы (пополнение подотчёта — прямой записью)',
+            sameSet(issueRoles, cashierPolicyRoles || []),
+            'в коде: ' + issueRoles.join(', ') + ' | в политике: ' +
+                (cashierPolicyRoles || []).join(', '));
+
+        ok('v2.7.0: право cash_expense_self входит в политику расхода «за себя»',
+            missingRoles(expenseRoles, selfPolicyRoles || []).length === 0,
+            missingRoles(expenseRoles, selfPolicyRoles || []).join(', ') || 'все на месте');
+
+        ok('v2.7.0: право cash_return_self входит в политику возврата (у Финансиста только return)',
+            /rsk_current_employee_role\(\) = 'Финансист'/.test(selfBlock) &&
+            missingRoles(returnRoles, returnAllowed).length === 0,
+            missingRoles(returnRoles, returnAllowed).join(', ') || 'все на месте');
+
+        ok('v2.7.0: закрытие заявки с оплатой из подотчёта (process_order) разрешено политикой',
+            missingRoles(processRoles, selfPolicyRoles || []).length === 0,
+            missingRoles(processRoles, selfPolicyRoles || []).join(', ') || 'все на месте');
+
+        ok('v2.7.0: расход из закрытой заявки (source = \'order\') разрешён политикой',
+            /source in \('manual', 'order'\)/.test(selfBlock));
+    }
+
+    // --- 3з. Миграция v2.8.0: транзакционные RPC, закрытый INSERT, audit_log ---
+    // Повод: заявка и её позиции писались из браузера несколькими запросами —
+    // сбой между ними оставлял заявку без позиций, а номер («№ N/YY») считался в
+    // браузере и повторялся у двух одновременных заявок. Файл переносит запись в
+    // SECURITY DEFINER команды, закрывает прямой INSERT в orders/cash_requests и
+    // пишет журнал audit_log с ключом идемпотентности.
+    const RPC_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.8-finance-rpc-audit.sql');
+
+    if (!fs.existsSync(RPC_MIGRATION)) {
+        ok('есть файл database/migrate-v2.8-finance-rpc-audit.sql', false, RPC_MIGRATION);
+    } else {
+        const v28 = fs.readFileSync(RPC_MIGRATION, 'utf8');
+        const v27Text = fs.existsSync(RLS_MIGRATION) ? fs.readFileSync(RLS_MIGRATION, 'utf8') : '';
+        const databaseJs = fs.readFileSync(path.join(ROOT, 'js', 'database.js'), 'utf8');
+
+        // Исходники приложения одним текстом: по ним видно, что прямых insert в
+        // закрытые таблицы больше нигде нет.
+        const appCode = ['js', path.join('js', 'modules')]
+            .flatMap((dir) => fs.readdirSync(path.join(ROOT, dir))
+                .filter((file) => file.endsWith('.js'))
+                .map((file) => fs.readFileSync(path.join(ROOT, dir, file), 'utf8')))
+            .join('\n');
+
+        // Боевой список команд — из кода (js/database.js → RPC), а не из SQL:
+        // именно код зовёт команды по имени.
+        const rpcBlock = databaseJs.match(/export const RPC = \{([\s\S]*?)\};/);
+        const rpcNames = rpcBlock
+            ? [...rpcBlock[1].matchAll(/:\s*'([a-z_0-9]+)'/g)].map((match) => match[1])
+            : [];
+        ok('v2.8.0: команды RPC перечислены в коде в одном месте (js/database.js → RPC)',
+            rpcNames.length === 4, rpcNames.join(', ') || 'RPC не найден');
+
+        const rpcMissing = rpcNames.filter((name) =>
+            !new RegExp('create or replace function public\\.' + name + '\\s*\\(').test(v28));
+        ok('v2.8.0: каждая команда из кода объявлена в файле миграции (иначе PGRST202 «функция не найдена»)',
+            rpcNames.length === 4 && rpcMissing.length === 0,
+            rpcMissing.join(', ') || 'все на месте');
+
+        const rpcPriv = rpcNames.filter((name) =>
+            !(new RegExp('revoke all on function public\\.' + name + '\\b').test(v28) &&
+              new RegExp('grant execute on function public\\.' + name +
+                  '\\b[\\s\\S]{0,160}?to authenticated').test(v28)));
+        ok('v2.8.0: у каждой команды revoke from public и grant execute только authenticated',
+            rpcNames.length === 4 && rpcPriv.length === 0,
+            rpcPriv.join(', ') || 'все на месте');
+
+        ok('v2.8.0: роли anon команды недоступны (execute не выдаётся)',
+            !/grant execute on function[\s\S]{0,160}?to (anon|public)\b/i.test(v28));
+
+        ok('v2.8.0: прямой INSERT в orders и cash_requests закрыт (revoke insert)',
+            /revoke insert on table public\.cash_requests from authenticated/.test(v28) &&
+            /revoke insert on table public\.orders\b[^;]*from anon, authenticated/.test(v28));
+
+        // Обратная проверка: запись операций в cash_operations НЕ закрывается.
+        // Расход, возврат и пополнение подотчёта финансиста клиент пишет прямой
+        // вставкой (js/modules/cash.js → createOperation, заявка на материалы с
+        // оплатой из подотчёта — js/modules/orders.js), а разрешает их RLS v2.7.0.
+        // Если однажды «усилить» и эту таблицу, расходы перестанут сохраняться.
+        const cashOpsPolicies = ['rsk_cash_operations_insert_self', 'rsk_cash_operations_insert_cashier']
+            .filter((policy) => new RegExp('create policy\\s+' + policy + '\\b').test(v27Text));
+        ok('v2.8.0: cash_operations пишется напрямую — политики v2.7.0 на месте, revoke insert нет',
+            cashOpsPolicies.length === 2 &&
+            !/revoke\s+(all|insert)\s+on\s+table\s+public\.cash_operations\b/i.test(v28) &&
+            /insert\('cash_operations'/.test(appCode),
+            cashOpsPolicies.join(', ') || 'в v2.7.0 нет политик вставки в cash_operations');
+
+        // Временные политики прямой записи из v2.7.0 снимаются здесь и не
+        // создаются заново: выдача идёт через issue_cash_request, своя доставка —
+        // через save_own_delivery_expense.
+        // Только финансы: у audit_log своя политика чтения, файл создаёт её заново,
+        // временной она не является.
+        const tempPolicies = [...v28.matchAll(
+            /drop policy if exists\s+([a-z_0-9]+)\s+on public\.(cash_requests|cash_operations)\b/gi)]
+            .map((match) => ({ name: match[1], table: match[2] }));
+        const recreated = tempPolicies.filter((policy) =>
+            new RegExp('create policy\\s+' + policy.name + '\\b', 'i').test(v28));
+        const unknownPolicies = tempPolicies.filter((policy) =>
+            !new RegExp('create policy\\s+' + policy.name + '\\b', 'i').test(v27Text));
+        ok('v2.8.0: снимает временные политики v2.7.0 и не создаёт их заново',
+            tempPolicies.length >= 5 && recreated.length === 0 && unknownPolicies.length === 0,
+            recreated.concat(unknownPolicies).map((policy) => policy.name).join(', ') ||
+                'снято политик: ' + tempPolicies.length);
+
+        ok('v2.8.0: журнал audit_log для клиента только на чтение',
+            /create table if not exists public\.audit_log/.test(v28) &&
+            /revoke all on table public\.audit_log from public, anon, authenticated/.test(v28) &&
+            /grant select on table public\.audit_log to authenticated/.test(v28) &&
+            /alter table public\.audit_log enable row level security/.test(v28) &&
+            /alter table public\.audit_log force row level security/.test(v28));
+
+        ok('v2.8.0: повтор команды не создаёт вторую заявку (уникальный ключ идемпотентности)',
+            /create unique index if not exists audit_log_command_once/.test(v28) &&
+            /on public\.audit_log \(actor_user_id, action, idempotency_key\)/.test(v28) &&
+            /p_idempotency_key uuid/.test(v28));
+
+        const auditCalls = (v28.match(/perform public\.rsk_write_audit\(/g) || []).length;
+        ok('v2.8.0: каждая команда оставляет отметку в журнале (perform rsk_write_audit)',
+            auditCalls >= rpcNames.length,
+            'вызовов: ' + auditCalls + ', команд: ' + rpcNames.length);
+
+        ok('v2.8.0: одна своя доставка на заявку (уникальный индекс + отказ на исторических дублях)',
+            /create unique index if not exists cash_operations_one_own_delivery_per_order/.test(v28) &&
+            /Найдены дубли own_delivery/.test(v28));
+
+        ok('v2.8.0: без применённой v2.7.0 файл останавливается с подсказкой (P0001)',
+            /to_regprocedure\('public\.rsk_current_employee_id\(\)'\)/.test(v28) &&
+            /Сначала примените database\/migrate-v2\.7-rls-finance\.sql/.test(v28));
+
+        ok('v2.8.0: самопроверка перечисляет все команды (exists / authenticated / anon)',
+            /has_function_privilege\('authenticated'/.test(v28) &&
+            /has_function_privilege\('anon'/.test(v28) &&
+            rpcNames.every((name) => new RegExp("\\('" + name + "'").test(v28)));
+
+        ok('v2.8.0: команды зовут через db.rpc, а не прямой записью в orders/cash_requests',
+            !/db\.insert\(\s*['"](orders|cash_requests)['"]/.test(appCode) &&
+            (appCode.match(/db\.rpc\(/g) || []).length >= rpcNames.length,
+            'вызовов db.rpc: ' + (appCode.match(/db\.rpc\(/g) || []).length);
+
+        ok('v2.8.0: каждая команда получает ключ идемпотентности (db.newCommandKey())',
+            (appCode.match(/newCommandKey\(\)/g) || []).length >= rpcNames.length,
+            'ключей: ' + (appCode.match(/newCommandKey\(\)/g) || []).length);
+
+        const v28Copy = copyIssues(v28);
+        ok('migrate-v2.8-finance-rpc-audit.sql чистый для копирования (кавычки, пробелы, скобки, $$)',
+            v28Copy.clean, v28Copy.detail);
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'
@@ -406,7 +730,7 @@ function main() {
 
     log('--- ИТОГ ---');
     log(failed === 0
-        ? '  ВСЁ ВЕРНО: миграция и schema.sql согласованы, SQL защищён от обрыва наполовину'
+        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.8.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
         : '  не прошло проверок: ' + failed);
 }
 

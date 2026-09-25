@@ -26,7 +26,7 @@
 // сотрудники с установленным приложением останутся на старых js/css.
 // =====================================================================
 
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.8.0';
 const CACHE_PREFIX = 'rsk-odessa';
 // Ревизия оболочки — счётчик правок внутри одной версии, часть имени кэша
 // (`rsk-odessa-v2.4.0-r3`, см. README → «Проверка после деплоя»). История:
@@ -107,6 +107,20 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        cash_requests_status_check (добавляет статус 'archived') и колонок
 //        не добавляет, поэтому применяется отдельно от миграций колонок
 //        (database/migrate-v2.6.sql, js/config.js, js/database.js).
+//   v2.8.0 начинается с r1: имя кэша и так меняется вместе с APP_VERSION.
+//   r1 — заявки создаёт БАЗА одной транзакцией, а не браузер несколькими
+//        запросами. Команды create_order_with_items /
+//        create_cash_request_with_items / issue_cash_request /
+//        save_own_delivery_expense пишут заявку, её позиции и операции кассы
+//        вместе и оставляют отметку в audit_log; номер («№ N/YY», «Ф-N/YY»)
+//        присваивается под блокировкой, поэтому две одновременные заявки
+//        больше не получают одинаковый номер. Прямой insert в orders и
+//        cash_requests закрыт (revoke insert), права проверяет база
+//        (database/migrate-v2.7-rls-finance.sql — политики,
+//        database/migrate-v2.8-finance-rpc-audit.sql — команды и права на них,
+//        js/database.js → RPC/rpc(), js/modules/orders.js,
+//        js/modules/cash-requests.js). Позиции новой заявки на материалы
+//        больше не помечаются «оплачено».
 const SHELL_REVISION = 'r1';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 

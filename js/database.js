@@ -9,7 +9,7 @@
 // =====================================================================
 
 import { supabase } from './config.js';
-import { log, currentYear, formatRequestNumber, parseRequestNumber } from './utils.js';
+import { log } from './utils.js';
 
 // =====================================================================
 // ЗАЩИТА ДАННЫХ: UPDATE / DELETE БЕЗ УСЛОВИЙ
@@ -129,12 +129,70 @@ function parseCheckViolation(error) {
     };
 }
 
+// Коды, которыми база отвечает на серверные команды (v2.8.0):
+//   28000 — аккаунт не привязан к активному сотруднику;
+//   42501 — у роли нет права на действие (или не обновлены политики RLS);
+//   22023 — неверный параметр (пустой объект, чужая секция, сумма <= 0);
+//   P0001 — правило бизнес-логики (например, «заявка не одобрена»);
+//   P0002 — объект не найден.
+const RPC_ERROR_CODES = new Set(['28000', '42501', '22023', 'P0001', 'P0002']);
+
+/**
+ * Ошибка серверной команды (RPC, v2.8.0) — понятный текст для сотрудника.
+ *
+ * Нужна отдельно от остальных разборов потому, что здесь причина чаще всего
+ * в САМОЙ БАЗЕ, а не в данных: команду выполняет база и она же отказывает
+ * («Нет права создавать заявку на материалы», «Заявка должна быть в статусе
+ * «Одобрено»»). Тексты база пишет по-русски, поэтому их достаточно показать.
+ *
+ * @returns {string|null} текст ошибки или null, если это не отказ RPC
+ */
+function parseRpcFailure(error) {
+    const message = error?.message || '';
+    const code = String(error?.code || '');
+
+    // PostgREST не нашёл функцию: база не обновлена под v2.8.0. Без этой
+    // подсказки сотрудник читает английское «Could not find the function
+    // public.create_cash_request_with_items(...)» и не знает, что делать.
+    if (code === 'PGRST202' || /could not find the function/i.test(message)) {
+        log.error('⚠ В базе нет серверной команды (RPC) — база не обновлена под v2.8.0');
+        log.error('⚠ Выполните database/migrate-v2.8-finance-rpc-audit.sql в Supabase → SQL Editor.');
+        return 'База данных не обновлена: в ней нет серверной команды, которой приложение создаёт заявки. ' +
+            'Примените database/migrate-v2.8-finance-rpc-audit.sql (Supabase → SQL Editor) и повторите действие.';
+    }
+
+    if (!RPC_ERROR_CODES.has(code)) return null;
+
+    if (code === '42501') {
+        log.error('⚠ База отклонила действие по правам:', message);
+        log.error('⚠ Права выдаёт роль сотрудника (раздел «Сотрудники»); политики баз — database/migrate-v2.7-rls-finance.sql, команды — v2.8.0.');
+        return 'База отклонила действие: у вашей роли нет этого права. ' +
+            'Проверьте роль сотрудника в разделе «Сотрудники». Если роль верная — база не обновлена под v2.7.0/v2.8.0: ' +
+            'примените database/migrate-v2.7-rls-finance.sql и database/migrate-v2.8-finance-rpc-audit.sql (Supabase → SQL Editor).';
+    }
+
+    if (code === '28000') {
+        log.error('⚠ Аккаунт не привязан к активному сотруднику:', message);
+        return `${message}. Откройте раздел «Сотрудники»: запись должна быть активна и привязана к вашему e-mail.`;
+    }
+
+    // Остальные отказы (22023, P0001, P0002) база формулирует по-русски и
+    // адресует сотруднику — показываем их как есть.
+    log.error('⚠ База отклонила команду:', code, message);
+    return message || 'База отклонила действие';
+}
+
 /**
  * Текст ошибки для сотрудника. Для отсутствующей колонки и устаревшего
  * CHECK-ограничения возвращает понятную инструкцию, для остальных —
  * исходное сообщение.
  */
 export function explainError(error) {
+    // Отказ серверной команды (v2.8.0) объясняет сама база, и чаще всего он
+    // не про колонки: показываем её текст (и подсказку про миграцию).
+    const rpcFailure = parseRpcFailure(error);
+    if (rpcFailure) return rpcFailure;
+
     const missing = parseMissingColumn(error);
     if (!missing) {
         // Не колонка — возможно, база отклонила значение по ограничению.
@@ -456,8 +514,9 @@ export async function remove(table, filters) {
  *
  * ⚠️ НЕ используйте count() для нумерации документов (номер заявки + 1):
  * COUNT(*) даёт дубли после удаления записей и в параллельных сессиях.
- * Для номеров берите «максимум за год + 1» и повторяйте запрос при ошибке 23505
- * (см. getNextRequestNumber ниже и generateCashRequestNumber в cash-requests.js).
+ * С v2.8.0 номер документа считает сама база внутри серверной команды
+ * (create_order_with_items / create_cash_request_with_items) — под блокировкой
+ * и в одной транзакции с записью заявки, см. db.rpc() ниже.
  */
 export async function count(table, filters = null) {
     log.db(`COUNT в "${table}"`, filters);
@@ -489,47 +548,119 @@ export async function count(table, filters = null) {
 }
 
 // =====================================================================
-// СПЕЦИАЛЬНЫЕ ФУНКЦИИ
+// СЕРВЕРНЫЕ КОМАНДЫ (RPC) — ТРАНЗАКЦИИ, версия 2.8.0
+// =====================================================================
+// С v2.8.0 заявки и деньги создаёт САМА БАЗА — одной серверной командой
+// (RPC из database/migrate-v2.8-finance-rpc-audit.sql). Почему так:
+//
+//   * заголовок и позиции пишутся в ОДНОЙ транзакции — «заявка без позиций»
+//     или «позиции без заявки» больше невозможны (раньше сбой между двумя
+//     insert оставлял заявку с пустым списком работ);
+//   * номер заявки считает база под блокировкой (pg_advisory_xact_lock),
+//     поэтому две заявки, отправленные одновременно, не получают один и тот
+//     же номер: браузерный «максимум за год + 1» такую коллизию допускал;
+//   * права проверяет база по своей таблице ролей, а не только интерфейс:
+//     кнопку можно спрятать, но запрос к API — нет;
+//   * каждая команда попадает в public.audit_log: кто, что и когда, плюс
+//     ключ идемпотентности — повторный запрос возвращает прежний результат,
+//     а не создаёт вторую заявку.
+//
+// Прямые insert в orders и cash_requests из браузера миграция закрывает
+// (`revoke insert`), поэтому такие записи делаются ТОЛЬКО через db.rpc(...).
 // =====================================================================
 
 /**
- * Возвращает следующий номер заявки в формате "№ 5/26".
- * Логика: считаем все заявки за текущий год + 1.
- *
- * @returns {Promise<{ requestNumber: string, error }>}
+ * Имена серверных команд. Держим их в одном месте: опечатка в строке
+ * приводит к ошибке PGRST202 («функция не найдена») уже в бою, а прогон
+ * tools/checks/migration-check.mjs сверяет список с файлом миграции.
  */
-export async function getNextRequestNumber() {
-    const year = currentYear();
-    const startOfYear = `${year}-01-01T00:00:00`;
-    const startOfNextYear = `${year + 1}-01-01T00:00:00`;
+export const RPC = {
+    CREATE_ORDER: 'create_order_with_items',
+    CREATE_CASH_REQUEST: 'create_cash_request_with_items',
+    ISSUE_CASH_REQUEST: 'issue_cash_request',
+    SAVE_OWN_DELIVERY_EXPENSE: 'save_own_delivery_expense'
+};
 
-    // Берём МАКСИМУМ уже выданных номеров за год, а не COUNT(*):
-    // иначе после удаления заявки номер будет выдан повторно (дубликат).
-    const { data: yearOrders, error } = await select('orders', {
-        select: 'request_number',
-        filters: {
-            'created_at.gte': startOfYear,
-            'created_at.lt': startOfNextYear
-        }
-    });
+/**
+ * Ключ идемпотентности — «номер попытки» серверной команды.
+ *
+ * Зачем: сеть и прокси иногда доставляют запрос дважды, а сотрудник — тем
+ * более не ждёт и нажимает «Создать заявку» второй раз. База по этому ключу
+ * узнаёт повтор и возвращает результат первой попытки вместо второй заявки
+ * или второго расхода кассы (в audit_log ключ уникален).
+ *
+ * Новый ключ — на каждое НАМЕРЕНИЕ пользователя (один клик «Создать»), а не
+ * на каждый сетевой вызов: поэтому повторная отправка того же самого действия
+ * после ошибки должна брать новый ключ.
+ *
+ * База ждёт тип uuid, поэтому форма ключа — ровно RFC 4122 версия 4.
+ * crypto.randomUUID() доступен только в защищённом контексте (https или
+ * localhost), а приложение открывают и по http://192.168.* — поэтому UUID
+ * собираем из случайных байт, это работает везде.
+ *
+ * @returns {string} ключ вида '3f9c1a52-...-9b7e-2c1d4f6a8b90'
+ */
+export function newCommandKey() {
+    const bytes = new Uint8Array(16);
 
-    if (error) {
-        log.error('Не удалось получить следующий номер заявки:', error.message);
-        return { requestNumber: null, error };
+    try {
+        crypto.getRandomValues(bytes);
+    } catch {
+        // Экзотика (нет Web Crypto): ключ нужен только против случайного
+        // повтора, криптостойкость здесь не требуется.
+        for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
     }
 
-    let maxNumber = 0;
-    (yearOrders || []).forEach(order => {
-        const parsed = parseRequestNumber(order.request_number);
-        if (parsed && parsed.year === year && parsed.number > maxNumber) {
-            maxNumber = parsed.number;
-        }
-    });
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;   // версия 4
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;   // вариант RFC 4122
 
-    const nextNumber = maxNumber + 1;
-    const requestNumber = formatRequestNumber(nextNumber, year);
-    log.db(`Следующий номер заявки: ${requestNumber}`);
-    return { requestNumber, error: null };
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * Выполнить серверную команду (RPC).
+ *
+ * Возвращает { data, error } — как остальные функции слоя. Прямые вставки
+ * в orders/cash_requests с v2.8.0 базой запрещены: единственный путь —
+ * эта функция.
+ *
+ * @param {string} fnName — имя команды (см. RPC выше)
+ * @param {object} params — параметры команды (p_*)
+ * @param {{ idempotencyKey?: string }} options — ключ идемпотентности
+ *        (newCommandKey()). Без него база отклонит команду, поэтому
+ *        передавайте его всегда: `{ idempotencyKey: db.newCommandKey() }`.
+ */
+export async function rpc(fnName, params = {}, { idempotencyKey = null } = {}) {
+    const body = { ...params };
+
+    if (idempotencyKey) body.p_idempotency_key = idempotencyKey;
+
+    log.db(`RPC "${fnName}"`, body);
+
+    try {
+        const { data, error } = await supabase.rpc(fnName, body);
+
+        if (error) {
+            log.error(`Ошибка RPC "${fnName}":`, error.message);
+            return { data: null, error };
+        }
+
+        // Пустой ответ (шлюз без тела) — это НЕ успех: неизвестно, применилась
+        // ли транзакция. Возвращаем ошибку, чтобы вызывающий код показал
+        // понятный текст, а не упал на чтении data.request_number.
+        if (!data || typeof data !== 'object') {
+            const empty = new Error(`База не вернула результат команды «${fnName}». Повторите попытку.`);
+            log.error(empty.message);
+            return { data: null, error: empty };
+        }
+
+        return { data, error: null };
+
+    } catch (err) {
+        log.error(`Исключение в RPC "${fnName}":`, err);
+        return { data: null, error: err };
+    }
 }
 
 // =====================================================================
@@ -660,8 +791,11 @@ export const db = {
     update,
     remove,
     count,
+    // Серверные команды (транзакции, версия 2.8.0)
+    rpc,
+    RPC,
+    newCommandKey,
     // Специальные
-    getNextRequestNumber,
     explainError,
     // Storage
     uploadFile,

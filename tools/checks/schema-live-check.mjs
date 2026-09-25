@@ -18,6 +18,17 @@
 // ⚠️ Прогон НИЧЕГО не пишет в базу: только чтение (select ... limit=1),
 //    поэтому запускать его на боевой базе можно в любой момент.
 //
+// ⚠️ С миграцией v2.7.0 финансовые таблицы закрыты для ключа `anon`
+//    (`revoke` + RLS), а ключ в приложении — именно анонимный. Поэтому
+//    `cash_operations` отвечает 401 / 42501 («permission denied»): это НЕ
+//    «миграция не применена», а доказательство, что защита на месте. Такие
+//    колонки прогон помечает как непроверенные (`note`) и не считает их
+//    пропажей — колонки RLS-таблиц смотрите запросом в SQL Editor. Заодно
+//    прогон отдельно проверяет по живой базе: `cash_requests` и
+//    `cash_operations` закрыты для anon (v2.7.0), а таблица журнала
+//    `audit_log` существует (v2.8.0) — до её применения PostgREST отвечает
+//    404 / PGRST205.
+//
 // Запуск (из папки tools/checks):  node schema-live-check.mjs
 // Адрес и ключ берутся из js/config.js — те же, что у приложения. Другой
 // проект можно проверить, не правя файл:
@@ -97,6 +108,10 @@ const REQUIRED = [
 // explainError(). Строк может не быть вовсе (200 и []) — колонка при этом
 // существует, и для нас это главное.
 const MISSING_COLUMN_ERROR = /42703|PGRST204/i;
+// Таблица закрыта для ключа anon (RLS/revoke, v2.7.0) — это не пропажа колонки.
+const PERMISSION_DENIED = /42501|PGRST301|permission denied/i;
+// Таблицы нет вовсе (PostgREST её не знает) — так выглядит неприменённый файл.
+const MISSING_TABLE = /PGRST205|42P01|could not find the table/i;
 
 async function askColumn(conn, table, column) {
     const url = `${conn.url}/rest/v1/${table}?select=${encodeURIComponent(column)}&limit=1`;
@@ -115,10 +130,43 @@ async function askColumn(conn, table, column) {
         message = parsed.message || text;
     } catch { /* не JSON — покажем ответ как есть */ }
 
+    const info = `${response.status} ${code} ${message}`.trim();
+
     return {
         exists: false,
+        // Колонку нельзя проверить анонимным ключом: таблица закрыта RLS.
+        closed: PERMISSION_DENIED.test(`${code} ${message}`),
         known: MISSING_COLUMN_ERROR.test(`${code} ${message}`),
-        info: `${response.status} ${code} ${message}`.trim()
+        tableMissing: MISSING_TABLE.test(`${code} ${message}`),
+        info
+    };
+}
+
+/** Таблица вообще есть в базе? (200 — есть и читается, 42501 — есть, но закрыта). */
+async function askTable(conn, table) {
+    const response = await fetch(`${conn.url}/rest/v1/${table}?select=id&limit=1`, {
+        headers: { apikey: conn.key, Authorization: `Bearer ${conn.key}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(20000)
+    });
+    if (response.ok) return { exists: true, info: '200' };
+
+    const text = await response.text();
+    let code = '';
+    let message = text;
+    try {
+        const parsed = JSON.parse(text);
+        code = parsed.code || '';
+        message = parsed.message || text;
+    } catch { /* не JSON — покажем ответ как есть */ }
+
+    const info = `${response.status} ${code} ${message}`.trim();
+    const denied = PERMISSION_DENIED.test(`${code} ${message}`);
+
+    return {
+        exists: denied,
+        denied,
+        missing: MISSING_TABLE.test(`${code} ${message}`),
+        info
     };
 }
 
@@ -158,12 +206,18 @@ function instructions(conn, missing) {
 
 
 // --- Прогон -----------------------------------------------------------
-function finish(code) {
+function finish(code, unchecked = 0) {
     log('');
     log('--- ИТОГ ---');
     log(code === 0
         ? '  ВСЁ ВЕРНО: база обновлена — колонки v2.4.0 и v2.5.0 на месте'
         : '  не прошло проверок: ' + failed);
+    if (unchecked) {
+        log('  Ключом anon не проверить колонок: ' + unchecked +
+            ' — таблицы закрыты RLS (v2.7.0, это правильно).');
+        log('  Их смотрите запросом в SQL Editor (database/README.md → «Как применить'
+            + ' migrate-v2.7-rls-finance.sql»).');
+    }
 
     const outDir = path.join(os.tmpdir(), 'rsk-fin');
     try {
@@ -224,11 +278,13 @@ async function main() {
     }
 
     const missing = [];
+    const skipped = [];
 
     for (const group of REQUIRED) {
         log('');
         log(`── v${group.version} — ${group.why} (${group.file}) ──`);
         let present = 0;
+        let unchecked = 0;
 
         for (const [table, column] of group.pairs) {
             let answer;
@@ -239,27 +295,82 @@ async function main() {
                 continue;
             }
 
-            if (answer.exists) present += 1;
-            else missing.push({ group, table, column });
+            if (answer.exists) {
+                present += 1;
+                ok(`${table}.${column}`, true);
+                continue;
+            }
 
-            ok(`${table}.${column}`, answer.exists,
-                answer.exists
-                    ? ''
-                    : (answer.known
-                        ? `колонки нет — примените ${group.file}`
-                        : `неожиданный ответ базы: ${answer.info}`));
+            // Таблица закрыта RLS (v2.7.0 + `revoke` для anon): анонимным ключом
+            // колонку не увидеть. Это не «миграция не применена» — колонку
+            // смотрят запросом в SQL Editor (см. database/README.md).
+            if (answer.closed) {
+                unchecked += 1;
+                skipped.push({ group, table, column });
+                log(`  note ${table}.${column} — таблица закрыта для anon (RLS v2.7.0), ` +
+                    `колонку проверяет SQL Editor :: ${answer.info}`);
+                continue;
+            }
+
+            missing.push({ group, table, column });
+            ok(`${table}.${column}`, false,
+                answer.known
+                    ? `колонки нет — примените ${group.file}`
+                    : `неожиданный ответ базы: ${answer.info}`);
         }
 
-        const partial = present > 0 && present < group.pairs.length;
-        log(`  колонок v${group.version} на месте: ${present} из ${group.pairs.length}` +
+        const checked = group.pairs.length - unchecked;
+        const partial = present > 0 && present < checked;
+        log(`  колонок v${group.version} на месте: ${present} из ${checked}` +
+            (unchecked ? ` (ещё ${unchecked} не проверить ключом anon — таблица под RLS)` : '') +
             (partial
                 ? ' — миграция применилась НАПОЛОВИНУ: запустите файл ещё раз целиком'
-                : (present === 0 ? ' — миграция не применена' : '')));
+                : (checked > 0 && present === 0 ? ' — миграция не применена' : '')));
     }
+
+    // --- Живая проверка защиты и команд (v2.7.0 / v2.8.0) ---------------
+    // Ключ в приложении анонимный, поэтому здесь видно ровно то, что
+    // защищает RLS: финансовые таблицы обязаны быть ЗАКРЫТЫ, а журнал команд
+    // из v2.8.0 — существовать. До v2.7.0 обе таблицы отвечали 200, то есть
+    // любой желающий с ключом из исходников читал чужие заявки и кассу.
+    log('');
+    log('── Защита финансов и журнал команд (v2.7.0 / v2.8.0) ──');
+
+    for (const table of ['cash_requests', 'cash_operations']) {
+        let answer;
+        try {
+            answer = await askTable(conn, table);
+        } catch (error) {
+            ok(`${table} — таблица не ответила`, false, error.message);
+            continue;
+        }
+
+        ok(`v2.7.0: public.${table} закрыта для anon (RLS/revoke применены)`,
+            answer.denied,
+            answer.denied
+                ? answer.info
+                : `таблица открыта ключу из исходников (${answer.info}) — примените database/migrate-v2.7-rls-finance.sql`);
+    }
+
+    let auditLog;
+    try {
+        auditLog = await askTable(conn, 'audit_log');
+    } catch (error) {
+        auditLog = { exists: false, info: 'запрос не прошёл: ' + error.message };
+    }
+
+    ok('v2.8.0: журнал public.audit_log создан (иначе PostgREST отвечает 404 / PGRST205)',
+        auditLog.exists,
+        auditLog.exists
+            ? auditLog.info
+            : `журнала нет — примените database/migrate-v2.8-finance-rpc-audit.sql :: ${auditLog.info}`);
 
     if (missing.length) instructions(conn, missing);
 
-    finish(missing.length ? 1 : 0);
+    // Код возврата считаем по счётчику проверок, а не по числу колонок: прогон
+    // проверяет ещё и защиту (v2.7.0) и журнал команд (v2.8.0) — «FAIL» там
+    // тоже обязан вернуть 1, иначе автопроверка перед выкладкой промолчит.
+    finish(failed ? 1 : 0, skipped.length);
 }
 
 await main();

@@ -670,7 +670,7 @@ begin
         raise exception using errcode = 'P0002', message = 'Финансовая заявка не найдена';
     end if;
     if request_before.status <> 'approved' then
-        raise exception using errcode = 'P0001', message = 'Заявка должна быть в статусе «Одобрено»';
+        raise exception using errcode = 'P0001', message = 'Заявка должна быть в статусе "Одобрено"';
     end if;
     if request_before.total_sum is null or request_before.total_sum <= 0 then
         raise exception using errcode = '22023', message = 'Сумма заявки должна быть больше нуля';

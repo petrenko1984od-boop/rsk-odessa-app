@@ -1,12 +1,17 @@
 // =====================================================================
-// Почему не сохраняется заявка финансов — воспроизведение в браузере.
+// Почему не сохраняется заявка — воспроизведение в браузере.
 // Приложение отдаётся с локального сервера, «Supabase» подменён моком,
 // поэтому видно, что именно делает интерфейс при разных ответах базы.
 //
+// С v2.8.0 заявку создаёт БАЗА одной командой (RPC), поэтому мок отвечает
+// вместо create_cash_request_with_items / create_order_with_items, а прямой
+// INSERT в orders и cash_requests отклоняет, как и боевая база (revoke insert).
+//
 // Сценарии (переменная окружения SCENARIO):
-//   A — база приняла запись (201 + строка)          → ожидаем успех;
-//   B — RLS не пускает (401 + 42501)                → ожидаем понятную ошибку;
-//   C — база ответила 201 без тела (пустой ответ)   → проверяем, не зависает ли UI.
+//   A — команда выполнена (200 + объект)            → ожидаем успех;
+//   B — база отклонила по правам (403 + 42501)      → ожидаем понятную ошибку;
+//   C — база ответила 200 без тела (пустой ответ)   → проверяем, не зависает ли UI.
+// Поток: FLOW=finance — заявка на работы, FLOW=order — заявка на материалы.
 // =====================================================================
 import http from 'node:http';
 import fs from 'node:fs';
@@ -23,7 +28,22 @@ const ROOT = process.env.APP_ROOT
 const PORT = 8123;
 const CDP_PORT = 9337;
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PROFILE = path.join(os.tmpdir(), 'rsk-fin', 'chrome-profile');
+// Профиль Chrome. Папку прошлого прогона на Windows может не отпустить
+// система: процессы Chrome (renderer, crashpad) живут ещё несколько секунд
+// после kill, и rmSync падает с EPERM. Поэтому при отказе удаления берём
+// отдельную папку для этого прогона — прогон не должен падать из-за профиля.
+function prepareProfile(dir) {
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return dir;
+    } catch {
+        const fallback = dir + '-' + process.pid;
+        console.log('  профиль Chrome занят (' + dir + ') — использую ' + fallback);
+        return fallback;
+    }
+}
+
+let PROFILE = path.join(os.tmpdir(), 'rsk-fin', 'chrome-profile');
 const SCENARIO = process.env.SCENARIO || 'A';
 const FLOW = process.env.FLOW || 'finance';   // 'finance' — заявка на работы, 'order' — на материалы
 
@@ -39,6 +59,9 @@ const requests = [];
 const createdCashRequests = [];
 const createdOrders = [];
 const createdOrderItems = [];
+// Прямые INSERT в orders и cash_requests база с v2.8.0 отклоняет (revoke insert):
+// сюда попадает всё, что приложение пишет в них напрямую, и валит прогон.
+const directInserts = [];
 const report = [];
 const log = (...a) => { const line = a.join(' '); report.push(line); console.log(line); };
 
@@ -74,6 +97,85 @@ const SESSION = {
     }
 };
 
+// -------------------- серверные команды (RPC, v2.8.0) --------------------
+// Заявку создаёт БАЗА одной командой: прямой INSERT в orders и cash_requests
+// закрыт (revoke insert), поэтому приложение зовёт create_*_with_items.
+// Ответы повторяют PostgREST: успех — JSON-объект, отказ — тело с кодом.
+const YEAR_SHORT = String(new Date().getFullYear()).slice(-2);
+const round2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
+// Номер заявки база присваивает сама под блокировкой («№ N/YY», «Ф-N/YY»).
+// В моке — максимум по текущему году + 1, как в migrate-v2.8-finance-rpc-audit.sql.
+function nextNumber(prefix, numbers) {
+    const pattern = new RegExp('^' + prefix + '([0-9]+)/' + YEAR_SHORT + '$');
+    const max = numbers.reduce((acc, value) => {
+        const parts = pattern.exec(String(value || ''));
+        return parts ? Math.max(acc, Number(parts[1])) : acc;
+    }, 0);
+    return prefix + (max + 1) + '/' + YEAR_SHORT;
+}
+
+function handleRpc(fnName, body, res) {
+    const params = JSON.parse(body || '{}');
+    log('    [мок] RPC ' + fnName + ' (' + SCENARIO + ') ' + JSON.stringify(params).slice(0, 200));
+
+    // Сценарий B: база отклонила команду по правам (нет роли / не применены
+    // политики RLS). PostgREST отвечает телом с кодом 42501.
+    if (SCENARIO === 'B') {
+        return sendJson(res, 403, {
+            code: '42501', message: 'permission denied for function ' + fnName,
+            details: null, hint: null
+        });
+    }
+    // Сценарий C: база ответила 200, но без тела — итог транзакции неизвестен.
+    if (SCENARIO === 'C') {
+        log('    [мок] RPC ответила 200 с пустым телом (итог транзакции неизвестен)');
+        return sendJson(res, 200, null);
+    }
+
+    if (fnName === 'create_cash_request_with_items') {
+        const items = Array.isArray(params.p_items) ? params.p_items : [];
+        const totalSum = round2(items.reduce((sum, it) => sum + round2(it.qty) * round2(it.unit_price), 0));
+        const requestNumber = nextNumber('Ф-', createdCashRequests);
+        createdCashRequests.push(requestNumber);
+        log('    [мок] RPC create_cash_request_with_items → ' + requestNumber +
+            ' на ' + totalSum + ' (' + items.length + ' поз., номер присвоила база)');
+        return sendJson(res, 200, {
+            request_id: 42 + createdCashRequests.length - 1,
+            request_number: requestNumber,
+            status: 'pending',
+            total_sum: totalSum,
+            items_count: items.length
+        });
+    }
+
+    if (fnName === 'create_order_with_items') {
+        const items = Array.isArray(params.p_items) ? params.p_items : [];
+        const requestNumber = nextNumber('№ ', createdOrders);
+        createdOrders.push(requestNumber);
+        // Позиции заявки на материалы база хранит без цен и без статуса оплаты:
+        // заявка ещё не оплачена (на этом стоит проверка ниже).
+        createdOrderItems.push(...items.map((it) => ({
+            order_id: 77 + createdOrders.length - 1,
+            name: it.name, unit: it.unit, qty: it.qty
+        })));
+        log('    [мок] RPC create_order_with_items → ' + requestNumber +
+            ' (' + items.length + ' поз., номер присвоила база)');
+        return sendJson(res, 200, {
+            order_id: 77 + createdOrders.length - 1,
+            request_number: requestNumber,
+            status: 'new',
+            items_count: items.length
+        });
+    }
+
+    log('    [мок] неизвестная серверная команда: ' + fnName);
+    return sendJson(res, 400, {
+        code: 'PGRST202', message: 'Could not find the function public.' + fnName,
+        details: null, hint: null
+    });
+}
+
 function handleMock(req, res, body) {
     const url = new URL(req.url, 'http://127.0.0.1');
     const p = url.pathname;
@@ -87,6 +189,9 @@ function handleMock(req, res, body) {
     if (p.includes('/auth/v1/token')) return sendJson(res, 200, SESSION);
     if (p.includes('/auth/v1/user')) return sendJson(res, 200, SESSION.user);
     if (p.includes('/auth/v1/logout')) return sendJson(res, 204, null);
+
+    // ---- Серверные команды (RPC, v2.8.0) ----
+    if (p.includes('/rest/v1/rpc/')) return handleRpc(p.split('/rest/v1/rpc/')[1], body, res);
 
     // ---- employees (нужен для входа и прав) ----
     if (p.includes('/rest/v1/employees')) {
@@ -111,8 +216,8 @@ function handleMock(req, res, body) {
         return sendJson(res, 200, []);
     }
 
-    // Номера выданных заявок: приложение считает следующий номер от максимума,
-    // поэтому мок запоминает созданное и отдаёт это на чтение.
+    // Номера созданных заявок возвращает серверная команда; мок их помнит и
+    // отдаёт на чтение — так же, как это сделала бы база.
     if (p.includes('/rest/v1/cash_requests') && req.method === 'GET') {
         log('    [мок] GET cash_requests → отдаю номера ' + JSON.stringify(createdCashRequests));
         return sendJson(res, 200, createdCashRequests.map((n) => ({ request_number: n })));
@@ -121,26 +226,28 @@ function handleMock(req, res, body) {
         return sendJson(res, 200, createdOrders.map((n) => ({ request_number: n })));
     }
 
-    // ---- Сохранение заявки финансов ----
-    if (p.includes('/rest/v1/cash_requests') && req.method === 'POST') {
-        const payload = JSON.parse(body || '{}');
-        createdCashRequests.push(payload.request_number);
-        return sendJson(res, 201, { id: 42 + createdCashRequests.length - 1, ...payload });
-    }
-
-    // ---- Сохранение заявки на материалы ----
-    if (p.includes('/rest/v1/orders') && req.method === 'POST') {
-        const payload = JSON.parse(body || '{}');
-        createdOrders.push(payload.request_number);
-        return sendJson(res, 201, { id: 77 + createdOrders.length - 1, ...payload });
+    // ---- Прямая запись заявки: база её запрещает (revoke insert) ----
+    // Раньше приложение само вставляло заявку в таблицу. С v2.8.0 это делает
+    // серверная команда, а прямой INSERT база отклоняет — мок отвечает так же,
+    // чтобы возврат к старой схеме был виден сразу (проверка в конце прогона).
+    if (req.method === 'POST' && (p.includes('/rest/v1/cash_requests') || p.includes('/rest/v1/orders'))) {
+        const table = p.includes('/rest/v1/orders') ? 'orders' : 'cash_requests';
+        directInserts.push('POST ' + p + ' ' + String(body || '').slice(0, 140));
+        log('    [мок] ⚠ ПРЯМАЯ ЗАПИСЬ в ' + table + ' — база отвечает отказом (revoke insert)');
+        return sendJson(res, 403, {
+            code: '42501', message: 'permission denied for table ' + table,
+            details: null, hint: null
+        });
     }
 
     // ---- Позиции заявки на материалы ----
-    // Запоминаем, что именно приложение пишет в позиции: оплата в них не
-    // должна проставляться при создании заявки (см. проверку ниже).
+    // Через прямую запись позиции приложение больше не пишет: их создаёт
+    // команда create_order_with_items (см. handleRpc). Ветка оставлена, чтобы
+    // старая схема была видна в отчёте.
     if (p.includes('/rest/v1/order_items') && req.method === 'POST') {
         const payload = JSON.parse(body || '{}');
         createdOrderItems.push(...(Array.isArray(payload) ? payload : [payload]));
+        log('    [мок] ⚠ позиции заявки пишутся напрямую — их должна создать серверная команда');
         return sendJson(res, 201, payload);
     }
 
@@ -231,7 +338,7 @@ try {
     await new Promise((resolve) => server.listen(PORT, '127.0.0.1', resolve));
     log('Сценарий: ' + SCENARIO + ' | приложение: http://127.0.0.1:' + PORT + ' (Supabase → мок)');
 
-    fs.rmSync(PROFILE, { recursive: true, force: true });
+    PROFILE = prepareProfile(PROFILE);
     chrome = spawn(CHROME, [
         '--headless=new', '--remote-debugging-port=' + CDP_PORT,
         '--user-data-dir=' + PROFILE, '--no-first-run', '--no-default-browser-check',
@@ -345,7 +452,10 @@ try {
     };
 
     const formId = FLOW === 'finance' ? '#new-cashreq-form' : '#new-order-form';
-    const target = FLOW === 'finance' ? '/cash_requests' : '/orders';
+    // Заявку создаёт серверная команда: её и считаем «отправленным запросом».
+    const target = FLOW === 'finance'
+        ? '/rest/v1/rpc/create_cash_request_with_items'
+        : '/rest/v1/rpc/create_order_with_items';
     const stateExpr = `(() => {
         const btn = document.querySelector('${formId} button[type="submit"]');
         const toasts = [...document.body.children]
@@ -388,8 +498,19 @@ try {
         ok('попытка ' + a.n + ': заявка отправлена в базу', a.sent === 1, 'запросов: ' + a.sent);
         ok('попытка ' + a.n + ': кнопка вернулась в рабочее состояние',
             a.disabled === false && a.btn === '💾 Создать заявку', 'кнопка="' + a.btn + '", disabled=' + a.disabled);
-        ok('попытка ' + a.n + ': показано подтверждение', a.done === true);
+
+        // Сценарий A — база приняла команду. B (нет прав) и C (пустой ответ) —
+        // заявки нет, но сотрудник должен получить понятное объяснение, а не
+        // «зависшую» кнопку.
+        const explained = a.toasts.some((t) => t.includes('Не удалось создать заявку'));
+        ok('попытка ' + a.n + ': ' + (SCENARIO === 'A' ? 'показано подтверждение' : 'объяснена причина отказа'),
+            SCENARIO === 'A' ? a.done === true : (!a.done && explained),
+            'уведомления=' + JSON.stringify(a.toasts));
     });
+
+    // Заявки создаёт только серверная команда: прямой INSERT база отклоняет.
+    ok('заявка создаётся серверной командой, а не прямой записью в таблицу',
+        directInserts.length === 0, directInserts.join(' | '));
 
     if (FLOW === 'order') {
         // Регрессия (жалоба «в карточке новой заявки стоит “Оплачено”»): новая
@@ -399,11 +520,20 @@ try {
             JSON.stringify(createdOrderItems));
     }
 
-    log('  ИТОГО: ' + (failed === 0 ? 'ВСЁ ВЕРНО — обе заявки ушли, кнопка не залипает' : failed + ' проверок не прошло'));
+    log('  ИТОГО: ' + (failed === 0
+        ? (SCENARIO === 'A'
+            ? 'ВСЁ ВЕРНО — обе заявки ушли, кнопка не залипает'
+            : 'ВСЁ ВЕРНО — отказ базы объяснён сотруднику, кнопка не залипает')
+        : failed + ' проверок не прошло'));
 
-    log('  созданные заявки в моке: ' + JSON.stringify(FLOW === 'finance' ? createdCashRequests : createdOrders));
-    log('  запросы приложения к нужной таблице: ' +
-        JSON.stringify(requests.filter((r) => r.target.includes(target) || r.target.includes('request_number')).map((r) => r.method + ' ' + r.target.split('?')[0] + (r.body ? ' ' + String(r.body).slice(0, 60) : ''))));
+    log('  созданные заявки в моке: ' + JSON.stringify(FLOW === 'finance' ? createdCashRequests : createdOrders) +
+        ' (номер присваивает база, в браузере он не считается)');
+    log('  записи приложения в базу: ' +
+        JSON.stringify(requests.filter((r) => r.method !== 'GET' && r.method !== 'OPTIONS')
+            .map((r) => r.method + ' ' + r.target.split('?')[0] +
+                (r.body ? ' ' + String(r.body).slice(0, 70) : ''))));
+    log('  прямых записей в orders/cash_requests (база их запрещает): ' +
+        (directInserts.length ? directInserts.join(' | ') : 'нет'));
     log('  ошибки/исключения в консоли: ' + (consoleErrors.length ? '\n    ' + consoleErrors.join('\n    ') : 'нет'));
 } catch (error) {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));

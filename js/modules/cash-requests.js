@@ -17,6 +17,17 @@
 // cash_requests.status в боевой базе стоит CHECK-ограничение со списком
 // статусов, и без миграции база отклонит запись (ошибка 23514).
 //
+// С v2.8.0 заявка СОЗДАЁТСЯ и ВЫДАЁТСЯ серверной командой (RPC из
+// database/migrate-v2.8-finance-rpc-audit.sql):
+//   create_cash_request_with_items() — номер «Ф-N/YY», заявка и её позиции
+//        одной транзакцией + запись в audit_log;
+//   issue_cash_request() — выдача: приход получателю, списание с подотчёта
+//        финансиста, статус «Выдано» и ссылка на операцию. Раньше это были
+//        три отдельных запроса из браузера, и сбой между ними оставлял
+//        деньги выданными, а заявку — «Одобренной».
+// Прямой insert в cash_requests миграция закрывает (revoke insert), поэтому
+// такие записи делаются только через db.rpc(...).
+//
 // Причина возврата и причина отказа хранятся в одной колонке
 // rejection_reason: смысл однозначен по статусу заявки, а новой колонки
 // и миграции базы не требуется. При повторной отправке причина стирается.
@@ -33,7 +44,7 @@
 //     У финансиста сумма списывается с ЕГО подотчёта.
 // =====================================================================
 
-import { db } from '../database.js';
+import { db, RPC } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatMoney, parseNumber, roundMoney,
@@ -996,7 +1007,7 @@ export async function saveNewCashRequest(event) {
     // сохранения она оставалась «Сохраняем...» и выключенной, поэтому
     // следующая попытка молча не отправлялась — форма выглядела зависшей.
     try {
-        const saved = await createCashRequest(form, emp);
+        const saved = await createCashRequest(form);
         if (saved) {
             await loadCashRequests();   // список обновляем после закрытия окна
             await refreshDashboardIfVisible();
@@ -1019,7 +1030,7 @@ export async function saveNewCashRequest(event) {
  * Возвращает true, если заявка сохранена. Кнопку не трогает — это дело
  * saveNewCashRequest, иначе при сбое она осталась бы выключенной.
  */
-async function createCashRequest(form, emp) {
+async function createCashRequest(form) {
     const projectId = parseInt(document.getElementById('new-cashreq-project').value, 10);
     const sectionId = parseInt(document.getElementById('new-cashreq-section').value, 10);
     const comment = document.getElementById('new-cashreq-comment').value.trim();
@@ -1050,71 +1061,31 @@ async function createCashRequest(form, emp) {
         });
     }
 
-    // Номер заявки генерируем от МАКСИМУМА за год, а не от COUNT(*):
-    // COUNT ломается при удалении заявок и в параллельных сессиях.
-    let requestNumber = await generateCashRequestNumber();
+    // С v2.8.0 заявку создаёт БАЗА одной командой: номер «Ф-N/YY» под
+    // блокировкой, проверка прав и объекта, запись заявки и её позиций в одной
+    // транзакции, отметка в audit_log. Раньше это делал браузер тремя
+    // запросами: номер был «максимум за год + 1» (два одновременных создания
+    // получали один и тот же), а сбой между запросами оставлял заявку без
+    // позиций. Прямой insert в cash_requests миграция v2.8.0 закрывает.
+    const { data, error } = await db.rpc(RPC.CREATE_CASH_REQUEST, {
+        p_project_id: projectId,
+        p_section_id: sectionId,
+        p_comment: comment || null,
+        p_items: items
+    }, { idempotencyKey: db.newCommandKey() });
 
-    // Создаём заявку. При коллизии номера (UNIQUE 23505) — пробуем ещё раз.
-    let reqData = null;
-    let reqError = null;
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        const requestPayload = {
-            request_number: requestNumber,
-            project_id: projectId,
-            section_id: sectionId,
-            employee_id: emp.id,
-            total_sum: totalSum,
-            comment: comment || null,
-            status: 'pending'
-        };
-
-        const result = await db.insert('cash_requests', requestPayload);
-        reqData = result.data;
-        reqError = result.error;
-
-        if (!reqError) break;
-        if (reqError.code !== '23505') break;
-
-        log.warn(`Номер ${requestNumber} уже занят, повторная попытка...`);
-        requestNumber = await generateCashRequestNumber();
-    }
-
-    if (reqError) {
-        log.error('Ошибка создания заявки:', reqError.message);
-        toast('Не удалось создать заявку: ' + reqError.message, 'error');
+    if (error) {
+        log.error('Ошибка создания заявки:', error.message);
+        toast('Не удалось создать заявку: ' + db.explainError(error), 'error');
         return false;
     }
 
-    // База может не вернуть созданную строку — например, если прокси отдал
-    // ответ без тела. Без проверки здесь был бы TypeError, а кнопка молча
-    // оставалась бы «Сохраняем...» и следующая попытка не отправлялась.
-    const requestId = reqData ? reqData.id : null;
+    // Номер и сумму вернула база — это единственный источник правды: она же
+    // их и записала (в браузере номер больше не считается).
+    const requestNumber = data.request_number;
 
-    if (!requestId) {
-        log.error('База не вернула созданную заявку (пустой ответ на INSERT)');
-        toast('Заявка не сохранилась: база не вернула запись. Повторите попытку.', 'error');
-        return false;
-    }
+    log.info('✅ Заявка финансов создана:', requestNumber, '— позиций:', data.items_count);
 
-    // Создаём позиции
-    const itemsPayload = items.map(it => ({
-        request_id: requestId,
-        name: it.name,
-        unit: it.unit,
-        qty: it.qty,
-        unit_price: it.unit_price,
-        total_price: it.total_price
-    }));
-
-    const { error: itemsError } = await db.insertMany('cash_request_items', itemsPayload);
-
-    if (itemsError) {
-        log.error('Ошибка создания позиций:', itemsError.message);
-        toast('Заявка создана, но позиции не сохранились', 'warning');
-    }
-
-    log.info('✅ Заявка финансов создана:', requestNumber);
     toast(`Заявка ${requestNumber} создана`, 'success');
 
     hideModal('new-cashreq-modal');
@@ -1230,40 +1201,6 @@ async function updateCashRequest({ requestId, projectId, sectionId, comment, ite
     hideModal('new-cashreq-modal');
 
     return true;
-}
-
-/**
- * Генерирует номер заявки формата: Ф-N/YY
- */
-async function generateCashRequestNumber() {
-    const year = new Date().getFullYear();
-    const yearShort = String(year).slice(-2);
-    const prefix = 'Ф-';
-    const suffix = `/${yearShort}`;
-
-    const startOfYear = `${year}-01-01T00:00:00`;
-    const startOfNextYear = `${year + 1}-01-01T00:00:00`;
-
-    // Берём МАКСИМАЛЬНЫЙ номер за год (COUNT(*) давал дубли после удаления заявок)
-    const { data } = await db.select('cash_requests', {
-        select: 'request_number',
-        filters: {
-            'created_at.gte': startOfYear,
-            'created_at.lt': startOfNextYear
-        }
-    });
-
-    let maxNumber = 0;
-
-    (data || []).forEach(row => {
-        const raw = String(row.request_number || '');
-        if (!raw.startsWith(prefix) || !raw.endsWith(suffix)) return;
-
-        const num = parseInt(raw.slice(prefix.length, raw.length - suffix.length), 10);
-        if (Number.isFinite(num) && num > maxNumber) maxNumber = num;
-    });
-
-    return `${prefix}${maxNumber + 1}${suffix}`;
 }
 
 // =====================================================================
@@ -1443,7 +1380,7 @@ export async function issueCashRequest(id) {
     }
 
     if (req.status !== 'approved') {
-        toast('Заявка должна быть в статусе «Одобрено»', 'warning');
+        toast('Заявка должна быть в статусе "Одобрено"', 'warning');
         return;
     }
 
@@ -1460,7 +1397,6 @@ export async function issueCashRequest(id) {
     }
 
     const recipientName = req.employee?.name || '—';
-    const operationDate = new Date().toISOString().split('T')[0];
 
     // Финансист платит со своего подотчёта — перед выдачей показываем остаток
     const paysFromOwnBalance = isFinancier();
@@ -1479,51 +1415,31 @@ export async function issueCashRequest(id) {
         return;
     }
 
-    // 1. Приход получателю: подотчёт сотрудника растёт (как было и раньше)
-    const { data: operationData, error: opError } = await db.insert('cash_operations', {
-        employee_id: req.employee_id,
-        operation_type: 'issue',
-        amount: totalSum,
-        description: `Заявка ${req.request_number} — ${req.section?.name || 'работы'}`,
-        operation_date: operationDate
-    });
+    // Выдачу выполняет БАЗА одной командой (v2.8.0): приход получателю,
+    // списание с подотчёта финансиста, статус «Выдано» и ссылка на операцию —
+    // всё в одной транзакции, плюс отметка в audit_log. Раньше это были три
+    // отдельных запроса из браузера: сбой между ними оставлял деньги выданными,
+    // а заявку — «Одобренной» (или терял списание с подотчёта). Права проверяет
+    // база, поэтому выдать может только Финансист, Администратор и Гл. инженер.
+    const { data, error } = await db.rpc(RPC.ISSUE_CASH_REQUEST, {
+        p_request_id: id
+    }, { idempotencyKey: db.newCommandKey() });
 
-    if (opError) {
-        log.error('Ошибка создания операции:', opError.message);
-        toast(db.explainError(opError), 'error');
+    if (error) {
+        log.error('Ошибка выдачи по заявке:', error.message);
+        toast(db.explainError(error), 'error');
         return;
     }
 
-    // 2. Финансист: списание с ЕГО подотчёта (деньги ушли получателю)
-    if (paysFromOwnBalance) {
-        const { error: debitError } = await db.insert('cash_operations', {
-            employee_id: emp.id,
-            operation_type: 'return',
-            amount: totalSum,
-            description: `Выдача по заявке ${req.request_number} — ${recipientName}`,
-            operation_date: operationDate
-        });
+    // Сумму и номер берём из ответа базы: она их и записала, поэтому в
+    // интерфейсе не может оказаться сумма, которой нет в операциях.
+    const issuedSum = Number(data.amount) || totalSum;
 
-        if (debitError) {
-            log.error('Ошибка списания с подотчёта финансиста:', debitError.message);
-            toast('Получателю записано, но с вашего подотчёта сумма не списалась', 'warning');
-        }
-    }
+    log.info('✅ Выдано по заявке', data.request_number, ':', issuedSum,
+        '— операция прихода:', data.recipient_operation_id,
+        ', списание финансиста:', data.financier_operation_id);
 
-    // 3. Заявка → «Выдано». База может не вернуть строку операции — тогда
-    // issued_operation_id останется пустым, а статус всё равно поменяем.
-    const { error: reqError } = await db.update('cash_requests', {
-        status: 'issued',
-        issued_operation_id: operationData?.id || null
-    }, { id });
-
-    if (reqError) {
-        log.error('Ошибка обновления заявки:', reqError.message);
-        toast('Операция создана, но заявка не обновлена', 'warning');
-    }
-
-    log.info('✅ Выдано по заявке', req.request_number, ':', totalSum);
-    toast(`Выдано ${formatMoney(totalSum)} по заявке ${req.request_number}`, 'success');
+    toast(`Выдано ${formatMoney(issuedSum)} по заявке ${data.request_number}`, 'success');
 
     hideModal('cash-request-detail-modal');
     await loadCashRequests();

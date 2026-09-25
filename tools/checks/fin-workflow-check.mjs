@@ -27,7 +27,22 @@ const ROOT = process.env.APP_ROOT
 const PORT = 8124;
 const CDP_PORT = 9338;
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const PROFILE = path.join(os.tmpdir(), 'rsk-fin', 'chrome-profile-workflow');
+// Профиль Chrome. Папку прошлого прогона на Windows может не отпустить
+// система: процессы Chrome (renderer, crashpad) живут ещё несколько секунд
+// после kill, и rmSync падает с EPERM. Поэтому при отказе удаления берём
+// отдельную папку для этого прогона — прогон не должен падать из-за профиля.
+function prepareProfile(dir) {
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return dir;
+    } catch {
+        const fallback = dir + '-' + process.pid;
+        console.log('  профиль Chrome занят (' + dir + ') — использую ' + fallback);
+        return fallback;
+    }
+}
+
+let PROFILE = path.join(os.tmpdir(), 'rsk-fin', 'chrome-profile-workflow');
 const BASE = 'http://127.0.0.1:' + PORT;
 
 const USER_IDS = {
@@ -68,8 +83,15 @@ const store = {
     cashOperations: [],
     nextRequestId: 101,
     nextItemId: 1001,
-    nextOperationId: 5001
+    nextOperationId: 5001,
+    nextOrderId: 904
 };
+
+// Прямые INSERT в orders и cash_requests база с v2.8.0 запрещает
+// (database/migrate-v2.8-finance-rpc-audit.sql → revoke insert): заявки
+// создаёт только серверная команда. Всё, что приложение пишет сюда напрямую,
+// попадает в этот список и валит проверку в конце прогона.
+const directInserts = [];
 
 const requests = [];
 const report = [];
@@ -179,6 +201,248 @@ function wantsSingleRow(table, params) {
     return false;
 }
 
+// -------------------- серверные команды (RPC, v2.8.0) --------------------
+// Мини-модель базы: те же четыре команды, что и в
+// database/migrate-v2.8-finance-rpc-audit.sql. Отвечаем так же, как PostgREST:
+// на успех — JSON-объект (в базе это jsonb), на отказ — тело с кодом и русским
+// текстом (приложение разбирает его в js/database.js → parseRpcFailure).
+
+const YEAR_SHORT = String(new Date().getFullYear()).slice(-2);
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const round2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
+// Номер заявки база считает «Ф-N/YY» и «№ N/YY» под блокировкой; в моке —
+// максимум по текущему году + 1, как в миграции v2.8.0.
+function nextNumber(prefix, numbers) {
+    const pattern = new RegExp('^' + prefix + '([0-9]+)/' + YEAR_SHORT + '$');
+    const max = numbers.reduce((acc, value) => {
+        const parts = pattern.exec(String(value || ''));
+        return parts ? Math.max(acc, Number(parts[1])) : acc;
+    }, 0);
+    return prefix + (max + 1) + '/' + YEAR_SHORT;
+}
+
+function rpcError(res, code, message) {
+    log('    [мок] RPC отказ ' + code + ': ' + message);
+    return sendJson(res, 400, { code, message, details: null, hint: null });
+}
+
+function rpcCreateCashRequest(res, params) {
+    const items = Array.isArray(params.p_items) ? params.p_items : [];
+    if (!items.length) return rpcError(res, '22023', 'В заявке должно быть от 1 до 200 позиций');
+
+    const normalized = items.map((it) => {
+        const qty = round2(it.qty);
+        const unitPrice = round2(it.unit_price);
+        return {
+            name: String(it.name || '').trim(),
+            unit: String(it.unit || 'м²').trim(),
+            qty,
+            unit_price: unitPrice,
+            total_price: round2(qty * unitPrice)
+        };
+    });
+    const totalSum = round2(normalized.reduce((sum, it) => sum + it.total_price, 0));
+    const id = store.nextRequestId++;
+    const requestNumber = nextNumber('Ф-', store.cashRequests.map((row) => row.request_number));
+
+    store.cashRequests.push({
+        id,
+        request_number: requestNumber,
+        employee_id: store.currentEmployeeId,
+        project_id: params.p_project_id,
+        section_id: params.p_section_id,
+        comment: params.p_comment || null,
+        total_sum: totalSum,
+        status: 'pending',
+        rejection_reason: null,
+        approved_by_employee_id: null,
+        approved_at: null,
+        issued_operation_id: null,
+        created_at: new Date().toISOString()
+    });
+    normalized.forEach((it) => store.cashRequestItems.push({ id: store.nextItemId++, request_id: id, ...it }));
+
+    log('    [мок] RPC create_cash_request_with_items → ' + requestNumber +
+        ' на ' + totalSum + ' (' + normalized.length + ' поз., автор #' + store.currentEmployeeId + ')');
+
+    return sendJson(res, 200, {
+        request_id: id,
+        request_number: requestNumber,
+        status: 'pending',
+        total_sum: totalSum,
+        items_count: normalized.length
+    });
+}
+
+function rpcIssueCashRequest(res, params) {
+    const request = store.cashRequests.find((row) => row.id === Number(params.p_request_id));
+    if (!request) return rpcError(res, 'P0002', 'Финансовая заявка не найдена');
+    if (request.status !== 'approved') {
+        return rpcError(res, 'P0001', 'Заявка должна быть в статусе "Одобрено"');
+    }
+
+    const recipientName = (employee(request.employee_id) || {}).name || '—';
+    const recipient = {
+        id: store.nextOperationId++,
+        employee_id: request.employee_id,
+        operation_type: 'issue',
+        amount: request.total_sum,
+        description: 'Заявка ' + request.request_number + ' — выдача подотчёта',
+        source: 'cash_request_issue',
+        operation_date: todayISO(),
+        created_by: currentUserId()
+    };
+    store.cashOperations.push(recipient);
+
+    // Своего подотчёта выдача касается только у Финансиста: он платит со своего.
+    let financier = null;
+    if ((employee(store.currentEmployeeId) || {}).position === 'Финансист') {
+        financier = {
+            id: store.nextOperationId++,
+            employee_id: store.currentEmployeeId,
+            operation_type: 'return',
+            amount: request.total_sum,
+            description: 'Выдача по заявке ' + request.request_number + ' — ' + recipientName,
+            source: 'cash_request_debit',
+            operation_date: todayISO(),
+            created_by: currentUserId()
+        };
+        store.cashOperations.push(financier);
+    }
+
+    request.status = 'issued';
+    request.issued_operation_id = recipient.id;
+
+    log('    [мок] RPC issue_cash_request → ' + request.request_number + ': приход #' + recipient.id +
+        ' на ' + request.total_sum + (financier ? ', списание #' + financier.id : ', списание не нужно (роль не Финансист)'));
+
+    return sendJson(res, 200, {
+        request_id: request.id,
+        request_number: request.request_number,
+        status: 'issued',
+        amount: request.total_sum,
+        recipient_operation_id: recipient.id,
+        financier_operation_id: financier ? financier.id : null
+    });
+}
+
+function rpcCreateOrder(res, params) {
+    const items = Array.isArray(params.p_items) ? params.p_items : [];
+    if (!items.length) return rpcError(res, '22023', 'В заявке должно быть от 1 до 200 позиций');
+
+    // Позиции заявки на материалы база хранит БЕЗ цен: это заявка, а не счёт.
+    const normalized = items.map((it) => ({
+        name: String(it.name || '').trim(),
+        unit: String(it.unit || 'шт').trim(),
+        qty: round2(it.qty)
+    }));
+
+    const id = store.nextOrderId++;
+    const requestNumber = nextNumber('№ ', store.orders.map((row) => row.request_number));
+
+    store.orders.push({
+        id,
+        request_number: requestNumber,
+        project_id: params.p_project_id,
+        section_id: params.p_section_id,
+        status: 'new',
+        desired_date: params.p_desired_date || null,
+        purchase_data: params.p_comment ? { comment: String(params.p_comment).trim() } : {},
+        created_by_employee_id: store.currentEmployeeId,
+        payment_source: 'company'
+    });
+    normalized.forEach((it) => store.orderItems.push({ id: store.nextItemId++, order_id: id, ...it }));
+
+    log('    [мок] RPC create_order_with_items → ' + requestNumber + ' (' + normalized.length +
+        ' поз.) — позиции без цен, статус оплаты не выставлен');
+
+    return sendJson(res, 200, {
+        order_id: id,
+        request_number: requestNumber,
+        status: 'new',
+        items_count: normalized.length
+    });
+}
+
+function rpcSaveOwnDelivery(res, params) {
+    const order = store.orders.find((row) => row.id === Number(params.p_order_id));
+    if (!order) return rpcError(res, 'P0002', 'Заявка на материалы не найдена');
+
+    const old = store.cashOperations.find((op) => op.order_id === order.id && op.source === 'own_delivery');
+    const needed = params.p_enabled === true && params.p_charge !== 'firm' && round2(params.p_amount) > 0;
+
+    if (!needed) {
+        if (!old) {
+            log('    [мок] RPC save_own_delivery_expense → расход не нужен, записи не было');
+            return sendJson(res, 200, {
+                order_id: order.id, operation_id: null, action: 'unchanged', amount: 0
+            });
+        }
+        store.cashOperations = store.cashOperations.filter((op) => op.id !== old.id);
+        log('    [мок] RPC save_own_delivery_expense → своя доставка убрана (операция #' + old.id + ')');
+        return sendJson(res, 200, {
+            order_id: order.id, operation_id: null, action: 'deleted', amount: 0
+        });
+    }
+
+    const amount = round2(params.p_amount);
+    const rate = Math.min(Math.max(round2(params.p_vat_rate), 0), 100);
+    const payload = {
+        employee_id: params.p_charge === 'employee' ? Number(params.p_employee_id) : store.currentEmployeeId,
+        operation_type: 'expense',
+        amount,
+        category: 'delivery',
+        project_id: order.project_id,
+        section_id: order.section_id,
+        order_id: order.id,
+        source: 'own_delivery',
+        description: 'Своя доставка по заявке ' + order.request_number,
+        vat_rate: rate,
+        vat_amount: rate > 0 ? round2(amount * rate / (100 + rate)) : 0,
+        operation_date: todayISO(),
+        created_by: currentUserId()
+    };
+
+    if (old) {
+        Object.assign(old, payload);
+        log('    [мок] RPC save_own_delivery_expense → операция #' + old.id + ' обновлена на ' + amount);
+        return sendJson(res, 200, {
+            order_id: order.id, operation_id: old.id, action: 'updated',
+            employee_id: old.employee_id, amount, vat_amount: old.vat_amount
+        });
+    }
+
+    const created = { id: store.nextOperationId++, ...payload };
+    store.cashOperations.push(created);
+    log('    [мок] RPC save_own_delivery_expense → операция #' + created.id + ' на ' + amount +
+        ' на сотруднике #' + created.employee_id + ' (charge=' + params.p_charge + ')');
+    return sendJson(res, 200, {
+        order_id: order.id, operation_id: created.id, action: 'created',
+        employee_id: created.employee_id, amount, vat_amount: created.vat_amount
+    });
+}
+
+// Диспетчер серверных команд: имена и параметры — как в
+// database/migrate-v2.8-finance-rpc-audit.sql (блок 6 выдаёт на них право
+// authenticated). Неизвестная команда — это ошибка мока, а не приложения.
+function handleRpc(fnName, body, res) {
+    const params = body || {};
+    log('    [мок] RPC ' + fnName + ' ' + JSON.stringify(params).slice(0, 220));
+
+    if (!params.p_idempotency_key) return rpcError(res, '22023', 'idempotency_key обязателен');
+
+    switch (fnName) {
+        case 'create_cash_request_with_items': return rpcCreateCashRequest(res, params);
+        case 'issue_cash_request':            return rpcIssueCashRequest(res, params);
+        case 'create_order_with_items':       return rpcCreateOrder(res, params);
+        case 'save_own_delivery_expense':     return rpcSaveOwnDelivery(res, params);
+        default:
+            log('    [мок] НЕИЗВЕСТНАЯ серверная команда: ' + fnName);
+            return rpcError(res, 'PGRST202', 'Could not find the function public.' + fnName);
+    }
+}
+
 // --------------------------------- мок Supabase ---------------------------------
 function handleMock(req, res, body) {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -202,6 +466,15 @@ function handleMock(req, res, body) {
     if (p.includes('/auth/v1/user')) return sendJson(res, 200, session().user);
     if (p.includes('/auth/v1/logout')) return sendJson(res, 204, null);
 
+    // ---- Серверные команды (RPC, v2.8.0) ----
+    // Заявки и деньги создаёт БАЗА одной командой, прямая запись в orders и
+    // cash_requests базой закрыта. Поэтому мок отвечает вместо функций из
+    // database/migrate-v2.8-finance-rpc-audit.sql — так же, как база: номер
+    // под «блокировкой», заявка и позиции, обе операции выдачи.
+    if (p.includes('/rest/v1/rpc/')) {
+        return handleRpc(decodeURIComponent(p.split('/rest/v1/rpc/')[1]), payload, res);
+    }
+
     if (!table) return sendJson(res, 200, []);
 
     // ---- Чтение ----
@@ -221,6 +494,13 @@ function handleMock(req, res, body) {
 
     if (req.method === 'POST') {
         const rows = Array.isArray(payload) ? payload : [payload];
+
+        // С v2.8.0 INSERT в эти таблицы закрыт базой: заявки создаёт серверная
+        // команда. Если приложение пишет сюда напрямую — прогон это покажет.
+        if (table === 'orders' || table === 'cash_requests') {
+            directInserts.push('POST /' + table + ': ' + JSON.stringify(payload).slice(0, 160));
+            log('    [мок] ⚠ ПРЯМАЯ ЗАПИСЬ в ' + table + ' — база её запрещает, нужна серверная команда');
+        }
 
         if (table === 'cash_requests') {
             const created = rows.map((row) => {
@@ -431,7 +711,7 @@ try {
     await new Promise((resolve) => server.listen(PORT, '127.0.0.1', resolve));
     log('Прогон согласования заявок на финансирование: ' + BASE + ' (Supabase → мок)');
 
-    fs.rmSync(PROFILE, { recursive: true, force: true });
+    PROFILE = prepareProfile(PROFILE);
     chrome = spawn(CHROME, [
         '--headless=new', '--remote-debugging-port=' + CDP_PORT,
         '--user-data-dir=' + PROFILE, '--no-first-run', '--no-default-browser-check',
@@ -1062,6 +1342,9 @@ try {
         'осталось: ' + (ruLeft.join(', ') || 'ничего'));
 
     log('--- ИТОГ ---');
+    ok('заявки создаются серверной командой, а не прямой записью в таблицу',
+        directInserts.length === 0,
+        directInserts.join(' | '));
     log(failed === 0 ? '  ВСЁ ВЕРНО: согласование, доработка, выдача и балансы сходятся' : '  не прошло проверок: ' + failed);
     log('  заявки в моке: ' + JSON.stringify(store.cashRequests.map((r) => ({
         number: r.request_number, status: r.status, sum: r.total_sum, by: r.approved_by_employee_id

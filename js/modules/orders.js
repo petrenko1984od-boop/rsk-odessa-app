@@ -17,7 +17,7 @@
 //     отработанную закупку с рабочего экрана — см. canArchiveOrder()).
 // =====================================================================
 
-import { db } from '../database.js';
+import { db, RPC } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
     formatDate, formatDateTime, formatMoney, roundMoney,
@@ -779,85 +779,37 @@ async function createOrder(form) {
         return false;
     }
 
-    const orderPayload = {
-        project_id: projectId,
-        section_id: sectionId,
-        status: 'new',
-        desired_date: desiredDate,
-        purchase_data: comment ? { comment } : {},
-        created_by_employee_id: emp.id,
-        payment_source: 'company'
-    };
+    // Заявку создаёт БАЗА одной командой (v2.8.0): номер «№ N/YY» под
+    // блокировкой, проверка прав и объекта (прораб — только свой объект),
+    // запись заявки и её позиций в одной транзакции + отметка в audit_log.
+    // Раньше номер считал браузер («максимум за год + 1»): два одновременных
+    // создания получали один номер, а сбой между записью заявки и позиций
+    // оставлял заявку без позиций. Прямой insert в orders миграция v2.8.0
+    // закрывает (revoke insert), поэтому заявки создаются только так.
+    //
+    // Позиции уходят без цен и без статуса оплаты: заявка ещё не оплачена.
+    // Раньше браузер ставил позициям payment_status: 'paid' — и карточка
+    // «Новой» заявки показывала «✅ Оплачено», хотя закупку не брали в работу
+    // и денег никто не платил. Статус появляется позже: при доставке
+    // (closeOrder) или когда финансист отметит счёт (js/modules/invoices.js).
+    const { data, error } = await db.rpc(RPC.CREATE_ORDER, {
+        p_project_id: projectId,
+        p_section_id: sectionId,
+        p_desired_date: desiredDate,
+        p_comment: comment || null,
+        p_items: items
+    }, { idempotencyKey: db.newCommandKey() });
 
-    // Номер заявки берём как «максимум за год + 1» (см. db.getNextRequestNumber).
-    // Если тот же номер успел занять другой пользователь — БД вернёт 23505,
-    // и мы просто запрашиваем следующий номер (до 3 попыток).
-    let requestNumber = null;
-    let orderData = null;
-    let orderError = null;
-
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-        const { requestNumber: nextNumber, error: numberError } = await db.getNextRequestNumber();
-
-        if (numberError || !nextNumber) {
-            log.error('Не удалось получить номер заявки:', numberError?.message || 'нет данных');
-            toast('Не удалось получить номер заявки. Попробуйте ещё раз.', 'error');
-            return false;
-        }
-
-        const { data, error } = await db.insert('orders', { ...orderPayload, request_number: nextNumber });
-
-        if (!error) {
-            requestNumber = nextNumber;
-            orderData = data;
-            orderError = null;
-            break;
-        }
-
-        orderError = error;
-
-        // 23505 — нарушение UNIQUE(request_number): номер уже занят, берём следующий
-        if (error.code !== '23505') break;
-
-        log.warn(`Номер ${nextNumber} уже занят, пробуем следующий (попытка ${attempt} из 3)`);
-    }
-
-    if (orderError) {
-        log.error('Ошибка создания заявки:', orderError.message);
-        toast('Не удалось создать заявку: ' + db.explainError(orderError), 'error');
+    if (error) {
+        log.error('Ошибка создания заявки:', error.message);
+        toast('Не удалось создать заявку: ' + db.explainError(error), 'error');
         return false;
     }
 
-    // База может не вернуть созданную строку — без проверки здесь был бы
-    // TypeError, а кнопка молча оставалась бы «Сохраняем...».
-    const orderId = orderData ? orderData.id : null;
+    // Номер вернула база — она же его и записала (в браузере он не считается).
+    const requestNumber = data.request_number;
 
-    if (!orderId) {
-        log.error('База не вернула созданную заявку (пустой ответ на INSERT)');
-        toast('Заявка не сохранилась: база не вернула запись. Повторите попытку.', 'error');
-        return false;
-    }
-
-    // Статус оплаты позициям НЕ выставляем: новая заявка ещё не оплачена.
-    // Раньше здесь стояло payment_status: 'paid' — и карточка «Новой» заявки
-    // показывала «✅ Оплачено», хотя закупку ещё не брали в работу и денег
-    // никто не платил. Статус появляется позже: при доставке (closeOrder)
-    // или когда финансист отметит счёт (js/modules/invoices.js).
-    const itemsPayload = items.map(it => ({
-        order_id: orderId,
-        name: it.name,
-        qty: it.qty,
-        unit: it.unit
-    }));
-
-    const { error: itemsError } = await db.insertMany('order_items', itemsPayload);
-
-    if (itemsError) {
-        log.error('Ошибка создания позиций:', itemsError.message);
-        toast('Заявка создана, но позиции не сохранились', 'warning');
-    }
-
-    log.info('✅ Заявка создана:', requestNumber);
+    log.info('✅ Заявка создана:', requestNumber, '— позиций:', data.items_count);
     toast(`Заявка ${requestNumber} создана`, 'success');
 
     hideModal('new-order-modal');
@@ -1683,63 +1635,36 @@ async function saveDeliveryItem(orderId, deliveryItem, name, amount, deliveryKin
  * переключились на «платит фирма») — удаляем, чтобы в реестре не осталось
  * лишней строки.
  *
+ * С v2.8.0 всё это делает БАЗА одной командой save_own_delivery_expense():
+ * она же под блокировкой находит прежний расход, обновляет его, создаёт или
+ * удаляет и пишет отметку в audit_log. Раньше браузер читал операцию, а потом
+ * писал — два снабженца могли сохранить счёт одновременно и создать ДВА
+ * расхода на одну заявку; в v2.8.0 от этого стоит уникальный индекс
+ * cash_operations_one_own_delivery_per_order.
+ *
  * @returns {Promise<string|null>} текст ошибки или null при успехе
  */
 async function saveOwnDeliveryExpense({ order, amount, company, charge, vatRate, employeeId }) {
-    const { data: existing, error: selectError } = await db.select('cash_operations', {
-        select: 'id, employee_id, amount',
-        filters: { order_id: order.id, source: 'own_delivery' }
-    });
+    // p_enabled = company: везёт компания и сумма есть — расход нужен;
+    // поставщик / пустая сумма / «платит фирма» — база удалит прежний расход
+    // (charge = 'firm' она понимает сама, повторять проверку здесь не нужно).
+    const { data, error } = await db.rpc(RPC.SAVE_OWN_DELIVERY_EXPENSE, {
+        p_order_id: order.id,
+        p_enabled: !!company,
+        p_amount: amount,
+        p_charge: charge,
+        p_employee_id: employeeId || null,
+        p_vat_rate: vatRate
+    }, { idempotencyKey: db.newCommandKey() });
 
-    if (selectError) return selectError.message;
+    if (error) return db.explainError(error);
 
-    const current = (existing || [])[0] || null;
-    const chargeFirm = charge === CONFIG.DELIVERY_ITEM.CHARGE.FIRM;
+    // action: created | updated | deleted | unchanged — по нему видно, что
+    // именно база сделала с расходом (браузер больше не читает операцию сам).
+    log.info('🚚 Своя доставка по заявке', order.request_number, '—', data.action,
+        data.operation_id ? `(операция ${data.operation_id}, ${formatMoney(Number(data.amount) || 0)})` : '');
 
-    // Платит фирма, доставки нет или везёт поставщик — расхода подотчёта быть
-    // не должно. Если он остался от прошлого сохранения, убираем.
-    if (!company || amount <= 0 || chargeFirm) {
-        if (!current) return null;
-        const { error } = await db.remove('cash_operations', { id: current.id });
-        return error ? error.message : null;
-    }
-
-    const me = getEmployee();
-    const payerId = charge === CONFIG.DELIVERY_ITEM.CHARGE.EMPLOYEE
-        ? employeeId
-        : (me ? me.id : null);
-
-    if (!payerId) return 'не удалось определить, чей подотчёт списываем';
-
-    const vatAmount = vatFromTotal(amount, vatRate);
-
-    const payload = {
-        employee_id: payerId,
-        operation_type: 'expense',
-        amount,
-        category: 'delivery',
-        project_id: order.project_id,
-        section_id: order.section_id,
-        order_id: order.id,
-        items: [{
-            name: getDeliveryItemName(CONFIG.DELIVERY_ITEM.TYPE.COMPANY),
-            unit: CONFIG.DELIVERY_ITEM.UNIT,
-            qty: 1,
-            price: amount,
-            sum: amount
-        }],
-        vat_rate: vatAmount > 0 ? normalizeVatRate(vatRate) : 0,
-        vat_amount: vatAmount,
-        source: 'own_delivery',
-        description: `Своя доставка по заявке ${order.request_number}`,
-        operation_date: new Date().toISOString().split('T')[0]
-    };
-
-    const { error } = current
-        ? await db.update('cash_operations', payload, { id: current.id })
-        : await db.insert('cash_operations', payload);
-
-    return error ? error.message : null;
+    return null;
 }
 
 /** Сохраняет счёт: файл в Storage + цены позиций + сумма заявки. */

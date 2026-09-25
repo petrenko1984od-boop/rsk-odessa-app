@@ -16,16 +16,18 @@
 //   2. Своя доставка — это НЕ оплата внешнему поставщику. Деньги уходят своим:
 //      с подотчёта снабженца, с подотчёта другого сотрудника (водитель,
 //      транспортный отдел) или безналом фирмы; в счёт поставщика сумма не
-//      входит. Когда платят из подотчёта, приложение создаёт cash_operation с
-//      маркером source = 'own_delivery', и тогда строка заявки из ДЕНЕГ не
-//      считается — иначе сумма попала бы в план-факт, реестр и «Доп. расходы»
-//      дважды.
+//      входит. Когда платят из подотчёта, расход ставит БАЗА одной командой
+//      (v2.8.0 → save_own_delivery_expense, маркер source = 'own_delivery'),
+//      и тогда строка заявки из ДЕНЕГ не считается — иначе сумма попала бы в
+//      план-факт, реестр и «Доп. расходы» дважды. Прогон стережёт, что браузер
+//      не вернулся к прямой записи кассы: два одновременных сохранения счёта
+//      создавали два расхода на одну заявку.
 //
 // Прогон вызывает НАСТОЯЩИЕ функции приложения (js/utils.js) — это не копия
 // формул, а тот же код, что считает счёт в браузере, — и стережёт договор
-// файлов между собой: CONFIG ↔ разметка (index.html) ↔ orders.js ↔ миграция
-// базы ↔ подсказка при непройденной миграции (js/database.js → explainError)
-// ↔ словарь языков.
+// файлов между собой: CONFIG ↔ разметка (index.html) ↔ orders.js ↔ миграции
+// базы (v2.5.0 и v2.8.0) ↔ подсказка при непройденной миграции
+// (js/database.js → explainError) ↔ словарь языков.
 //
 // Запуск (из папки tools/checks):  node vat-check.mjs
 // Код возврата 1, если есть замечания — удобно для автопроверки перед выкладкой.
@@ -153,6 +155,7 @@ async function main() {
     const ordersJs = read('js', 'modules', 'orders.js');
     const i18n = read('js', 'i18n.js');
     const migration = read('database', 'migrate-v2.5.sql');
+    const migrationV28 = read('database', 'migrate-v2.8-finance-rpc-audit.sql');
     const schema = read('database', 'schema.sql');
 
     const MODE = CONFIG.VAT.MODE;
@@ -341,22 +344,31 @@ async function main() {
         /invoice_vat_rate: vatRate/.test(ordersJs) &&
         /getInvoiceVatRate\(\)/.test(ordersJs));
 
-    ok("расход своей доставки привязан к заявке и помечен source = 'own_delivery'",
-        /filters: \{ order_id: order\.id, source: 'own_delivery' \}/.test(ordersJs) &&
-        /source: 'own_delivery',/.test(ordersJs) &&
-        /category: 'delivery',/.test(ordersJs) &&
-        /order_id: order\.id,/.test(ordersJs));
-    ok('платит фирма — расхода подотчёта нет; лишний расход от прошлого сохранения удаляется',
-        /const chargeFirm = charge === CONFIG\.DELIVERY_ITEM\.CHARGE\.FIRM/.test(ordersJs) &&
-        /if \(!company \|\| amount <= 0 \|\| chargeFirm\)/.test(ordersJs) &&
-        /db\.remove\('cash_operations'/.test(ordersJs));
+    // С v2.8.0 расход своей доставки ставит БАЗА одной командой под блокировкой:
+    // повтор открывает окно и перечитывает счёт, поэтому расхода дважды не будет.
+    ok("расход своей доставки заказывает команда save_own_delivery_expense (не прямая запись кассы)",
+        /db\.rpc\(RPC\.SAVE_OWN_DELIVERY_EXPENSE, \{/.test(ordersJs) &&
+        /p_order_id: order\.id,/.test(ordersJs) &&
+        /p_enabled: !!company,/.test(ordersJs) &&
+        /p_amount: amount,/.test(ordersJs) &&
+        /p_charge: charge,/.test(ordersJs) &&
+        /p_vat_rate: vatRate/.test(ordersJs) &&
+        !/source: 'own_delivery'/.test(ordersJs),
+        'в orders.js не осталось прямой записи расхода');
+    ok('платит фирма, сумма очищена или доставки нет — прежний расход удаляет база',
+        /p_enabled: !!company/.test(ordersJs) &&
+        /if not coalesce\(p_enabled, false\)\s*\r?\n\s*or p_charge = 'firm'/.test(migrationV28) &&
+        /delete from public\.cash_operations where id = old_operation\.id;/.test(migrationV28) &&
+        /'action', case when has_old then 'deleted' else 'unchanged' end/.test(migrationV28));
     ok('сумма своей доставки в счёт поставщика не входит (и её НДС тоже)',
         /const invoiceTotal = companyDelivery \? materialsSum : totalSum/.test(ordersJs) &&
-        /const vatTotal = companyDelivery\s*\?\s*materialsVat/.test(ordersJs) &&
+        /const vatTotal = companyDelivery\s*\? materialsVat/.test(ordersJs) &&
         /const totalSum = roundMoney\(materialsSum \+ deliveryAmount\)/.test(ordersJs));
     ok('списание с подотчёта другого сотрудника берёт его id из окна счёта',
-        /charge === CONFIG\.DELIVERY_ITEM\.CHARGE\.EMPLOYEE\s*\?\s*employeeId/.test(ordersJs) &&
-        /own_delivery_employee_id:/.test(ordersJs));
+        /getInvoiceOwnCharge\(\) === CONFIG\.DELIVERY_ITEM\.CHARGE\.EMPLOYEE && !ownEmployeeId/.test(ordersJs) &&
+        /employeeId: ownEmployeeId/.test(ordersJs) &&
+        /p_employee_id: employeeId \|\| null/.test(ordersJs) &&
+        /if p_charge = 'employee' then\s*\r?\n\s*payer_id := p_employee_id;/.test(migrationV28));
 
     const moneyModules = ['cash.js', 'dashboard.js', 'registry.js'].filter(name =>
         /ownDeliveryCoveredOrderIds\(|isOwnDeliveryCovered\(/.test(read('js', 'modules', name)));
@@ -396,7 +408,17 @@ async function main() {
         migration.includes("set delivery_kind = 'company'") &&
         migration.includes("name = 'Доставка компании'"));
     ok("код и база называют маркер расхода одинаково (source = 'own_delivery')",
-        migration.includes("source = 'own_delivery'") && /source: 'own_delivery'/.test(ordersJs));
+        migrationV28.includes("source = 'own_delivery'") &&
+        /op\.source === 'own_delivery'/.test(read('js', 'utils.js')) &&
+        /category = 'delivery',/.test(migrationV28) &&
+        /order_id = order_row\.id,/.test(migrationV28) &&
+        /'delivery',\s*\r?\n\s*order_row\.project_id,/.test(migrationV28) &&
+        /'own_delivery',\s*\r?\n\s*format\('Своя доставка по заявке %s'/.test(migrationV28),
+        'расход привязан к заявке (order_id) и в новой, и в обновляемой строке');
+    ok('браузер не пишет и не удаляет расход своей доставки сам (только команда базы)',
+        !/db\.remove\('cash_operations'/.test(ordersJs) &&
+        !/filters: \{ order_id: order\.id, source: 'own_delivery' \}/.test(ordersJs) &&
+        /action: created \| updated \| deleted \| unchanged/.test(ordersJs));
 
     const halfTranslated = I18N_KEYS.filter(key => count(i18n, "'" + key + "':") < 2);
     ok('подписи НДС и своей доставки есть и в RU, и в UK',
