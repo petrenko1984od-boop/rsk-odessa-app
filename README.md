@@ -242,9 +242,17 @@ npm run build    # src/tailwind.css + разметка → css/tailwind.css (м�
 * `style-src` оставляет `'unsafe-inline'` осознанно: ширины полос прогресса и полос графика
   задаются атрибутом `style`, а отдельный `style-src-attr` умеют не все телефоны
   (Safari < 15.4). Вставка стиля код не выполняет.
-* `connect-src` — Supabase (данные, файлы, realtime) и Worker-прокси; `img-src` — свои
-  картинки, `blob:`/`data:` и файлы из Supabase Storage; `frame-ancestors 'none'` и
-  `object-src 'none'` закрывают встраивание приложения и плагины.
+* `connect-src` — Supabase (данные, файлы, realtime), Worker-прокси и **те же CDN, что в
+  `script-src`/`style-src`**. Это не дубликат ради полноты: файлы библиотек и шрифт скачивает
+  ещё и service worker, а его запросы проверяются по `connect-src` **его** политики — ею
+  становится заголовок ответа `/sw.js` (`<meta>` из `index.html` до worker-а не доходит).
+  Без CDN в `connect-src` воркер вместо файлов отдавал **504**, и приложение оставалось без
+  xlsx, supabase-js, frappe-gantt, html2canvas, jsPDF и шрифта Manrope (так было в `r2`).
+  Политику браузер запоминает в момент **установки** worker-а, поэтому правка CSP всегда идёт
+  вместе с поднятием `SHELL_REVISION` в `sw.js` — иначе у сотрудников с установленным
+  приложением останется старая политика (см. «Выпуск новой версии»).
+* `img-src` — свои картинки, `blob:`/`data:` и файлы из Supabase Storage; `frame-ancestors 'none'`
+  и `object-src 'none'` закрывают встраивание приложения и плагины.
 * Проверить локально: откройте приложение и консоль браузера — при нарушении политики Chrome
   пишет `Refused to ... because it violates the following Content Security Policy directive`.
   В бою вкладку удобно проверять на странице со всеми разделами: снабжение, финансы, график
@@ -409,8 +417,8 @@ iPhone — `Документация/Инструкция-01-Установка-
 
 Проверка после деплоя: открыть сайт по https → DevTools → **Application** → *Manifest*
 (иконки, имя, без ошибок), *Service Workers* (activated) и *Cache Storage* —
-там должен быть один кэш `rsk-odessa-v2.9.0-r2` (имя складывается из `APP_VERSION` и
-`SHELL_REVISION` в `sw.js`, сейчас `2.9.0` и `r2`; то же значение — в `CONFIG.APP.VERSION`
+там должен быть один кэш `rsk-odessa-v2.9.0-r3` (имя складывается из `APP_VERSION` и
+`SHELL_REVISION` в `sw.js`, сейчас `2.9.0` и `r3`; то же значение — в `CONFIG.APP.VERSION`
 из `js/config.js`). Там же кнопка **«Установить»**
 в адресной строке.
 
@@ -419,6 +427,14 @@ iPhone — `Документация/Инструкция-01-Установка-
 приложения), а запроса к `cdn.tailwindcss.com` быть **не должно вовсе**. Если он есть —
 в браузере лежит старый `index.html` из кэша сервис-воркера: поднимите `SHELL_REVISION`
 ещё раз.
+
+Там же видно, что файлы библиотек с CDN приходят со статусом **200**, а не **504**. Код 504 —
+это ответ самого сервис-воркера, когда политика CSP запретила ему скачать файл (в консоли
+при этом пишет `Fetch API cannot load https://cdn.jsdelivr.net/... Refused to connect` и
+`violates the following Content Security Policy directive: "connect-src ..."`). Признак того,
+что у сотрудника работает worker со **старой** политикой: помогает только поднять
+`SHELL_REVISION` ещё раз — браузер переустанавливает worker вместе с его политикой лишь тогда,
+когда изменился сам файл `sw.js` (см. «Политика Content-Security-Policy»).
 
 Пересобрать иконки (нужен только Windows PowerShell и .NET GDI+):
 

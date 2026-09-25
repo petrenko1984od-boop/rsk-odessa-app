@@ -24,6 +24,14 @@
 // переустанавливает service worker только тогда, когда изменился сам файл
 // sw.js, и именно в этот момент заново скачивает файлы оболочки: без этого
 // сотрудники с установленным приложением останутся на старых js/css.
+//
+// ПОЛИТИКА CSP: библиотеки с CDN этот worker скачивает сам, а такие запросы
+// проверяются по `connect-src` политики, с которой он был УСТАНОВЛЕН — ею
+// становится заголовок ответа `/sw.js` (см. vercel.json; <meta> из index.html
+// на worker не действует). Политику браузер запоминает при установке, поэтому
+// одной правки заголовка на хостинге мало: пока не изменится сам файл sw.js,
+// у сотрудников останется старая политика и файлы с CDN будут отдавать 504 —
+// так было в r2 (подробности в README → «Политика Content-Security-Policy»).
 // =====================================================================
 
 const APP_VERSION = '2.9.0';
@@ -140,7 +148,15 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        (.github/workflows/ci.yml). Файлы оболочки переустанавливаются у всех,
 //        кто уже установил приложение: css/tailwind.css и js/actions.js
 //        добавлены в APP_SHELL.
-const SHELL_REVISION = 'r2';
+//   r3 — библиотеки с CDN снова скачиваются: в `connect-src` политики CSP
+//        добавлены cdn.jsdelivr.net, cdnjs.cloudflare.com,
+//        fonts.googleapis.com и fonts.gstatic.com (index.html + vercel.json).
+//        Причина: запросы service worker-а проверяются по `connect-src`, а
+//        политика берётся из заголовка ответа /sw.js и запоминается браузером
+//        при установке — без переустановки worker-а сотрудники получали 504
+//        вместо xlsx, supabase-js, frappe-gantt, html2canvas, jsPDF и шрифта
+//        Manrope (см. README → «Политика Content-Security-Policy»).
+const SHELL_REVISION = 'r3';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

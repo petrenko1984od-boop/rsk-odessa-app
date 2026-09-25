@@ -21,8 +21,18 @@
          `frame-ancestors` из vercel.json.
          Та же политика продублирована заголовком на хостинге (vercel.json) —
          их сверяет tools/checks/frontend-check.mjs, менять надо оба места.
+         CDN стоят и в `connect-src` не случайно: файлы библиотек и шрифт
+         скачивает не только страница (по `script-src`/`style-src`), но и
+         service worker (sw.js). Его запросы проверяются по `connect-src` ЕГО
+         политики, а ею становится заголовок ответа `/sw.js` (этот <meta> до
+         worker-а не доходит). Без CDN в `connect-src` сервис-воркер отдавал
+         вместо файлов 504, и приложение оставалось без xlsx, supabase-js,
+         frappe-gantt, html2canvas, jsPDF и шрифта Manrope. Политику браузер
+         запоминает в момент УСТАНОВКИ worker-а, поэтому после правки CSP
+         поднимайте SHELL_REVISION в sw.js — иначе у сотрудников с уже
+         установленным приложением останется старая политика (см. README → CSP).
          ============================================================= -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://*.workers.dev; worker-src 'self' blob:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://*.workers.dev https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self' blob:">
     <title>RSK Odessa — Управление строительством</title>
     <link rel="icon" type="image/png" href="./logo.png">
 
