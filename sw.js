@@ -174,7 +174,18 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        `js/utils.js`) — без этого проверка «Собранный CSS совпадает с
 //        исходниками» падала на CI. Оболочка переустанавливается потому, что
 //        изменился css/tailwind.css — строка-отпечаток в конце файла.
-const SHELL_REVISION = 'r6';
+//   r7 — раздел «🩺 Диагностика»: журнал ошибок сотрудников теперь виден в
+//        интерфейсе, а не только SQL-запросом из ops/README.md. Четыре среза
+//        (сводка, «что повторяется чаще всего», последние записи, «у кого
+//        падает») и окно подробностей со стеком, страницей, версией,
+//        ревизией оболочки и браузером. Раздел открыт Администратору и
+//        Директору — тем же ролям, которых пускает к public.app_errors RLS
+//        (index.html, js/modules/diagnostics.js, js/permissions.js,
+//        js/i18n.js). Оболочка переустанавливается потому, что в APP_SHELL
+//        добавлен js/modules/diagnostics.js, а изменился ещё и
+//        css/tailwind.css (новые классы раздела) — строка-отпечаток в конце
+//        файла.
+const SHELL_REVISION = 'r7';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
@@ -214,6 +225,7 @@ const APP_SHELL = [
     './js/modules/tasks.js',
     './js/modules/files.js',
     './js/modules/extra-costs.js',
+    './js/modules/diagnostics.js',
     './icons/icon-192.png',
     './icons/icon-512.png',
     './icons/maskable-192.png',

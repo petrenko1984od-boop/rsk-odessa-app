@@ -83,6 +83,10 @@ import {
     shouldShowEmployeeDashboard
 } from './modules/dashboard.js';
 
+import {
+    loadDiagnostics
+} from './modules/diagnostics.js';
+
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
@@ -98,8 +102,8 @@ export const AppState = {
 // НАВИГАЦИЯ
 // =====================================================================
 
-const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'tasks', 'orders', 'cash-requests', 'registry'];
-const TAB_BUTTONS = ['projects', 'employees', 'tasks', 'orders', 'cash-requests', 'registry'];
+const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'diagnostics'];
+const TAB_BUTTONS = ['projects', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'diagnostics'];
 
 export function switchTab(tabId) {
     if (!canSeeTab(tabId) && tabId !== 'welcome' && tabId !== 'project-detail') {
@@ -149,6 +153,7 @@ export function switchTab(tabId) {
     if (tabId === 'orders') loadOrders();
     if (tabId === 'cash-requests') loadCashRequests();
     if (tabId === 'registry') loadRegistry();
+    if (tabId === 'diagnostics') loadDiagnostics();
 }
 
 window.switchTab = switchTab;
@@ -165,7 +170,8 @@ const TAB_BUTTONS_MAP = [
     ['btn-employees',     'employees'],
     ['btn-orders',        'orders'],
     ['btn-cash-requests', 'cash-requests'],
-    ['btn-registry',      'registry']
+    ['btn-registry',      'registry'],
+    ['btn-diagnostics',   'diagnostics']
 ];
 
 /**

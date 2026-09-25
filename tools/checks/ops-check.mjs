@@ -10,7 +10,9 @@
 //   * в workflow позвали скрипт, которого нет (выяснится в момент сбоя — то
 //     есть когда задача и должна спасать);
 //   * миграцию журнала применили, а код пишет в другую таблицу/команду — и
-//     ошибки сотрудников не сохраняются никому не заметно;
+//     ошибки сотрудников не сохраняются никому не заметно (то же с экраном
+//     «Диагностика»: он должен читать тот журнал и быть открыт тем же ролям,
+//     которых пускает RLS);
 //   * подняли SHELL_REVISION и забыли документы — инструкция «Проверка после
 //     деплоя» отправляет админа искать кэш, которого нет;
 //   * staging-конфигурация сделана так, что подставляет боевую базу.
@@ -23,7 +25,8 @@
 //      заведёт, и задача будет молча простаивать;
 //   5. make-config.mjs не содержит адресов и ключей, и staging-конфиг
 //      физически не может показать боевую базу;
-//   6. журнал ошибок: SQL миграции и код согласованы (таблица, команда, поля);
+//   6. журнал ошибок: SQL миграции, код записи и экран «Диагностика»
+//      согласованы (таблица, команда, поля, права против RLS, оболочка);
 //   7. имя кэша в sw.js совпадает с документами (ревизия не «потерялась»);
 //   8. прогон подключён к CI и к npm-скриптам.
 //
@@ -61,7 +64,8 @@ const REQUIRED = {
     'make-config.mjs': 'подстановка базы staging при сборке',
     'ops/README.md': 'инструкция: деплой, staging, бэкапы, мониторинг',
     'database/migrate-v2.9-ops-monitoring.sql': 'таблица и команда журнала ошибок',
-    'js/monitoring.js': 'модуль журнала ошибок в приложении'
+    'js/monitoring.js': 'модуль журнала ошибок в приложении',
+    'js/modules/diagnostics.js': 'экран «Диагностика»: журнал ошибок в интерфейсе'
 };
 
 const WORKFLOWS = {
@@ -90,7 +94,7 @@ async function main() {
     // --- 2. Скрипты разбираются ------------------------------------------
     log('=== 2. Каждый скрипт разбирается (node --check) ===');
     for (const file of ['tools/ops/probe-live.mjs', 'tools/ops/check-dump.mjs',
-        'make-config.mjs', 'js/monitoring.js']) {
+        'make-config.mjs', 'js/monitoring.js', 'js/modules/diagnostics.js']) {
         if (!exists(file)) continue;
         try {
             execFileSync(process.execPath, ['--check', path.join(ROOT, file)], { stdio: 'pipe' });
@@ -256,6 +260,45 @@ async function main() {
     ok('миграция журнала описана в документации базы',
         read('database', 'README.md').includes('migrate-v2.9-ops-monitoring.sql'));
 
+    // --- 6б. Экран «Диагностика»: читает тот же журнал ----------------------
+    // Экран — вторая половина журнала: без него администратор отвечал на
+    // «у кого не сохраняется» только SQL-запросом. Ломается тихо: раздел
+    // открывается и выглядит пустым, хотя на самом деле модуль не подключён,
+    // права расходятся с RLS или кнопки нет в разметке.
+    log('=== 6б. Экран «Диагностика» читает тот же журнал ===');
+    const diag = exists('js', 'modules', 'diagnostics.js')
+        ? read('js', 'modules', 'diagnostics.js') : '';
+    const mainJs = read('js', 'main.js');
+    const html = read('index.html');
+    const permissions = read('js', 'permissions.js');
+    const dictionary = read('js', 'i18n.js');
+
+    ok('экран читает ту же таблицу, что создаёт миграция',
+        diag.includes("db.select('app_errors'") && sql.includes('public.app_errors'));
+    ok('экран подключён к точке входа (js/main.js → loadDiagnostics в switchTab)',
+        mainJs.includes('loadDiagnostics()') && mainJs.includes("'diagnostics'"));
+    ok('раздел есть в разметке: кнопка в шапке и вкладка',
+        html.includes('id="btn-diagnostics"') && html.includes('id="tab-diagnostics"'));
+    ok('экран попадает в офлайн-оболочку (sw.js → APP_SHELL)',
+        swText.includes("'./js/modules/diagnostics.js'"));
+
+    // Права и RLS должны совпадать: раздел видят РОВНО те роли, которых пускает
+    // к public.app_errors политика миграции. Расхождение — это «кнопка есть, а
+    // данных нет» (или наоборот: права в базе есть, а экрана не видно).
+    const policyRoles = (sql.match(/rsk_app_errors_select_admin[\s\S]*?rsk_current_employee_role\(\) in \(([^)]*)\)/) || [])[1] || '';
+    const rlsRoles = [...policyRoles.matchAll(/'([^']+)'/g)].map((match) => match[1]).sort().join(', ');
+    const diagRoles = [...permissions.matchAll(/'([^']+)':\s*\[([^\]]*)\]/g)]
+        .filter((match) => match[2].includes("'view_diagnostics'"))
+        .map((match) => match[1]).sort().join(', ');
+    ok('право view_diagnostics выдано ровно тем ролям, что пускает RLS',
+        !!rlsRoles && diagRoles === rlsRoles, `RLS: ${rlsRoles || '—'}, права: ${diagRoles || '—'}`);
+    ok('вкладка закрыта этим правом (TAB_REQUIREMENTS)',
+        /'diagnostics':\s*'view_diagnostics'/.test(permissions));
+    ok('экран называет файл миграции, если таблицы ещё нет',
+        dictionary.includes('migrate-v2.9-ops-monitoring.sql'));
+    ok('ops/README.md описывает экран «Диагностика» (а не «следующий шаг»)',
+        opsDoc.includes('Диагностика') && !/следующий шаг/.test(opsDoc));
+
     // --- 7. Ревизия оболочки и документы ----------------------------------
     log('=== 7. Имя кэша оболочки совпадает с документами ===');
     const name = cacheName();
@@ -296,7 +339,7 @@ try {
 
     log('--- ИТОГ ---');
     log(failed === 0
-        ? '  ВСЁ ВЕРНО: проба выкладки, резервные копии, staging-конфиг, журнал ошибок и документация на месте'
+        ? '  ВСЁ ВЕРНО: проба выкладки, резервные копии, staging-конфиг, журнал ошибок, экран «Диагностика» и документация на месте'
         : '  не прошло проверок: ' + failed);
 
     process.exit(failed === 0 ? 0 : 1);

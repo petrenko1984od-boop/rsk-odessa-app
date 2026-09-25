@@ -2,6 +2,9 @@
 // Прогон нового согласования заявок на финансирование (v2.2.0) в браузере:
 //   прораб создаёт → директор (одобрить / на доработку / отклонить)
 //   → финансист выдаёт «Выдано» (сумма уходит с ЕГО подотчёта получателю).
+// Там же в браузере проверяется раздел «🩺 Диагностика» (журнал ошибок): он
+// открыт директору, срезы считают загруженные записи, а строка среза открывает
+// подробности со стеком; у финансиста кнопки раздела быть не должно.
 // Затем — рабочий экран прораба: фильтры блоков «💰 Мои заявки на
 // финансирование» и «📦 Мои заявки на материалы», нажимаемая целиком карточка
 // заявки и «📥 Архив» (автор убирает отработанную заявку: выданную,
@@ -52,6 +55,27 @@ const USER_IDS = {
 };
 const EMPLOYEE_BASE = { status: 'active', phone: null, notes: null, created_at: '2026-01-01T00:00:00Z' };
 
+// Журнал ошибок (раздел «🩺 Диагностика»): три одинаковые ошибки прораба и одна
+// от директора. Время — «несколько минут назад», иначе раздел с фильтром по
+// умолчанию («за неделю») их бы не показал; в базе журнал живёт 90 дней
+// (database/migrate-v2.9-ops-monitoring.sql). Стек и context заполнены — на них
+// проверяется окно подробностей.
+const ERROR_ROWS = [
+    { id: 1, kind: 'error', message: 'Cannot read properties of undefined (reading "id")', employee_id: 7, role: 'Прораб' },
+    { id: 2, kind: 'error', message: 'Cannot read properties of undefined (reading "id")', employee_id: 7, role: 'Прораб' },
+    { id: 3, kind: 'error', message: 'Cannot read properties of undefined (reading "id")', employee_id: 7, role: 'Прораб' },
+    { id: 4, kind: 'rejection', message: 'xlsx: библиотека не загрузилась', employee_id: 8, role: 'Директор' }
+].map((row, index) => ({
+    ...row,
+    created_at: new Date(Date.now() - (index + 1) * 60 * 1000).toISOString(),
+    app_version: '2.9.0',
+    shell_revision: 'r7',
+    stack: 'TypeError: Cannot read properties of undefined\n    at renderDashboard (js/modules/dashboard.js:120:5)',
+    page: '/',
+    user_agent: 'Mozilla/5.0 (проверочный прогон)',
+    context: { source: 'js/modules/dashboard.js:120:5' }
+}));
+
 // ---------------------------------- «база» ----------------------------------
 const store = {
     currentEmployeeId: 7,
@@ -81,6 +105,8 @@ const store = {
     cashRequests: [],
     cashRequestItems: [],
     cashOperations: [],
+    // Журнал ошибок для раздела «🩺 Диагностика» (см. ERROR_ROWS выше)
+    appErrors: ERROR_ROWS,
     nextRequestId: 101,
     nextItemId: 1001,
     nextOperationId: 5001,
@@ -187,6 +213,20 @@ function rowsFor(table, params) {
             return requested
                 .map((id) => ({ employee_id: id, name: employee(id)?.name || '—', balance: balanceOf(id) }))
                 .filter(() => params.employee_id || true);
+        }
+        // Журнал ошибок: раздел «🩺 Диагностика» фильтрует по времени
+        // (created_at=gte.<ISO>) и по виду события, а сортировку просит у базы
+        // (order=created_at.desc) — мок отвечает так же, как PostgREST, иначе
+        // «последние записи» показывали бы случайный порядок.
+        case 'app_errors': {
+            let rows = store.appErrors.slice();
+            const since = String(params.created_at || '').replace(/^gte\./, '');
+            if (since) rows = rows.filter((row) => String(row.created_at) >= since);
+            rows = byEq(rows, 'kind');
+            if (String(params.order || '').includes('created_at.desc')) {
+                rows = rows.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+            }
+            return rows;
         }
         default: return [];
     }
@@ -849,6 +889,64 @@ try {
     ok('у директора порядок разделов в шапке прежний («Рабочий экран» первым)',
         directorNav === 'btn-tasks', directorNav);
 
+    // ---------------------- 2б. Диагностика: журнал ошибок ----------------------
+    // Раздел читает ту же таблицу app_errors, что и готовые SQL-запросы из
+    // ops/README.md. Здесь проверяется то, чего не видно без браузера: вкладка
+    // открыта директору, срезы считают загруженные записи (группировка идёт в
+    // браузере, потому что PostgREST не умеет group by), а строка среза
+    // открывает подробности со стеком.
+    await evaluate('window.switchTab("diagnostics")');
+    await sleep(1200);
+    const diagUi = await evaluate('(() => {' +
+        'const text = (id) => (document.getElementById(id) || {}).innerText || "";' +
+        'const tab = document.getElementById("tab-diagnostics");' +
+        'return { visible: !!tab && !tab.classList.contains("hidden"),' +
+        ' button: (document.getElementById("btn-diagnostics") || {}).textContent || "",' +
+        ' summary: text("diag-summary"), groups: text("diag-groups-block"),' +
+        ' people: text("diag-people-block"), note: text("diag-note"),' +
+        ' groupsCount: document.querySelectorAll("#diag-groups-block tbody tr").length,' +
+        ' recentCount: document.querySelectorAll("#diag-recent-block tbody tr").length }; })()');
+    ok('у директора видна кнопка «🩺 Диагностика»',
+        diagUi.button.includes('Диагностика'), diagUi.button);
+    ok('раздел «Диагностика» открывается (вкладка видна)',
+        diagUi.visible === true && diagUi.groupsCount > 0);
+    ok('сводка считает записи журнала (4) и сотрудников (2)',
+        diagUi.summary.includes('4') && diagUi.summary.includes('2'),
+        diagUi.summary.replace(/\n/g, ' | '));
+    ok('«что повторяется» сгруппировало 4 записи в 2 ошибки (три одинаковые и одна)',
+        diagUi.groupsCount === 2, 'строк в срезе: ' + diagUi.groupsCount);
+    ok('«последние записи» показали все 4 записи периода',
+        diagUi.recentCount === 4, 'строк в срезе: ' + diagUi.recentCount);
+    ok('«кто» показывает имена сотрудников, а не их номера',
+        diagUi.groups.includes('Тест Прораб'), diagUi.groups.replace(/\n/g, ' | ').slice(0, 160));
+    ok('«у кого падает» считает ошибки по обоим сотрудникам',
+        diagUi.people.includes('Тест Прораб') && diagUi.people.includes('Тест Директор'),
+        diagUi.people.replace(/\n/g, ' | ').slice(0, 160));
+    ok('журнал прочитан без ошибок (подсказка раздела пуста)',
+        diagUi.note.trim() === '', diagUi.note.replace(/\n/g, ' | '));
+
+    await evaluate('document.querySelector("#diag-recent-block tbody tr").click()');
+    await sleep(500);
+    const diagDetail = await evaluate('(() => {' +
+        'const body = (document.getElementById("diag-detail-body") || {}).innerText || "";' +
+        'const head = (document.getElementById("diag-detail-head") || {}).textContent || "";' +
+        'return { body, head, open: !document.getElementById("diagnostics-modal").classList.contains("hidden") }; })()');
+    // Подписи в окне стилизованы классом `uppercase`, поэтому innerText отдаёт
+    // их заглавными — сверяем без учёта регистра.
+    ok('строка среза открывает подробности: кто видел ошибку и когда',
+        diagDetail.open === true && diagDetail.head.includes('Тест Прораб'),
+        diagDetail.head);
+    ok('в подробностях есть текст ошибки, стек и context',
+        diagDetail.body.includes('Cannot read properties of undefined') &&
+        /СТЕК ВЫЗОВОВ/i.test(diagDetail.body) && diagDetail.body.includes('js/modules/dashboard.js'),
+        diagDetail.body.replace(/\n/g, ' | ').slice(-180));
+    await evaluate('window.hideModal("diagnostics-modal")');
+    await sleep(300);
+
+    // Возвращаем раздел заявок: дальше прогон работает с ним.
+    await evaluate('window.switchTab("cash-requests")');
+    await sleep(900);
+
     await evaluate('window.openCashRequestDetail(' + requestA.id + ')');
     await sleep(600);
     const actions = await evaluate('(document.getElementById("cash-request-detail-actions") || {}).innerText || ""');
@@ -954,6 +1052,7 @@ try {
         ' hintVisible: vis("financier-balance-hint"),' +
         ' tasks: vis("btn-tasks"), orders: vis("btn-orders"), registry: vis("btn-registry"),' +
         ' employees: vis("btn-employees"), projects: vis("btn-projects"),' +
+        ' diag: vis("btn-diagnostics"),' +
         ' create: vis("create-cash-request-btn"), topup: vis("btn-topup-financier"),' +
         ' panel: (document.getElementById("financier-balance-panel") || {}).innerText || "",' +
         ' lists: (document.getElementById("cash-requests-container") || {}).innerText || "" }; })()');
@@ -972,6 +1071,8 @@ try {
         finUi.projects && finUi.employees && finUi.registry && !finUi.tasks && !finUi.orders,
         JSON.stringify({ projects: finUi.projects, employees: finUi.employees, registry: finUi.registry, tasks: finUi.tasks, orders: finUi.orders }));
     ok('финансист ничего не создаёт и не пополняет', finUi.create === false && finUi.topup === false);
+    ok('у финансиста нет раздела «Диагностика» (журнал видят Администратор и Директор)',
+        finUi.diag === false);
     ok('финансист видит одобренную заявку', finUi.lists.includes('Ф-1/26'));
     ok('финансист НЕ видит неодобренную заявку', !finUi.lists.includes('Ф-2/26'));
 

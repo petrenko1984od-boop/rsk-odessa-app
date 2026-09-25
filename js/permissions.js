@@ -56,7 +56,8 @@ const ROLE_PERMISSIONS = {
         'view_dashboard',
         // Вкладки
         'view_registry',
-        'view_orders_tab'            // ← Снабжение
+        'view_orders_tab',           // ← Снабжение
+        'view_diagnostics'           // ← журнал ошибок (RLS пускает ту же пару ролей)
     ],
     'Директор': [
         'view_employees',
@@ -74,7 +75,8 @@ const ROLE_PERMISSIONS = {
         'view_all_tasks',
         'view_dashboard',
         // Вкладки
-        'view_orders_tab'            // ← Снабжение: директор смотрит, но заявки не создаёт
+        'view_orders_tab',           // ← Снабжение: директор смотрит, но заявки не создаёт
+        'view_diagnostics'           // ← журнал ошибок: то же чтение, что Администратор (RLS)
         // create_order — НЕТ (директор не создаёт заявки на материалы)
         // manage_estimate — НЕТ (смета — рабочий файл ПТО, директору блок сметы не показывается)
     ],
@@ -164,7 +166,11 @@ const TAB_REQUIREMENTS = {
     'employees':     'view_tab_employees',   // Только по праву
     'orders':        'view_orders_tab',      // Только Админ + Снабженец
     'cash-requests': 'cash_view_all',        // Кассиры (Админ, Директор, Гл. инженер) + Финансист
-    'registry':      'view_registry'         // Только по праву
+    'registry':      'view_registry',        // Только по праву
+    // Журнал ошибок — внутренняя диагностика: читают Администратор и Директор
+    // (та же пара ролей, что в RLS на public.app_errors,
+    // database/migrate-v2.9-ops-monitoring.sql).
+    'diagnostics':   'view_diagnostics'
 };
 
 // =====================================================================
