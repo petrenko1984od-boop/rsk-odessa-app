@@ -32,27 +32,42 @@ export function listSources() {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) walk(full);
-            else if (entry.name.endsWith('.js')) jsFiles.push(path.relative(ROOT, full));
+            else if (entry.name.endsWith('.js')) jsFiles.push(posixPath(path.relative(ROOT, full)));
         }
     })(jsDir);
 
+    // Сортировка — по POSIX-виду пути: на Windows `path.relative()` отдаёт
+    // обратные слэши, и порядок файлов мог бы отличаться от раннера CI, а он
+    // входит в отпечаток.
     return [CONFIG_FILE, INPUT_FILE, 'index.html', ...jsFiles.sort()];
 }
 
+/** Путь «как в репозитории»: прямые слэши (на Windows path.relative — `js\utils.js`). */
+function posixPath(rel) {
+    return rel.split(path.sep).join('/');
+}
+
 /**
- * Текст исходника с переводами строк «как в репозитории» — LF.
+ * Исходник «как в репозитории»: путь с прямыми слэшами и текст с переводами
+ * строк LF.
  *
- * Зачем нормализовать: в репозитории (и на раннере GitHub Actions) файлы
- * лежат с LF, а рабочая копия Windows получает CRLF (`.gitattributes` —
- * `* text=auto` при `core.autocrlf=true`). Если хешировать байты как есть,
- * отпечаток зависит от машины: локально сборка «совпадает», а на CI тот же
- * коммит даёт ДРУГОЙ отпечаток — задача «Собранный CSS совпадает с
- * исходниками» падала с `git diff`, хотя правок в разметке не было.
- * Своё содержимое Tailwind собирает в один и тот же CSS, поэтому различия
- * в отпечатке не должно быть вовсе: сравниваем только текст.
+ * Зачем нормализовать: рабочая копия Windows отличается от раннера CI двумя
+ * вещами. Первая — переводы строк: в репозитории файлы лежат с LF, а копия
+ * Windows получает CRLF (`.gitattributes` — `* text=auto` при
+ * `core.autocrlf=true`). Вторая — разделитель пути: `path.relative()` на
+ * Windows отдаёт `js\utils.js`, а на раннере — `js/utils.js`. Если хешировать
+ * байты и путь как есть, отпечаток зависит от машины: локально сборка
+ * «совпадает», а на CI тот же коммит даёт ДРУГОЙ отпечаток — задача «Собранный
+ * CSS совпадает с исходниками» падала с `git diff`, хотя правок в разметке не
+ * было. Сам Tailwind собирает один и тот же CSS при любых переводах строк,
+ * поэтому различий в отпечатке быть не должно: в хеш идут путь с прямыми
+ * слэшами и текст с LF.
  */
-function sourceText(rel) {
-    return fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+function sourceEntry(rel) {
+    return {
+        file: posixPath(rel),
+        text: fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n')
+    };
 }
 
 /**
@@ -62,9 +77,10 @@ function sourceText(rel) {
 export function sourceFingerprint(files = listSources()) {
     const hash = crypto.createHash('sha256');
     for (const rel of files) {
-        hash.update(rel);
+        const entry = sourceEntry(rel);
+        hash.update(entry.file);
         hash.update('\0');
-        hash.update(sourceText(rel));
+        hash.update(entry.text);
         hash.update('\0');
     }
     return hash.digest('hex').slice(0, 16);

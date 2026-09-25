@@ -48,7 +48,17 @@ jobs:
         run: npm run build
 
       - name: Собранный CSS совпадает с исходниками
-        run: git diff --exit-code -- css/tailwind.css
+        # Шаг ловит «класс добавили, а npm run build забыли» и «собрали на другой
+        # машине». Если разошлось, в сводку задачи уходит хвост диффа: видно, что
+        # именно не совпало, не открывая журнал (в журнал смотрят не все).
+        run: |
+          if git diff --quiet -- css/tailwind.css; then
+            echo "css/tailwind.css — совпадает со свежей сборкой"
+            exit 0
+          fi
+          echo "::error::css/tailwind.css разошёлся со сборкой: $(git diff --unified=0 -- css/tailwind.css | tail -c 1200 | tr '\n' '~')"
+          git diff --stat -- css/tailwind.css
+          exit 1
 
       - name: Линтер
         run: npm run lint

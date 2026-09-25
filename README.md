@@ -436,8 +436,8 @@ iPhone — `Документация/Инструкция-01-Установка-
 
 Проверка после деплоя: открыть сайт по https → DevTools → **Application** → *Manifest*
 (иконки, имя, без ошибок), *Service Workers* (activated) и *Cache Storage* —
-там должен быть один кэш `rsk-odessa-v2.9.0-r5` (имя складывается из `APP_VERSION` и
-`SHELL_REVISION` в `sw.js`, сейчас `2.9.0` и `r5`; то же значение — в `CONFIG.APP.VERSION`
+там должен быть один кэш `rsk-odessa-v2.9.0-r6` (имя складывается из `APP_VERSION` и
+`SHELL_REVISION` в `sw.js`, сейчас `2.9.0` и `r6`; то же значение — в `CONFIG.APP.VERSION`
 из `js/config.js`). Там же кнопка **«Установить»**
 в адресной строке.
 
