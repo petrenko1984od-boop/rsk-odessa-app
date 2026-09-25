@@ -205,7 +205,11 @@ npm run build    # src/tailwind.css + разметка → css/tailwind.css (м�
   (`'bg-yellow-100 text-yellow-800'`), а не `bg-${tone}-100`.
 * В конце `css/tailwind.css` стоит строка-отпечаток `/* rsk-tailwind-build v2.9.0 <хеш> */`:
   она связывает файл с текущей разметкой и модулями, а версия — с `js/config.js` и `sw.js`.
-  Сверяет это `tools/checks/frontend-check.mjs`.
+  Сверяет это `tools/checks/frontend-check.mjs`, а CI требует ещё и совпадения закоммиченного
+  файла со свежей сборкой (`git diff --exit-code -- css/tailwind.css`). Отпечаток считается по
+  тексту исходников с переводами строк LF: в рабочей копии Windows файлы лежат с CRLF
+  (`.gitattributes` → `* text=auto`), и без такой нормализации отпечаток зависел бы от машины —
+  локально сборка «совпадала», а на CI тот же коммит давал другой отпечаток и задача падала.
 
 ### Нажатия: `data-action` вместо `onclick`
 
@@ -432,8 +436,8 @@ iPhone — `Документация/Инструкция-01-Установка-
 
 Проверка после деплоя: открыть сайт по https → DevTools → **Application** → *Manifest*
 (иконки, имя, без ошибок), *Service Workers* (activated) и *Cache Storage* —
-там должен быть один кэш `rsk-odessa-v2.9.0-r4` (имя складывается из `APP_VERSION` и
-`SHELL_REVISION` в `sw.js`, сейчас `2.9.0` и `r4`; то же значение — в `CONFIG.APP.VERSION`
+там должен быть один кэш `rsk-odessa-v2.9.0-r5` (имя складывается из `APP_VERSION` и
+`SHELL_REVISION` в `sw.js`, сейчас `2.9.0` и `r5`; то же значение — в `CONFIG.APP.VERSION`
 из `js/config.js`). Там же кнопка **«Установить»**
 в адресной строке.
 

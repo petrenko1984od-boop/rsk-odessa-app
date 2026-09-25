@@ -40,6 +40,22 @@ export function listSources() {
 }
 
 /**
+ * Текст исходника с переводами строк «как в репозитории» — LF.
+ *
+ * Зачем нормализовать: в репозитории (и на раннере GitHub Actions) файлы
+ * лежат с LF, а рабочая копия Windows получает CRLF (`.gitattributes` —
+ * `* text=auto` при `core.autocrlf=true`). Если хешировать байты как есть,
+ * отпечаток зависит от машины: локально сборка «совпадает», а на CI тот же
+ * коммит даёт ДРУГОЙ отпечаток — задача «Собранный CSS совпадает с
+ * исходниками» падала с `git diff`, хотя правок в разметке не было.
+ * Своё содержимое Tailwind собирает в один и тот же CSS, поэтому различия
+ * в отпечатке не должно быть вовсе: сравниваем только текст.
+ */
+function sourceText(rel) {
+    return fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
+}
+
+/**
  * Короткий отпечаток (16 hex) содержимого исходников: любая правка разметки
  * или модулей меняет его, поэтому сборку видно как устаревшую.
  */
@@ -48,7 +64,7 @@ export function sourceFingerprint(files = listSources()) {
     for (const rel of files) {
         hash.update(rel);
         hash.update('\0');
-        hash.update(fs.readFileSync(path.join(ROOT, rel)));
+        hash.update(sourceText(rel));
         hash.update('\0');
     }
     return hash.digest('hex').slice(0, 16);

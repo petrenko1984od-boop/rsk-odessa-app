@@ -27,15 +27,15 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { launchChrome } from './chrome-start.mjs';
 
 const ROOT = process.env.APP_ROOT
     ? path.resolve(process.env.APP_ROOT)
     : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PORT = 8125;
 const CDP_PORT = 9339;
-const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+// Браузер поднимает chrome-start.mjs (путь к нему — CHROME_PATH, запуск «лестницей»).
 
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 // Снабженец: видит раздел «Снабжение» и ВСЕ заявки. Прораб видел бы только
@@ -432,17 +432,9 @@ try {
     log('  данные мока: ' + ORDER_COUNT + ' заявок; «Активных» (new + in_progress): 35, из них страница 25');
 
     PROFILE = prepareProfile(PROFILE);
-    chrome = spawn(CHROME, [
-        '--headless=new', '--remote-debugging-port=' + CDP_PORT,
-        '--user-data-dir=' + PROFILE, '--no-first-run', '--no-default-browser-check',
-        '--disable-extensions', '--window-size=1280,900', 'about:blank'
-    ], { stdio: 'ignore' });
-
-    let version = null;
-    for (let i = 0; i < 60 && !version; i++) {
-        try { version = await getJson('http://127.0.0.1:' + CDP_PORT + '/json/version'); } catch { await sleep(500); }
-    }
-    if (!version) throw new Error('Chrome не поднялся');
+    const started = await launchChrome({ port: CDP_PORT, profile: PROFILE, windowSize: '1280,900', label: 'scale' });
+    chrome = started.child;
+    log('  Chrome: ' + started.browser + ' (' + started.mode + ')');
 
     const targets = await getJson('http://127.0.0.1:' + CDP_PORT + '/json/list');
     const page = targets.find((t) => t.type === 'page');

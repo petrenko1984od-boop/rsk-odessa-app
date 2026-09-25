@@ -98,6 +98,11 @@ jobs:
 
       # Chrome ставится в задаче: на ubuntu-latest его нет, а прогонам нужен
       # настоящий браузер (они поднимают его сами и говорят с ним по CDP).
+      # Ставится он в кэш инструментов, без setuid-помощника песочницы, а на
+      # Ubuntu 24.04 неразрешённые user namespaces ограничены AppArmor — без
+      # послаблений (`--no-sandbox`) браузер там выходит сразу после старта.
+      # Поэтому tools/checks/chrome-start.mjs пробует запуск «лестницей».
+
       - name: Chrome
         id: chrome
         uses: browser-actions/setup-chrome@v1
