@@ -8,7 +8,7 @@
 #
 # Три задачи — по цене и по потребностям:
 #   * «Прогоны без браузера» — быстрые (сборка CSS, линтер, схема/миграции,
-#     словарь языков, НДС, фронтенд). Сборка CSS ДОЛЖНА совпасть с
+#     словарь языков, НДС, фронтенд, эксплуатация). Сборка CSS ДОЛЖНА совпасть с
 #     закоммиченной: `git diff` после `npm run build` ругается, если правила
 #     разметку, а css/tailwind.css не пересобрали;
 #   * «Миграции в настоящем Postgres» — SQL-файлы выполняются в pglite;
@@ -59,6 +59,7 @@ jobs:
           node tools/checks/i18n-check.mjs
           node tools/checks/vat-check.mjs
           node tools/checks/frontend-check.mjs
+          node tools/checks/ops-check.mjs
 
       - name: Отчёты прогонов
         if: always()

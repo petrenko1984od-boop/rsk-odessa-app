@@ -12,9 +12,11 @@
         "build": "node tools/build-css.mjs",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
-        "check": "node tools/checks/migration-check.mjs && node tools/checks/i18n-check.mjs && node tools/checks/vat-check.mjs && node tools/checks/frontend-check.mjs",
+        "check": "node tools/checks/migration-check.mjs && node tools/checks/i18n-check.mjs && node tools/checks/vat-check.mjs && node tools/checks/frontend-check.mjs && node tools/checks/ops-check.mjs",
         "check:db": "node tools/checks/migration-run-check.mjs && node tools/checks/schema-live-check.mjs",
-        "check:browser": "node tools/checks/invoice-check.mjs && node tools/checks/fin-workflow-check.mjs && node tools/checks/scale-check.mjs"
+        "check:browser": "node tools/checks/invoice-check.mjs && node tools/checks/fin-workflow-check.mjs && node tools/checks/scale-check.mjs",
+        "check:ops": "node tools/checks/ops-check.mjs",
+        "probe": "node tools/ops/probe-live.mjs"
     },
     "devDependencies": {
         "eslint": "^9.13.0",

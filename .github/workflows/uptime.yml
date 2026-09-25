@@ -1,0 +1,108 @@
+# =====================================================================
+# ДОСТУПНОСТЬ (GitHub Actions): проба боевого адреса каждые 15 минут
+# =====================================================================
+# Зачем: сотрудник утром открывает приложение и видит «нет соединения» — а
+# узнаём мы об этом от него. Эта задача проверяет боевой адрес сама и, когда
+# он перестал отвечать, ОТКРЫВАЕТ ISSUE в этом же репозитории (GitHub шлёт
+# письмо на почту, к которой привязан аккаунт). Когда сайт отвечает снова —
+# issue закрывается автоматически, поэтому список открытых задач читается как
+# «что сейчас сломано».
+#
+# Что именно проверяется — tools/ops/probe-live.mjs (то же, что в задаче
+# «Проверка после выкладки»): страница, CSP, sw.js с версией из репозитория,
+# манифест, собранные стили, вся офлайн-оболочка, библиотеки с CDN.
+#
+# ⚠️ Это не замена внешнему сервису слежения (UptimeRobot и подобным):
+#    GitHub запускает расписание с задержками и может пропустить ночной сбой.
+#    Настроить внешний сервис — 5 минут, шаги в ops/README.md → «Мониторинг».
+#
+# Секрет: SITE_URL — тот же боевой адрес, что и в проверке после выкладки.
+# Права: issues: write — чтобы открывать и закрывать задачу о сбое.
+# =====================================================================
+name: Доступность
+
+on:
+  schedule:
+    # Каждые 15 минут. GitHub может запустить позже — это «сторож», а не секундомер.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Боевой адрес отвечает
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Есть ли адрес сайта (секрет SITE_URL)
+        id: site
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          if [ -z "$SITE_URL" ]; then
+            echo "::warning title=Проба не выполнялась::Секрет SITE_URL не задан — доступность никто не проверяет (см. ops/README.md)"
+          else
+            echo "url=$SITE_URL" >> "$GITHUB_OUTPUT"
+          fi
+
+      # continue-on-error: сама проба не должна останавливать задачу — иначе
+      # шаги ниже (issue и отчёт) не выполнятся, и о сбое никто не узнает.
+      - name: Проба боевого адреса
+        id: probe
+        if: steps.site.outputs.url != ''
+        continue-on-error: true
+        env:
+          SITE_URL: ${{ steps.site.outputs.url }}
+        run: node tools/ops/probe-live.mjs
+
+      - name: Сайт недоступен — открыть задачу
+        if: steps.probe.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: 'Проба боевого адреса не проходит'
+        run: |
+          gh label list --limit 100 | grep -q '^ops-monitoring' \
+            || gh label create ops-monitoring --color B60205 \
+               --description 'Автоматические пробы доступности (tools/ops/probe-live.mjs)' || true
+
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                     --json number --jq '.[0].number // empty')
+
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file /tmp/rsk-fin/probe-live.txt
+          else
+            gh issue create --title "$TITLE" --label ops-monitoring \
+              --body-file /tmp/rsk-fin/probe-live.txt
+          fi
+
+      - name: Сайт отвечает — закрыть задачу о сбое
+        if: steps.probe.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: 'Проба боевого адреса не проходит'
+        run: |
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+                     --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue close "$number" --comment 'Проба снова проходит: сайт отвечает и отдаёт ожидаемую версию.'
+          fi
+
+      - name: Отчёт пробы
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-uptime
+          path: /tmp/rsk-fin/*.txt
+          if-no-files-found: ignore

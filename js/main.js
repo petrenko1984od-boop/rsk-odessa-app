@@ -6,6 +6,7 @@ import { CONFIG } from './config.js';
 import { log, toast } from './utils.js';
 import { initLoginScreen } from './auth.js';
 import { initPWA } from './pwa.js';   // установка приложения и обновление версии
+import { initMonitoring } from './monitoring.js';   // журнал ошибок (эксплуатация)
 import { initI18n, onLangChange } from './i18n.js';   // язык интерфейса (ru/uk)
 import { initTheme } from './theme.js';               // цветовая схема
 import './actions.js';   // нажатия кнопок по data-action (см. шапку файла, CSP)
@@ -725,6 +726,7 @@ function boot() {
     bindForms();
     initOfflineBanner();
     initPWA();   // service worker + предложение установить приложение (PWA)
+    initMonitoring();   // журнал ошибок: необработанные исключения и промисы
 
     initLoginScreen({
         onSuccess: (user) => {

@@ -1,0 +1,185 @@
+# =====================================================================
+# РЕЗЕРВНАЯ КОПИЯ БАЗЫ (GitHub Actions): дамп по расписанию + проверка
+# =====================================================================
+# Зачем: до этого копию делали руками и только перед миграцией («Supabase →
+# Backups», database/README.md). Всё остальное время — то есть ровно тогда,
+# когда база и ломается (ошибочное удаление, отозванные права, испорченный
+# отчёт) — копии не было вовсе.
+#
+# Что делает задача:
+#   1. снимает дамп боевой базы в три файла: роли, схема, данные;
+#   2. сжимает и ПРОВЕРЯЕТ их (tools/ops/check-dump.mjs): не пустые, в схеме
+#      есть таблицы приложения, архивы распаковываются, sha256 записан в
+#      манифест — файл лежит рядом с дампом;
+#   3. складывает архив артефактом с хранением 90 дней;
+#   4. если заведён секрет STAGING_DB_URL — РАЗВОРАЧИВАЕТ дамп на staging и
+#      сверяет, что строки появились. Копия, которую ни разу не разворачивали,
+#      копией не является: об этом говорит и ops/README.md.
+#
+# ⚠️ Дамп артефактом GitHub — это НЕ защита от потери аккаунта и не off-site:
+#    90 дней, внутри GitHub. Для «настоящей» копии раз в месяц скачайте
+#    артефакт и положите в защищённую папку (напоминание — в ops/README.md).
+#
+# Секреты: SUPABASE_DB_URL (строка подключения к боевой базе с паролем — взять
+# в Supabase → Project Settings → Database → Connection string → URI),
+# STAGING_DB_URL (то же для staging-проекта; без него проверка восстановления
+# пропускается). Секреты не печатаются: скрипты выводят только хост.
+# =====================================================================
+name: Резервная копия базы
+
+on:
+  schedule:
+    # 01:10 UTC — ночью по Одессе, когда в приложении никто не работает.
+    - cron: '10 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: Дамп боевой базы
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Есть ли строка подключения (секрет SUPABASE_DB_URL)
+        id: db
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::warning title=Дамп не снимался::Секрет SUPABASE_DB_URL не задан — резервных копий нет (см. ops/README.md)"
+          else
+            echo "url=$SUPABASE_DB_URL" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Supabase CLI (версии клиента и сервера согласованы)
+        if: steps.db.outputs.url != ''
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Дамп ролей, схемы и данных
+        if: steps.db.outputs.url != ''
+        env:
+          SUPABASE_DB_URL: ${{ steps.db.outputs.url }}
+        run: |
+          set -euo pipefail
+          mkdir -p dump
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f dump/roles.sql  --role-only
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f dump/schema.sql
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f dump/data.sql --data-only
+          gzip -9 dump/roles.sql dump/schema.sql dump/data.sql
+          ls -lh dump
+
+      - name: Проверить дамп (не пустой, таблицы на месте, sha256 в манифест)
+        if: steps.db.outputs.url != ''
+        run: node tools/ops/check-dump.mjs dump
+
+      - name: Секрета нет — это надо починить
+        if: steps.db.outputs.url == ''
+        run: |
+          echo "::error title=Резервных копий нет::Задайте секрет SUPABASE_DB_URL (Supabase → Project Settings → Database → Connection string → URI) и запустите задачу вручную."
+          exit 1
+
+      - name: Архив дампа (хранится 90 дней)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: dump/
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Отчёт проверки дампа
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-backup
+          path: /tmp/rsk-fin/*.txt
+          if-no-files-found: ignore
+
+  restore:
+    name: Проверка восстановления (staging)
+    needs: dump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Есть ли staging-база (секрет STAGING_DB_URL)
+        id: staging
+        env:
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+        run: |
+          if [ -z "$STAGING_DB_URL" ]; then
+            echo "::warning title=Восстановление не проверялось::Секрет STAGING_DB_URL не задан — дамп не разворачивался (см. ops/README.md)"
+          else
+            echo "url=$STAGING_DB_URL" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Скачать дамп
+        if: steps.staging.outputs.url != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: db-backup
+          path: dump
+
+      - name: Клиент Postgres
+        if: steps.staging.outputs.url != ''
+        run: |
+          command -v psql >/dev/null || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+
+      # Схема грузится МЯГКО (ON_ERROR_STOP=0): на staging часть объектов уже
+      # есть, а расширения Supabase могут отличаться. Ошибки видно в логе, но
+      # «упало на первом create» не должно отменять проверку данных.
+      # Данные грузятся ЖЁСТКО: тут ошибка означает, что копия неполная.
+      - name: Развернуть дамп на staging
+        if: steps.staging.outputs.url != ''
+        env:
+          STAGING_DB_URL: ${{ steps.staging.outputs.url }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rsk-fin
+          gunzip -kf dump/*.sql.gz
+          psql "$STAGING_DB_URL" -v ON_ERROR_STOP=0 -f dump/schema.sql > /tmp/rsk-fin/staging-schema.txt 2>&1 || true
+          psql "$STAGING_DB_URL" -v ON_ERROR_STOP=1 -f dump/data.sql
+
+      - name: Сверка — строки на месте
+        if: steps.staging.outputs.url != ''
+        env:
+          STAGING_DB_URL: ${{ steps.staging.outputs.url }}
+        run: |
+          set -euo pipefail
+          counts=$(psql "$STAGING_DB_URL" -Atc "
+            select 'employees=' || (select count(*) from employees)
+                || ' projects=' || (select count(*) from projects)
+                || ' orders='   || (select count(*) from orders)
+                || ' cash_operations=' || (select count(*) from cash_operations)")
+          echo "после восстановления: $counts"
+          for pair in $counts; do
+            name=${pair%%=*}; value=${pair#*=}
+            case "$name" in
+              employees|projects|orders)
+                if [ "$value" -eq 0 ]; then
+                  echo "::error title=Восстановление неполное::таблица $name пуста после разворачивания дампа"
+                  exit 1
+                fi ;;
+            esac
+          done
+
+      - name: Логи восстановления
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-restore
+          path: /tmp/rsk-fin/*.txt
+          if-no-files-found: ignore

@@ -98,9 +98,11 @@ export default [
         }
     },
 
-    // ---- Инструменты (tools/**): Node, .mjs ----
+    // ---- Инструменты (tools/**) и сборочный скрипт в корне: Node, .mjs ----
+    // make-config.mjs лежит в корне осознанно: его зовёт сборка staging-проекта
+    // Vercel, а папку tools/ на хостинг не отправляют (см. ops/README.md).
     {
-        files: ['tools/**/*.mjs', 'tools/**/*.js'],
+        files: ['tools/**/*.mjs', 'tools/**/*.js', 'make-config.mjs'],
         languageOptions: {
             globals: {
                 ...globals.node

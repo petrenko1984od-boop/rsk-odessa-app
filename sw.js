@@ -156,7 +156,15 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        при установке — без переустановки worker-а сотрудники получали 504
 //        вместо xlsx, supabase-js, frappe-gantt, html2canvas, jsPDF и шрифта
 //        Manrope (см. README → «Политика Content-Security-Policy»).
-const SHELL_REVISION = 'r3';
+//   r4 — журнал ошибок (эксплуатация): необработанные исключения и промисы
+//        сотрудников уходят в базу — таблица public.app_errors и команда
+//        rsk_log_app_errors (database/migrate-v2.9-ops-monitoring.sql), модуль
+//        js/monitoring.js и его вызов в js/main.js. Читают журнал
+//        Администратор и Директор; на локальном адресе журнал выключен, чтобы
+//        проверочные прогоны с моком базы не писали в боевую базу.
+//        Файлы оболочки переустанавливаются у всех, кто уже установил
+//        приложение: в APP_SHELL добавлен js/monitoring.js.
+const SHELL_REVISION = 'r4';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
@@ -172,6 +180,7 @@ const APP_SHELL = [
     './js/main.js',
     './js/actions.js',
     './js/config.js',
+    './js/monitoring.js',
     './js/utils.js',
     './js/i18n.js',
     './js/theme.js',
