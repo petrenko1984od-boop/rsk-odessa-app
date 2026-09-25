@@ -52,9 +52,15 @@ const RELAXED_FLAGS = [
  * сборка браузера не понимает форму `--headless=new`.
  */
 const ATTEMPTS = [
-    { mode: 'обычный запуск', headless: '--headless=new', flags: [], waitMs: 8000 },
-    { mode: 'с --no-sandbox', headless: '--headless=new', flags: RELAXED_FLAGS, waitMs: 20000 },
-    { mode: 'с --no-sandbox и простым --headless', headless: '--headless', flags: RELAXED_FLAGS, waitMs: 15000 }
+    { mode: 'обычный запуск', headless: '--headless=new', flags: [], waitMs: 8000, relaxed: false },
+    { mode: 'с --no-sandbox', headless: '--headless=new', flags: RELAXED_FLAGS, waitMs: 20000, relaxed: true },
+    {
+        mode: 'с --no-sandbox и простым --headless',
+        headless: '--headless',
+        flags: RELAXED_FLAGS,
+        waitMs: 15000,
+        relaxed: true
+    }
 ];
 
 /** Файл вывода браузера — рядом с отчётами прогонов (`%TEMP%\rsk-fin`). */
@@ -74,9 +80,20 @@ function tail(file, lines = 6) {
 }
 
 /** Ответ Chrome о себе: он же — признак, что порт отладки открылся. */
-async function cdpVersion(port) {
-    const response = await fetch('http://127.0.0.1:' + port + '/json/version');
-    return response.json();
+async function cdpVersion(port, timeoutMs) {
+    // Свой срок на запрос обязателен: у fetch в Node собственный таймаут
+    // (минуты), и зависший запрос к порту отладки переживёт и попытку, и
+    // задачу — прогон «висит» в CI вместо того, чтобы перейти к следующей
+    // попытке.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch('http://127.0.0.1:' + port + '/json/version',
+            { signal: controller.signal });
+        return await response.json();
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /**
@@ -86,9 +103,10 @@ async function cdpVersion(port) {
 async function waitForCdp(port, waitMs, isDead) {
     const deadline = Date.now() + waitMs;
     for (;;) {
+        const left = deadline - Date.now();
         try {
-            return await cdpVersion(port);
-        } catch { /* браузер ещё не открыл порт */ }
+            return await cdpVersion(port, Math.max(500, Math.min(1000, left)));
+        } catch { /* браузер ещё не открыл порт или не ответил */ }
         if (isDead() || Date.now() >= deadline) return null;
         await sleep(500);
     }
@@ -137,6 +155,13 @@ export async function launchChrome({ port, profile, windowSize = '1280,1000', la
         try { fs.closeSync(fd); } catch { /* уже закрыт */ }
 
         if (version) {
+            // В CI полезно видеть, понадобилась ли «лестница»: строка уходит и в
+            // отчёт прогона, и в сводку задачи (аннотацией) — по ней ясно, что
+            // именно не сработало в обычном запуске.
+            if (attempt.relaxed && process.env.GITHUB_ACTIONS === 'true') {
+                console.log('::notice::Chrome поднялся не с первой попытки («' +
+                    attempt.mode + '»): ' + tried.join('; '));
+            }
             return {
                 child,
                 version,
