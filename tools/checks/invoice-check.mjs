@@ -29,7 +29,7 @@ const ROOT = process.env.APP_ROOT
 const PORT = 8126;
 const CDP_PORT = 9340;
 // Браузер поднимает chrome-start.mjs (путь к нему — CHROME_PATH, запуск «лестницей»).
-const PROFILE = path.join(os.tmpdir(), 'rsk-fin', 'chrome-profile-invoice');
+const PROFILE = path.join(os.tmpdir(), 'freedom-fin', 'chrome-profile-invoice');
 const BASE = 'http://127.0.0.1:' + PORT;
 
 const USER_IDS = {
@@ -1535,7 +1535,7 @@ try {
 } finally {
     try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
     try { server.close(); } catch { /* уже закрыт */ }
-    const outDir = path.join(os.tmpdir(), 'rsk-fin');
+    const outDir = path.join(os.tmpdir(), 'freedom-fin');
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'invoice-check.txt'), report.join('\r\n'), 'utf8');
     // Код возврата 1, если есть непройденные проверки (удобно для автоматики).

@@ -1,5 +1,5 @@
 # =====================================================================
-# НЕПРЕРЫВНАЯ ИНТЕГРАЦИЯ (GitHub Actions): проверки RSK Odessa
+# НЕПРЕРЫВНАЯ ИНТЕГРАЦИЯ (GitHub Actions): проверки FreeDOM
 # =====================================================================
 # Зачем: перед выкладкой руками делают одно и то же — собирают CSS, гоняют
 # линтер и прогоны. Если шаг забыть, ошибка уезжает к сотрудникам (так было с
@@ -76,7 +76,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reports-static
-          path: /tmp/rsk-fin/*.txt
+          path: /tmp/freedom-fin/*.txt
           if-no-files-found: ignore
 
   migrations:
@@ -135,5 +135,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reports-browser
-          path: /tmp/rsk-fin/*.txt
+          path: /tmp/freedom-fin/*.txt
           if-no-files-found: ignore

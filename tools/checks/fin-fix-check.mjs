@@ -43,7 +43,7 @@ function prepareProfile(dir) {
     }
 }
 
-let PROFILE = path.join(os.tmpdir(), 'rsk-fin', 'chrome-profile');
+let PROFILE = path.join(os.tmpdir(), 'freedom-fin', 'chrome-profile');
 const SCENARIO = process.env.SCENARIO || 'A';
 const FLOW = process.env.FLOW || 'finance';   // 'finance' — заявка на работы, 'order' — на материалы
 
@@ -533,7 +533,7 @@ try {
 } finally {
     try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
     try { server.close(); } catch { /* сервер уже закрыт */ }
-    const outDir = path.join(os.tmpdir(), 'rsk-fin');
+    const outDir = path.join(os.tmpdir(), 'freedom-fin');
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'fin-fix-' + (process.env.FLOW || 'finance') + '.txt'), report.join('\r\n'), 'utf8');
     // Код возврата 1, если есть непройденные проверки (удобно для автоматики).

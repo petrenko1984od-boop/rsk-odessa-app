@@ -34,7 +34,7 @@ GitHub → **Settings → Secrets and variables → Actions → New repository s
 
 | Секрет | Кому нужен | Зачем | Где взять |
 | --- | --- | --- | --- |
-| `SITE_URL` | `post-deploy`, `uptime` | боевой адрес: без него обе задачи печатают предупреждение и ничего не проверяют | адрес приложения в Vercel (например `https://rsk-odessa.vercel.app`) |
+| `SITE_URL` | `post-deploy`, `uptime` | боевой адрес: без него обе задачи печатают предупреждение и ничего не проверяют | адрес приложения в Vercel (например `https://<проект>.vercel.app`) |
 | `SUPABASE_DB_URL` | `backup` | строка подключения к **боевой** базе для дампа | Supabase → Project Settings → Database → Connection string → **URI** (там же пароль) |
 | `STAGING_DB_URL` | `backup` (вторая задача) | развернуть дамп на staging и убедиться, что копия рабочая | то же для staging-проекта Supabase |
 
@@ -54,7 +54,7 @@ GitHub → **Settings → Secrets and variables → Actions → New repository s
    **«Проверка после выкладки»** (`post-deploy.yml`) ждёт до 10 минут и
    проверяет, что боевой адрес отдаёт **именно этот коммит**:
    * `sw.js` — та же версия и та же ревизия (`SHELL_REVISION`), что в репозитории;
-   * `css/tailwind.css` — тот же отпечаток сборки (`rsk-tailwind-build v… <хеш>`);
+   * `css/tailwind.css` — тот же отпечаток сборки (`freedom-tailwind-build v… <хеш>`);
    * `js/config.js` — та же версия и тот же адрес базы;
    * политика CSP разрешает базу и все четыре хоста CDN (иначе service worker
      отдаёт 504 вместо библиотек);
@@ -186,7 +186,7 @@ psql "$env:STAGING_DB_URL" -v ON_ERROR_STOP=1 -f dump/data.sql     # данны�
 Pingdom — на бесплатном тарифе):
 
 * URL: `$SITE_URL` — тип **HTTP(s)**, ожидание **200** и ключевого слова
-  `RSK Odessa` (так проверка не «пройдёт» по странице-заглушке хостера);
+  `FreeDOM` (так проверка не «пройдёт» по странице-заглушке хостера);
 * URL: `$SITE_URL/sw.js` — ожидание 200 и слова `SHELL_REVISION` (это ловит
   случай, когда сайт открывается, а service worker не отдаётся);
 * URL: `$SITE_URL/manifest.json` — ожидание 200 (манифест нужен для установки

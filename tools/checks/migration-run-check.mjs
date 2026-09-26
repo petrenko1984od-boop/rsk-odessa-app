@@ -685,7 +685,7 @@ log(failed === 0
     ? '  ВСЁ ВЕРНО: миграция применяется на настоящем Postgres и защищена от обрыва наполовину'
     : '  не прошло проверок: ' + failed);
 
-const outDir = path.join(os.tmpdir(), 'rsk-fin');
+const outDir = path.join(os.tmpdir(), 'freedom-fin');
 try {
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'migration-run-check.txt'), report.join('\r\n'), 'utf8');

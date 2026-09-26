@@ -44,7 +44,7 @@
 //                          (так workflow не падает до того, как админ завёл
 //                          секрет SITE_URL)
 //   --report=<файл>        дополнительно записать отчёт в этот файл
-//                          (по умолчанию %TEMP%\rsk-fin\probe-live.txt)
+//                          (по умолчанию %TEMP%\freedom-fin\probe-live.txt)
 //
 // Код возврата: 0 — всё сошлось; 1 — есть замечания; 2 — нет адреса и не
 // передан --allow-missing-url.
@@ -81,7 +81,7 @@ const siteArg = (positional[0] || process.env.SITE_URL || '').trim().replace(/\/
 const waitSec = num('wait', 0);
 const allowMissingUrl = has('allow-missing-url');
 const asJson = has('json');
-const reportPath = flags.get('report') || path.join(os.tmpdir(), 'rsk-fin', 'probe-live.txt');
+const reportPath = flags.get('report') || path.join(os.tmpdir(), 'freedom-fin', 'probe-live.txt');
 
 const report = [];
 const log = (...args) => { const line = args.join(' '); report.push(line); if (!asJson) console.log(line); };
@@ -128,7 +128,7 @@ function expectations() {
     const sw = read('sw.js');
     const config = read('js', 'config.js');
     const css = read('css', 'tailwind.css');
-    const stamp = css.match(/\/\* rsk-tailwind-build v([0-9.]+) ([0-9a-f]{16}) \*\//);
+    const stamp = css.match(/\/\* freedom-tailwind-build v([0-9.]+) ([0-9a-f]{16}) \*\//);
 
     return {
         appVersion: pick(config, /VERSION\s*:\s*'([^']+)'/),
@@ -154,7 +154,7 @@ const TIMEOUT_MS = num('timeout', 20) * 1000;
  * присутствия — проба проверяла бы не то, что задеплоено, а то, что лежало.
  */
 async function get(url) {
-    const bust = url + (url.includes('?') ? '&' : '?') + 'rsk-probe=' + Date.now();
+    const bust = url + (url.includes('?') ? '&' : '?') + 'freedom-probe=' + Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -321,7 +321,7 @@ async function probe(expected) {
         `${(cssBytes / 1024).toFixed(1)} КБ`);
 
     if (expected.cssStamp) {
-        const liveStamp = (css.body || '').match(/\/\* rsk-tailwind-build v([0-9.]+) ([0-9a-f]{16}) \*\//);
+        const liveStamp = (css.body || '').match(/\/\* freedom-tailwind-build v([0-9.]+) ([0-9a-f]{16}) \*\//);
         ok('отпечаток боевых стилей совпадает с репозиторием (сборку не забыли)',
             !!liveStamp && liveStamp[1] === expected.cssStamp.version && liveStamp[2] === expected.cssStamp.hash,
             liveStamp

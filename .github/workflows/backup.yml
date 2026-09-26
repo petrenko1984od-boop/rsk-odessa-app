@@ -105,7 +105,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reports-backup
-          path: /tmp/rsk-fin/*.txt
+          path: /tmp/freedom-fin/*.txt
           if-no-files-found: ignore
 
   restore:
@@ -148,9 +148,9 @@ jobs:
           STAGING_DB_URL: ${{ steps.staging.outputs.url }}
         run: |
           set -euo pipefail
-          mkdir -p /tmp/rsk-fin
+          mkdir -p /tmp/freedom-fin
           gunzip -kf dump/*.sql.gz
-          psql "$STAGING_DB_URL" -v ON_ERROR_STOP=0 -f dump/schema.sql > /tmp/rsk-fin/staging-schema.txt 2>&1 || true
+          psql "$STAGING_DB_URL" -v ON_ERROR_STOP=0 -f dump/schema.sql > /tmp/freedom-fin/staging-schema.txt 2>&1 || true
           psql "$STAGING_DB_URL" -v ON_ERROR_STOP=1 -f dump/data.sql
 
       - name: Сверка — строки на месте
@@ -181,5 +181,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reports-restore
-          path: /tmp/rsk-fin/*.txt
+          path: /tmp/freedom-fin/*.txt
           if-no-files-found: ignore

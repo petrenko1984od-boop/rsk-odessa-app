@@ -33,10 +33,10 @@
 //
 // ⚠️ На локальном сервере журнал ВЫКЛЮЧЕН: там приложение гоняют проверочные
 //    прогоны с моком базы, и их «ошибки» — часть сценариев, а не проблемы
-//    сотрудников. Включить для отладки: адрес с ?rsk-monitoring.
+//    сотрудников. Включить для отладки: адрес с ?freedom-monitoring.
 //
 // Отключить у конкретного сотрудника, если что-то мешает: очистить
-// localStorage (ключ rsk-app-errors). Сама отправка работе не мешает: ошибки
+// localStorage (ключ freedom-app-errors). Сама отправка работе не мешает: ошибки
 // отправки глушатся и только пишутся в консоль.
 // =====================================================================
 
@@ -46,7 +46,7 @@ import { log } from './utils.js';
 
 // ---------------------------------------------------------------- НАСТРОЙКИ
 
-const STORAGE_KEY = 'rsk-app-errors';   // буфер в localStorage
+const STORAGE_KEY = 'freedom-app-errors';   // буфер в localStorage
 const BATCH_SIZE = 20;                  // столько принимает команда базы за раз
 const MAX_BUFFER = 60;                  // больше не копим: старое уже не нужно
 const FLUSH_DELAY_MS = 5000;            // подождать: ошибки часто идут пачкой
@@ -63,14 +63,14 @@ const seen = [];
 
 /**
  * Локальный запуск (localhost / 127.0.0.1 / файл) — это прогоны проверок и
- * разработка: их ошибки в боевую базу не пишем. Флаг ?rsk-monitoring включает
+ * разработка: их ошибки в боевую базу не пишем. Флаг ?freedom-monitoring включает
  * журнал на локальном адресе вручную — так его можно проверить.
  */
 function disabledHere() {
     const host = String(location.hostname || '');
     const local = !host || host === 'localhost' || host === '127.0.0.1'
         || host === '::1' || location.protocol === 'file:';
-    const forced = new URLSearchParams(location.search).has('rsk-monitoring');
+    const forced = new URLSearchParams(location.search).has('freedom-monitoring');
     return local && !forced;
 }
 
@@ -100,7 +100,7 @@ async function shellRevision() {
     try {
         if (typeof caches === 'undefined') return '';
         const keys = await caches.keys();
-        const mine = keys.find((key) => key.startsWith(`rsk-odessa-v${CONFIG.APP.VERSION}-`));
+        const mine = keys.find((key) => key.startsWith(`freedom-v${CONFIG.APP.VERSION}-`));
         return mine ? mine.slice(mine.lastIndexOf('-') + 1) : '';
     } catch {
         return '';

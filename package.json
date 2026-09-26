@@ -3,7 +3,7 @@
     "version": "2.9.0",
     "private": true,
     "type": "module",
-    "description": "RSK Odessa — учёт строительства (PWA: HTML + ES-модули + Supabase)",
+    "description": "FreeDOM — учёт строительства (PWA: HTML + ES-модули + Supabase)",
     "license": "UNLICENSED",
     "engines": {
         "node": ">=22"

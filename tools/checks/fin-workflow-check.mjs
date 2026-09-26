@@ -45,7 +45,7 @@ function prepareProfile(dir) {
     }
 }
 
-let PROFILE = path.join(os.tmpdir(), 'rsk-fin', 'chrome-profile-workflow');
+let PROFILE = path.join(os.tmpdir(), 'freedom-fin', 'chrome-profile-workflow');
 const BASE = 'http://127.0.0.1:' + PORT;
 
 const USER_IDS = {
@@ -1443,7 +1443,7 @@ try {
     await sleep(1500);
     const ukText = await evaluate('document.body.innerText || ""');
     try {
-        const dir = path.join(os.tmpdir(), 'rsk-fin');
+        const dir = path.join(os.tmpdir(), 'freedom-fin');
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, 'fin-workflow-uk.txt'), ukText, 'utf8');
     } catch { /* отчёт не критичен */ }
@@ -1479,7 +1479,7 @@ try {
 } finally {
     try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
     try { server.close(); } catch { /* уже закрыт */ }
-    const outDir = path.join(os.tmpdir(), 'rsk-fin');
+    const outDir = path.join(os.tmpdir(), 'freedom-fin');
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'fin-workflow.txt'), report.join('\r\n'), 'utf8');
     // Код возврата 1, если есть непройденные проверки (удобно для автоматики).

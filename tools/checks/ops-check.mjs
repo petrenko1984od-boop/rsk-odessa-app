@@ -31,7 +31,7 @@
 //   8. прогон подключён к CI и к npm-скриптам.
 //
 // Запуск:  node tools/checks/ops-check.mjs   (из папки tools/checks)
-// Код возврата 1, если есть замечания. Отчёт: %TEMP%\rsk-fin\ops-check.txt.
+// Код возврата 1, если есть замечания. Отчёт: %TEMP%\freedom-fin\ops-check.txt.
 // =====================================================================
 
 import fs from 'node:fs';
@@ -77,7 +77,7 @@ const WORKFLOWS = {
 /** Название кэша оболочки: по нему админ сверяет кэш в DevTools (README). */
 function cacheName() {
     const sw = read('sw.js');
-    const prefix = (sw.match(/const CACHE_PREFIX = '([^']+)'/) || [])[1] || 'rsk-odessa';
+    const prefix = (sw.match(/const CACHE_PREFIX = '([^']+)'/) || [])[1] || 'freedom';
     const version = (sw.match(/const APP_VERSION = '([0-9.]+)'/) || [])[1] || '';
     const revision = (sw.match(/const SHELL_REVISION = '([^']+)'/) || [])[1] || '';
     return `${prefix}-v${version}-${revision}`;
@@ -302,7 +302,7 @@ async function main() {
     // --- 7. Ревизия оболочки и документы ----------------------------------
     log('=== 7. Имя кэша оболочки совпадает с документами ===');
     const name = cacheName();
-    ok('имя кэша собирается из версии и ревизии', /^rsk-odessa-v[0-9.]+-\w+$/.test(name), name);
+    ok('имя кэша собирается из версии и ревизии', /^freedom-v[0-9.]+-\w+$/.test(name), name);
 
     const rootReadme = read('README.md');
     ok(`имя кэша ${name} упомянуто в README («Проверка после деплоя»)`, rootReadme.includes(name));
@@ -331,7 +331,7 @@ try {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
     failed += 1;
 } finally {
-    const outDir = path.join(os.tmpdir(), 'rsk-fin');
+    const outDir = path.join(os.tmpdir(), 'freedom-fin');
     try {
         fs.mkdirSync(outDir, { recursive: true });
         fs.writeFileSync(path.join(outDir, 'ops-check.txt'), report.join('\r\n'), 'utf8');

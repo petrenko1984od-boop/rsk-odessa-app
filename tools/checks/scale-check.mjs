@@ -1,5 +1,5 @@
 // =====================================================================
-// RSK ODESSA — МАСШТАБИРОВАНИЕ СПИСКОВ (v2.9.0): ПРОГОН В БРАУЗЕРЕ
+// FREEDOM — МАСШТАБИРОВАНИЕ СПИСКОВ (v2.9.0): ПРОГОН В БРАУЗЕРЕ
 // =====================================================================
 // Что проверяет: список заявок «Снабжения» читается СТРАНИЦЕЙ, а фильтры
 // (вкладка статуса, поиск) уходят в запрос — а не фильтруют выгруженную
@@ -424,7 +424,7 @@ const lastOrdersGet = () => ordersGets().slice(-1)[0] || { target: '', limit: ''
 
 // --------------------------------- прогон ---------------------------------
 let chrome;
-let PROFILE = path.join(os.tmpdir(), 'rsk-scale', 'chrome-profile');
+let PROFILE = path.join(os.tmpdir(), 'freedom-scale', 'chrome-profile');
 
 try {
     await new Promise((resolve) => server.listen(PORT, '127.0.0.1', resolve));
@@ -586,7 +586,7 @@ try {
 } finally {
     try { if (chrome) chrome.kill(); } catch { /* уже закрыт */ }
     try { server.close(); } catch { /* сервер уже закрыт */ }
-    const outDir = path.join(os.tmpdir(), 'rsk-fin');
+    const outDir = path.join(os.tmpdir(), 'freedom-fin');
     try {
         fs.mkdirSync(outDir, { recursive: true });
         fs.writeFileSync(path.join(outDir, 'scale-check.txt'), report.join('\r\n'), 'utf8');

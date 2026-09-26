@@ -141,7 +141,7 @@ if (data) {
 // --- Манифест -----------------------------------------------------------
 const manifestPath = flagValue('manifest') || path.join(dir, 'backup-manifest.txt');
 const header = [
-    '# RSK Odessa — манифест резервной копии',
+    '# FreeDOM — манифест резервной копии',
     '# как восстановить: ops/README.md → «Резервные копии»',
     `# снято: ${new Date().toISOString()}`,
     `# коммит: ${process.env.GITHUB_SHA || 'неизвестно'}`,
@@ -157,7 +157,7 @@ log(failed === 0
     ? `  ДАМП ГОДЕН: ${files.length} файлов, ключевые таблицы и данные на месте, sha256 записан`
     : `  замечаний: ${failed} — дамп неполный, разбирайтесь раньше, чем он понадобится`);
 
-const outDir = path.join(os.tmpdir(), 'rsk-fin');
+const outDir = path.join(os.tmpdir(), 'freedom-fin');
 try {
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, 'backup-check.txt'), report.join('\r\n'), 'utf8');

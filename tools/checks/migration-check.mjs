@@ -1039,7 +1039,7 @@ try {
     log('ОШИБКА ПРОГОНА: ' + (error && error.stack ? error.stack : error));
     failed += 1;
 } finally {
-    const outDir = path.join(os.tmpdir(), 'rsk-fin');
+    const outDir = path.join(os.tmpdir(), 'freedom-fin');
     try {
         fs.mkdirSync(outDir, { recursive: true });
         fs.writeFileSync(path.join(outDir, 'migration-check.txt'), report.join('\r\n'), 'utf8');

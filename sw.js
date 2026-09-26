@@ -1,5 +1,5 @@
 // =====================================================================
-// RSK ODESSA — SERVICE WORKER (PWA)
+// FREEDOM — SERVICE WORKER (PWA)
 // =====================================================================
 // Зачем он нужен: без service worker браузер не предложит «Установить
 // приложение», а после установки приложение не откроется без сети.
@@ -35,9 +35,13 @@
 // =====================================================================
 
 const APP_VERSION = '2.9.0';
-const CACHE_PREFIX = 'rsk-odessa';
+const CACHE_PREFIX = 'freedom';
+// Прежний префикс кэша: приложение называлось иначе, и у сотрудников, которые
+// уже установили его, кэш с этим префиксом ещё лежит на устройстве. Без этого
+// списка старые кэши остались бы мёртвым грузом — activate() их не увидел бы.
+const LEGACY_CACHE_PREFIXES = ['rsk-odessa'];
 // Ревизия оболочки — счётчик правок внутри одной версии, часть имени кэша
-// (`rsk-odessa-v2.4.0-r3`, см. README → «Проверка после деплоя»). История:
+// (`freedom-v2.4.0-r3`, см. README → «Проверка после деплоя»). История:
 //   r1 — правки от 20.09.2026: статус оплаты в карточке заявки, подписи в
 //        окне «🚚 Доставлено на объект», понятное сообщение о неприменённой
 //        миграции базы;
@@ -217,7 +221,15 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        красной схеме сливалась с фоном шапки.
 //        Оболочка переустанавливается потому, что изменились index.html,
 //        manifest.json, css/theme.css, js/main.js, js/i18n.js, js/config.js.
-const SHELL_REVISION = 'r10';
+//  r11 — приложение, документы и комментарии переименованы в FreeDOM (единый
+//        центр управления строительством): прежнее имя не используется ни в
+//        интерфейсе, ни в инструкциях, ни в подписях. Имя кэша оболочки тоже
+//        сменило префикс (`freedom-v<версия>-<ревизия>`), поэтому в activate()
+//        удаляются и кэши прежнего префикса (LEGACY_CACHE_PREFIXES) — на
+//        устройствах сотрудников не остаётся мёртвых кэшей.
+//        Оболочка переустанавливается потому, что изменились index.html,
+//        manifest.json, css/theme.css, js/* и Документация.
+const SHELL_REVISION = 'r11';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
@@ -328,7 +340,8 @@ self.addEventListener('activate', (event) => {
 
 async function activate() {
     const names = await caches.keys();
-    const stale = names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME);
+    const mine = [CACHE_PREFIX, ...LEGACY_CACHE_PREFIXES];
+    const stale = names.filter((name) => mine.some((prefix) => name.startsWith(prefix)) && name !== CACHE_NAME);
     await Promise.all(stale.map((name) => caches.delete(name)));
     if (stale.length) {
         console.log('[SW] удалены кэши прошлых версий:', stale.join(', '));

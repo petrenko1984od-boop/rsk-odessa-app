@@ -81,10 +81,10 @@ jobs:
                      --json number --jq '.[0].number // empty')
 
           if [ -n "$number" ]; then
-            gh issue comment "$number" --body-file /tmp/rsk-fin/probe-live.txt
+            gh issue comment "$number" --body-file /tmp/freedom-fin/probe-live.txt
           else
             gh issue create --title "$TITLE" --label ops-monitoring \
-              --body-file /tmp/rsk-fin/probe-live.txt
+              --body-file /tmp/freedom-fin/probe-live.txt
           fi
 
       - name: Сайт отвечает — закрыть задачу о сбое
@@ -104,5 +104,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reports-uptime
-          path: /tmp/rsk-fin/*.txt
+          path: /tmp/freedom-fin/*.txt
           if-no-files-found: ignore

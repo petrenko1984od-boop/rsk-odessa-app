@@ -21,7 +21,7 @@ export const INPUT_FILE = 'src/tailwind.css';
 export const OUTPUT_FILE = 'css/tailwind.css';
 
 // Строка-отпечаток в собранном CSS: её ищет и сверяет frontend-check.mjs.
-export const STAMP_PREFIX = 'rsk-tailwind-build';
+export const STAMP_PREFIX = 'freedom-tailwind-build';
 
 /** Все файлы, участвующие в сборке (пути относительно корня, по возрастанию). */
 export function listSources() {
