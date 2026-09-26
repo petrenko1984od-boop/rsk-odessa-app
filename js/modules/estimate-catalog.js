@@ -189,7 +189,9 @@ export function getWorkMaterialsFor(workId) {
 export async function openEstimateCatalog(tab = 'works') {
     if (!requirePermission('manage_estimate')) return;
 
-    state.activeTab = tab;
+    // Вкладки «Разделы» больше нет: если её id пришёл из старого вызова или из
+    // ссылки, открываем «Работы» — там те же папки.
+    state.activeTab = CATALOG_TABS.includes(tab) ? tab : 'works';
     await loadEstimateCatalog();
 
     const search = document.getElementById('estimate-catalog-search');
@@ -200,7 +202,7 @@ export async function openEstimateCatalog(tab = 'works') {
 }
 
 export function setEstimateCatalogTab(tab) {
-    state.activeTab = tab;
+    state.activeTab = CATALOG_TABS.includes(tab) ? tab : 'works';
     state.search = '';
     state.sectionFilter = '';
 
@@ -227,19 +229,8 @@ export function openEstimateCatalogAdd() {
     const tab = state.activeTab;
     if (tab === 'works') return openEstimateWorkModal();
     if (tab === 'materials') return openEstimateMaterialModal();
-    if (tab === 'sections') return openEstimateSectionModal(sectionsKind());
     if (tab === 'units') return openEstimateUnitModal();
     return openEstimateClientModal();
-}
-
-/**
- * Раздел работ или материалов правим на вкладке «Разделы»: там есть
- * переключатель вида («Разделы работ» / «Разделы материалов»), и значение
- * читается в момент открытия окна — отдельного состояния не нужно.
- */
-function sectionsKind() {
-    const select = document.getElementById('estimate-catalog-section-kind');
-    return select && select.value === 'material' ? 'material' : 'work';
 }
 
 // =====================================================================
@@ -249,10 +240,15 @@ function sectionsKind() {
 const TAB_LABELS = {
     works: 'работу',
     materials: 'материал',
-    sections: 'раздел',
     units: 'единицу',
     clients: 'клиента'
 };
+
+// Вкладки справочника. Отдельной вкладки «Разделы» нет намеренно (v2.11.0):
+// прайс заполняется сверху вниз — сначала папка, потом позиция внутри неё.
+// Поэтому разделы (папки и подпапки) видны прямо в «Работы» и «Материалы»,
+// а кнопки «📁➕» и «➕» стоят у каждой папки (см. renderCatalogTree).
+const CATALOG_TABS = ['works', 'materials', 'units', 'clients'];
 
 export function renderEstimateCatalog() {
     const container = document.getElementById('estimate-catalog-table');
@@ -267,8 +263,7 @@ export function renderEstimateCatalog() {
         return;
     }
 
-    const tabs = ['works', 'materials', 'sections', 'units', 'clients'];
-    tabs.forEach(tab => {
+    CATALOG_TABS.forEach(tab => {
         const btn = document.getElementById(`estimate-catalog-tab-${tab}`);
         if (!btn) return;
         const active = tab === state.activeTab;
@@ -281,27 +276,36 @@ export function renderEstimateCatalog() {
     const addBtn = document.getElementById('estimate-catalog-add-btn');
     if (addBtn) addBtn.textContent = `➕ Добавить ${TAB_LABELS[state.activeTab] || ''}`.trim();
 
-    // Фильтр по разделу — только у работ и материалов; переключатель вида —
-    // только на вкладке «Разделы».
-    const filterWrap = document.getElementById('estimate-catalog-section-filter-wrap');
-    if (filterWrap) {
-        filterWrap.classList.toggle('hidden', state.activeTab !== 'works' && state.activeTab !== 'materials');
-    }
+    // Фильтр по разделу и кнопка «📁 Добавить раздел» — только у работ и
+    // материалов: у единиц и клиентов разделов нет.
+    const withSections = state.activeTab === 'works' || state.activeTab === 'materials';
 
-    const kindWrap = document.getElementById('estimate-catalog-section-kind-wrap');
-    if (kindWrap) kindWrap.classList.toggle('hidden', state.activeTab !== 'sections');
+    const filterWrap = document.getElementById('estimate-catalog-section-filter-wrap');
+    if (filterWrap) filterWrap.classList.toggle('hidden', !withSections);
+
+    const folderWrap = document.getElementById('estimate-catalog-folder-wrap');
+    if (folderWrap) folderWrap.classList.toggle('hidden', !withSections);
 
     fillCatalogSectionFilter();
 
     const renderers = {
         works: renderWorksTable,
         materials: renderMaterialsTable,
-        sections: renderSectionsTable,
         units: renderUnitsTable,
         clients: renderClientsTable
     };
 
     container.innerHTML = (renderers[state.activeTab] || renderWorksTable)();
+}
+
+/** Вид справочника по открытой вкладке: работы или материалы. */
+function catalogKind() {
+    return state.activeTab === 'materials' ? 'material' : 'work';
+}
+
+/** Позиции справочника выбранного вида. */
+function catalogItems(kind) {
+    return kind === 'material' ? state.materials : state.works;
 }
 
 /** Фильтр «Раздел»: значения зависят от вкладки (разделы работ/материалов). */
@@ -332,14 +336,6 @@ function filterItems(items) {
     });
 }
 
-function sectionName(kind, id) {
-    if (!id) return '—';
-
-    const list = kind === 'material' ? state.materialSections : state.workSections;
-    const section = list.find(item => Number(item.id) === Number(id));
-    return section ? section.name : '—';
-}
-
 function emptyRow(text, columns) {
     return `<tr><td colspan="${columns}" class="px-3 py-6 text-center text-xs text-gray-500">${escapeHtml(text)}</td></tr>`;
 }
@@ -359,89 +355,209 @@ function rowActions(actionEdit, actionDelete, id, extra = '') {
     `;
 }
 
-/** Работы: две цены рядом — сразу видно, где прибыль. */
+/** Работы: две цены рядом — сразу видно, где прибыль. Деревом по разделам. */
 function renderWorksTable() {
-    const works = filterItems(state.works);
+    return renderCatalogTree('work', {
+        totalColumns: 6,
+        head: `
+            <th class="px-3 py-2 text-left">Название работы</th>
+            <th class="px-3 py-2 text-left w-20">Ед.</th>
+            <th class="px-3 py-2 text-right w-24">Наряд</th>
+            <th class="px-3 py-2 text-right w-24">Костор.</th>
+            <th class="px-3 py-2 text-center w-20">Нормы</th>
+            <th class="px-3 py-2 w-28"></th>
+        `,
+        emptyText: 'Работ пока нет. Создай раздел («📁 Добавить раздел»), потом добавь работу '
+            + 'кнопкой «➕» у раздела — она попадёт прямо в него.',
+        itemRow: (work, level) => `
+            <tr class="hover:bg-gray-50">
+                <td class="py-2 pr-3" style="padding-left:${12 + level * 20}px">
+                    <div class="font-medium text-gray-800">${escapeHtml(work.name)}</div>
+                    ${work.description ? `<div class="text-[10px] text-gray-500">${escapeHtml(work.description)}</div>` : ''}
+                </td>
+                <td class="px-3 py-2 text-gray-600">${escapeHtml(work.unit)}</td>
+                <td class="px-3 py-2 text-right text-gray-700">${formatMoney(work.price_worker)}</td>
+                <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(work.price_client)}</td>
+                <td class="px-3 py-2 text-center text-gray-500">${getWorkMaterialNorms(work.id).length}</td>
+                ${rowActions('openEstimateWorkModal', 'deleteEstimateWork', work.id,
+                    `<button data-action="openEstimateWorkNorms" data-arg="${work.id}" data-stop
+                             class="text-xs px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold transition"
+                             title="Нормы расхода материалов">📦</button>`)}
+            </tr>
+        `
+    });
+}
 
-    if (works.length === 0) {
-        return emptyRow('Работ пока нет. Нажми «➕ Добавить работу» — прайс заполняется один раз и работает во всех сметах.',
-            7);
-    }
+/** Материалы: закупка/кошторис + пометка «давальческий». Тоже деревом. */
+function renderMaterialsTable() {
+    return renderCatalogTree('material', {
+        totalColumns: 6,
+        head: `
+            <th class="px-3 py-2 text-left">Название материала</th>
+            <th class="px-3 py-2 text-left w-20">Ед.</th>
+            <th class="px-3 py-2 text-right w-24">Закупка</th>
+            <th class="px-3 py-2 text-right w-24">Костор.</th>
+            <th class="px-3 py-2 text-center w-28">Давальч.</th>
+            <th class="px-3 py-2 w-28"></th>
+        `,
+        emptyText: 'Материалов пока нет. Создай раздел («📁 Добавить раздел»), потом добавь материал '
+            + 'кнопкой «➕» у раздела — он попадёт прямо в него.',
+        itemRow: (material, level) => `
+            <tr class="hover:bg-gray-50">
+                <td class="py-2 pr-3 font-medium text-gray-800" style="padding-left:${12 + level * 20}px">
+                    ${escapeHtml(material.name)}
+                </td>
+                <td class="px-3 py-2 text-gray-600">${escapeHtml(material.unit)}</td>
+                <td class="px-3 py-2 text-right text-gray-700">${formatMoney(material.price_purchase)}</td>
+                <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(material.price_client)}</td>
+                <td class="px-3 py-2 text-center">
+                    ${material.is_customer_supplied
+                        ? '<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">заказчика</span>'
+                        : '<span class="text-[10px] text-gray-400">наш</span>'}
+                </td>
+                ${rowActions('openEstimateMaterialModal', 'deleteEstimateMaterial', material.id)}
+            </tr>
+        `
+    });
+}
+
+/**
+ * Кнопки строки раздела (папки): папка внутри, позиция внутри, правка, удаление.
+ * Позиция создаётся СРАЗУ в этом разделе — окно откроется с выбранным
+ * родителем, поэтому прайс заполняется сверху вниз, от папки к работе.
+ */
+function sectionActions(kind, sectionId) {
+    const item = kind === 'material' ? 'материал' : 'работу';
 
     return `
-        <table class="w-full text-xs">
-            <thead class="bg-gray-50 text-gray-600">
-                <tr>
-                    <th class="px-3 py-2 text-left">Название работы</th>
-                    <th class="px-3 py-2 text-left w-20">Ед.</th>
-                    <th class="px-3 py-2 text-left w-40">Раздел</th>
-                    <th class="px-3 py-2 text-right w-24">Наряд</th>
-                    <th class="px-3 py-2 text-right w-24">Костор.</th>
-                    <th class="px-3 py-2 text-center w-20">Нормы</th>
-                    <th class="px-3 py-2 w-24"></th>
-                </tr>
-            </thead>
-            <tbody class="divide-y">
-                ${works.map(work => `
-                    <tr class="hover:bg-gray-50">
-                        <td class="px-3 py-2">
-                            <div class="font-medium text-gray-800">${escapeHtml(work.name)}</div>
-                            ${work.description ? `<div class="text-[10px] text-gray-500">${escapeHtml(work.description)}</div>` : ''}
-                        </td>
-                        <td class="px-3 py-2 text-gray-600">${escapeHtml(work.unit)}</td>
-                        <td class="px-3 py-2 text-gray-600">${escapeHtml(sectionName('work', work.section_id))}</td>
-                        <td class="px-3 py-2 text-right text-gray-700">${formatMoney(work.price_worker)}</td>
-                        <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(work.price_client)}</td>
-                        <td class="px-3 py-2 text-center text-gray-500">${getWorkMaterialNorms(work.id).length}</td>
-                        ${rowActions('openEstimateWorkModal', 'deleteEstimateWork', work.id,
-                            `<button data-action="openEstimateWorkNorms" data-arg="${work.id}" data-stop
-                                     class="text-xs px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold transition"
-                                     title="Нормы расхода материалов">📦</button>`)}
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
+        <button data-action="addEstimateSubsection" data-arg="${kind}:${sectionId}" data-stop
+                class="text-xs px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold transition"
+                title="Создать папку внутри">📁➕</button>
+        <button data-action="addEstimateCatalogItem" data-arg="${sectionId}" data-stop
+                class="text-xs px-2 py-1 rounded-lg bg-[#15803d] hover:bg-[#166534] text-white font-semibold transition"
+                title="Добавить ${item} в раздел">➕</button>
+        <button data-action="openEstimateSectionModal" data-arg="edit:${kind}:${sectionId}" data-stop
+                class="text-xs px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition"
+                title="Править">✏</button>
+        <button data-action="deleteEstimateSection" data-arg="del:${kind}:${sectionId}" data-stop
+                class="text-xs px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-semibold transition"
+                title="Удалить">🗑</button>
     `;
 }
 
-/** Материалы: закупка/кошторис + пометка «давальческий». */
-function renderMaterialsTable() {
-    const materials = filterItems(state.materials);
+/** Склонение слова «позиция» для подписи у папки. */
+function itemsWord(count) {
+    const tail = count % 10;
+    if (tail === 1 && count % 100 !== 11) return 'позиция';
+    if (tail >= 2 && tail <= 4 && (count % 100 < 12 || count % 100 > 14)) return 'позиции';
+    return 'позиций';
+}
 
-    if (materials.length === 0) {
-        return emptyRow('Материалов пока нет. Нажми «➕ Добавить материал».', 7);
+/** Строка папки: название с отступом и количество позиций в ветке. */
+function sectionRow(kind, section, level, count, totalColumns) {
+    return `
+        <tr class="bg-gray-50/70">
+            <td colspan="${totalColumns - 1}" class="py-2 pr-3 font-semibold text-gray-700"
+                style="padding-left:${12 + level * 20}px">
+                <span class="text-gray-400">${level > 0 ? '↳ ' : ''}</span>📁 ${escapeHtml(section.name)}
+                <span class="text-gray-400 font-normal">· ${count} ${itemsWord(count)}</span>
+            </td>
+            <td class="px-3 py-2 text-right whitespace-nowrap">${sectionActions(kind, section.id)}</td>
+        </tr>
+    `;
+}
+
+/**
+ * Дерево прайса: разделы (папки, подпапки) и позиции внутри них.
+ *
+ * Раздел показывается, если в нём или в его подпапках есть подходящие позиции —
+ * вместе со всеми родителями (иначе подпапка «висела» бы без папки). Если поиск
+ * совпал с НАЗВАНИЕМ раздела, он показывается целиком, со всеми своими
+ * позициями: сотрудник ищет «Покрівля» и ждёт содержимое папки, а не пустую
+ * строку. Позиции без раздела собраны отдельной группой внизу — потерять такую
+ * работу слишком легко.
+ */
+function renderCatalogTree(kind, options) {
+    const all = catalogItems(kind);
+    const matched = filterItems(all);
+
+    const bySection = new Map();
+    matched.forEach(item => {
+        const id = item.section_id ? Number(item.section_id) : 0;
+        if (!bySection.has(id)) bySection.set(id, []);
+        bySection.get(id).push(item);
+    });
+
+    const nameMatched = new Set();
+    if (state.search) {
+        sectionList(kind).forEach(section => {
+            if (String(section.name || '').toLowerCase().includes(state.search)) {
+                nameMatched.add(Number(section.id));
+            }
+        });
     }
+
+    const parentOf = new Map();
+    sectionList(kind).forEach(section => {
+        parentOf.set(Number(section.id), section.parent_id ? Number(section.parent_id) : 0);
+    });
+
+    const visible = new Set();
+    const showBranch = (id) => {
+        let current = Number(id) || 0;
+        while (current && !visible.has(current)) {
+            visible.add(current);
+            current = parentOf.get(current) || 0;
+        }
+    };
+
+    bySection.forEach((list, id) => { if (id) showBranch(id); });
+    nameMatched.forEach(id => showBranch(id));
+
+    const rows = [];
+
+    sectionTree(kind).forEach(({ section, level }) => {
+        const id = Number(section.id);
+        if (!visible.has(id)) return;
+
+        // Считаем позиции всей ветки: у папки может быть пусто, а в подпапке —
+        // работы, и «0 позиций» у неё выглядело бы враньём.
+        const branch = new Set(sectionAndDescendants(kind, id));
+        const branchItems = all.filter(item => branch.has(Number(item.section_id)));
+
+        const own = nameMatched.has(id)
+            ? all.filter(item => Number(item.section_id) === id)
+            : (bySection.get(id) || []);
+
+        rows.push(sectionRow(kind, section, level, branchItems.length, options.totalColumns));
+        own.forEach(item => rows.push(options.itemRow(item, level + 1)));
+    });
+
+    const orphans = state.sectionFilter ? [] : (bySection.get(0) || []);
+    if (orphans.length > 0) {
+        rows.push(`
+            <tr class="bg-gray-50/70">
+                <td colspan="${options.totalColumns - 1}" class="px-3 py-2 font-semibold text-gray-700">
+                    📄 Без раздела <span class="text-gray-400 font-normal">· ${orphans.length} ${itemsWord(orphans.length)}</span>
+                </td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                    <button data-action="addEstimateCatalogItem" data-stop
+                            class="text-xs px-2 py-1 rounded-lg bg-[#15803d] hover:bg-[#166534] text-white font-semibold transition"
+                            title="Добавить без раздела">➕</button>
+                </td>
+            </tr>
+        `);
+        orphans.forEach(item => rows.push(options.itemRow(item, 0)));
+    }
+
+    if (rows.length === 0) return emptyRow(options.emptyText, options.totalColumns);
 
     return `
         <table class="w-full text-xs">
             <thead class="bg-gray-50 text-gray-600">
-                <tr>
-                    <th class="px-3 py-2 text-left">Название материала</th>
-                    <th class="px-3 py-2 text-left w-20">Ед.</th>
-                    <th class="px-3 py-2 text-left w-40">Раздел</th>
-                    <th class="px-3 py-2 text-right w-24">Закупка</th>
-                    <th class="px-3 py-2 text-right w-24">Костор.</th>
-                    <th class="px-3 py-2 text-center w-28">Давальч.</th>
-                    <th class="px-3 py-2 w-24"></th>
-                </tr>
+                <tr>${options.head}</tr>
             </thead>
-            <tbody class="divide-y">
-                ${materials.map(material => `
-                    <tr class="hover:bg-gray-50">
-                        <td class="px-3 py-2 font-medium text-gray-800">${escapeHtml(material.name)}</td>
-                        <td class="px-3 py-2 text-gray-600">${escapeHtml(material.unit)}</td>
-                        <td class="px-3 py-2 text-gray-600">${escapeHtml(sectionName('material', material.section_id))}</td>
-                        <td class="px-3 py-2 text-right text-gray-700">${formatMoney(material.price_purchase)}</td>
-                        <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(material.price_client)}</td>
-                        <td class="px-3 py-2 text-center">
-                            ${material.is_customer_supplied
-                                ? '<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">заказчика</span>'
-                                : '<span class="text-[10px] text-gray-400">наш</span>'}
-                        </td>
-                        ${rowActions('openEstimateMaterialModal', 'deleteEstimateMaterial', material.id)}
-                    </tr>
-                `).join('')}
-            </tbody>
+            <tbody class="divide-y">${rows.join('')}</tbody>
         </table>
     `;
 }
@@ -461,58 +577,6 @@ function sectionTree(kind, parentId = null, level = 0, acc = []) {
         });
 
     return acc;
-}
-
-/** Разделы: работа и материалы — два независимых дерева. */
-function renderSectionsTable() {
-    const kind = sectionsKind();
-    const tree = sectionTree(kind);
-
-    if (tree.length === 0) {
-        return emptyRow('Разделов пока нет. Папка — это «полка» прайса (например «Покрівля»), '
-            + 'внутри папки можно создать подпапку.', 3);
-    }
-
-    const kindLabel = kind === 'material' ? 'материалов' : 'работ';
-
-    return `
-        <table class="w-full text-xs">
-            <thead class="bg-gray-50 text-gray-600">
-                <tr>
-                    <th class="px-3 py-2 text-left">Раздел ${kindLabel}</th>
-                    <th class="px-3 py-2 text-left w-28">Позиций</th>
-                    <th class="px-3 py-2 w-32"></th>
-                </tr>
-            </thead>
-            <tbody class="divide-y">
-                ${tree.map(({ section, level }) => {
-                    const items = kind === 'material'
-                        ? state.materials.filter(material => Number(material.section_id) === Number(section.id))
-                        : state.works.filter(work => Number(work.section_id) === Number(section.id));
-
-                    return `
-                        <tr class="hover:bg-gray-50">
-                            <td class="px-3 py-2 text-gray-800" style="padding-left:${12 + level * 20}px">
-                                ${level > 0 ? '<span class="text-gray-400">↳ </span>' : ''}${escapeHtml(section.name)}
-                            </td>
-                            <td class="px-3 py-2 text-gray-500">${items.length}</td>
-                            <td class="px-3 py-2 text-right whitespace-nowrap">
-                                <button data-action="addEstimateSubsection" data-arg="${kind}:${section.id}" data-stop
-                                        class="text-xs px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold transition"
-                                        title="Создать подпапку внутри">📁➕</button>
-                                <button data-action="openEstimateSectionModal" data-arg="edit:${kind}:${section.id}" data-stop
-                                        class="text-xs px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition"
-                                        title="Править">✏</button>
-                                <button data-action="deleteEstimateSection" data-arg="del:${kind}:${section.id}" data-stop
-                                        class="text-xs px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-semibold transition"
-                                        title="Удалить">🗑</button>
-                            </td>
-                        </tr>
-                    `;
-                }).join('')}
-            </tbody>
-        </table>
-    `;
 }
 
 /** Единицы измерения сметы. */
@@ -593,7 +657,7 @@ function fillSectionSelect(selectId, kind, value, excludeId = null) {
 // =====================================================================
 
 /** Открывает окно работы. Без id — создание, с id — правка. */
-export function openEstimateWorkModal(id) {
+export function openEstimateWorkModal(id, sectionId) {
     if (!requirePermission('manage_estimate')) return;
 
     const work = id ? findEstimateWork(id) : null;
@@ -612,7 +676,10 @@ export function openEstimateWorkModal(id) {
     setValue('estimate-work-description', work ? work.description : '');
 
     fillUnitSelect('estimate-work-unit', work ? work.unit : 'м²');
-    fillSectionSelect('estimate-work-section', 'work', work ? work.section_id : '');
+    // sectionId приходит от кнопки «➕» у папки: новая работа сразу попадает в
+    // тот раздел, у которого её нажали (и в раздел, и в подпапку).
+    fillSectionSelect('estimate-work-section', 'work',
+        work ? work.section_id : (Number(sectionId) || ''));
 
     showModal(MODAL_IDS.work);
 }
@@ -716,7 +783,7 @@ function renderClientsTable() {
 // МАТЕРИАЛ: ОКНО И СОХРАНЕНИЕ
 // =====================================================================
 
-export function openEstimateMaterialModal(id) {
+export function openEstimateMaterialModal(id, sectionId) {
     if (!requirePermission('manage_estimate')) return;
 
     const material = id ? findEstimateMaterial(id) : null;
@@ -737,7 +804,9 @@ export function openEstimateMaterialModal(id) {
     if (customerSupplied) customerSupplied.checked = Boolean(material?.is_customer_supplied);
 
     fillUnitSelect('estimate-material-unit', material ? material.unit : 'шт');
-    fillSectionSelect('estimate-material-section', 'material', material ? material.section_id : '');
+    // sectionId — от кнопки «➕» у папки: материал попадает в свой раздел.
+    fillSectionSelect('estimate-material-section', 'material',
+        material ? material.section_id : (Number(sectionId) || ''));
 
     showModal(MODAL_IDS.material);
 }
@@ -1027,10 +1096,24 @@ function sectionTitle(mode, kind, section) {
     return `➕ Новый ${label}`;
 }
 
-/** «📁 Новая папка»: раздел верхнего уровня (parent_id пустой). */
+/** «📁 Добавить раздел»: раздел верхнего уровня (parent_id пустой). */
 export function addEstimateFolder() {
     if (!requirePermission('manage_estimate')) return;
-    openEstimateSectionModal(`folder:${sectionsKind()}`);
+    openEstimateSectionModal(`folder:${catalogKind()}`);
+}
+
+/**
+ * «➕» у раздела: новая работа или материал СРАЗУ в этом разделе (в том числе в
+ * подпапке). Вид берётся с открытой вкладки, поэтому одна кнопка обслуживает и
+ * работы, и материалы; без аргумента позиция создаётся без раздела.
+ */
+export function addEstimateCatalogItem(sectionId) {
+    if (!requirePermission('manage_estimate')) return;
+
+    const id = Number(sectionId) || null;
+
+    if (catalogKind() === 'material') return openEstimateMaterialModal(null, id);
+    return openEstimateWorkModal(null, id);
 }
 
 /** «➕ Подпапка» у строки: раздел внутри выбранного (arg = «work:5»). */
@@ -1382,6 +1465,7 @@ window.addEstimateWorkNorm = addEstimateWorkNorm;
 window.deleteEstimateWorkNorm = deleteEstimateWorkNorm;
 window.openEstimateSectionModal = openEstimateSectionModal;
 window.addEstimateFolder = addEstimateFolder;
+window.addEstimateCatalogItem = addEstimateCatalogItem;
 window.addEstimateSubsection = addEstimateSubsection;
 window.saveEstimateSection = saveEstimateSection;
 window.deleteEstimateSection = deleteEstimateSection;

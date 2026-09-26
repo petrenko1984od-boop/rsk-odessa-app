@@ -816,7 +816,10 @@ const DOC_BORDER = '1px solid #9ca3af';
 /** Оформление ячейки в HTML: палитра нужна только строке заголовков. */
 function htmlCellStyle(entry, palette) {
     const align = entry.align === 'right' ? 'right' : (entry.align === 'center' ? 'center' : 'left');
-    const box = `border:${DOC_BORDER};padding:3px 6px;text-align:${align}`;
+    // vertical-align:middle — текст стоит по центру рамки. Без него высокая
+    // ячейка (объединённая шапка 9-ти графки, строка «Всього по розділу»)
+    // прижимала подпись к верхней грани и на печати это выглядело криво.
+    const box = `border:${DOC_BORDER};padding:3px 6px;text-align:${align};vertical-align:middle`;
 
     switch (entry.style) {
         case 'company': return 'font-size:15px;font-weight:700;text-align:right;padding:0 2px';
@@ -984,7 +987,28 @@ export function exportEstimateExcel(estimate, company, options) {
     const model = buildEstimateDoc(estimate, company, options);
     const { doc, grid, merges } = model;
 
-    const aoa = grid.map(line => line.map(entry => {
+    // ОБЪЕДИНЁННЫЕ ЯЧЕЙКИ. Excel рисует рамку объединения по КРАЯМ диапазона,
+    // то есть по границам его крайних ячеек. Поэтому покрытые ячейки получают
+    // копию ячейки-источника (с пустым текстом): тогда и разметка, и стиль
+    // считаются одним и тем же кодом, и у объединения не «теряются» нижняя и
+    // правая грани — именно так выглядела неполная рамка таблицы в 9-ти
+    // графке (шапка с rowspan и строка «Всього по розділу:»).
+    const cells = grid.map(line => line.map(entry => (entry ? { cell: entry.cell } : null)));
+
+    merges.forEach(({ s, e }) => {
+        const origin = cells[s.r] && cells[s.r][s.c];
+        if (!origin) return;
+
+        for (let r = s.r; r <= e.r; r += 1) {
+            cells[r] = cells[r] || [];
+            for (let c = s.c; c <= e.c; c += 1) {
+                if (r === s.r && c === s.c) continue;
+                cells[r][c] = { cell: { ...origin.cell, text: '', money: false, int: false } };
+            }
+        }
+    });
+
+    const aoa = cells.map(line => line.map(entry => {
         if (!entry) return '';
         const value = entry.cell.text;
         if (entry.cell.money || entry.cell.int) return Number(value) || 0;
@@ -997,7 +1021,7 @@ export function exportEstimateExcel(estimate, company, options) {
 
     // Оформление: заливка шапки (колір шапки), жирные итоги, форматы чисел.
     const heights = [];
-    grid.forEach((line, r) => {
+    cells.forEach((line, r) => {
         const kind = model.rows[r] ? model.rows[r].kind : '';
         if (kind === 'header') heights[r] = { hpt: 26 };
         if (kind === 'gap') heights[r] = { hpt: 8 };
@@ -1005,12 +1029,13 @@ export function exportEstimateExcel(estimate, company, options) {
         line.forEach((entry, c) => {
             if (!entry) return;
 
-            const address = XLSX.utils.encode_cell({ r, c });
-            const target = sheet[address];
-            if (!target) return;
-
             const style = excelStyle(entry.cell, doc.palette);
-            if (style) target.s = style;
+            if (!style) return;
+
+            const address = XLSX.utils.encode_cell({ r, c });
+            const target = sheet[address] || (sheet[address] = { t: 's', v: '' });
+            target.s = style;
+
             if (entry.cell.money) target.z = EXCEL_MONEY_FORMAT;
             if (entry.cell.int) target.z = EXCEL_INT_FORMAT;
         });

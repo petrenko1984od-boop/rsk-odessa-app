@@ -1152,6 +1152,15 @@ function main() {
             /data-action="addEstimateFolder"/.test(indexHtmlV29) &&
             /sectionAndDescendants/.test(catalogJsV211));
 
+        // 3a. Дерево прайса живёт в «Работы» и «Материалы»: отдельной вкладки
+        //     «Разделы» нет, позиция создаётся кнопкой «➕» прямо у папки.
+        ok('v2.11.0: разделы видны в работах и материалах, вкладки «Разделы» нет',
+            /renderCatalogTree/.test(catalogJsV211) &&
+            /addEstimateCatalogItem/.test(catalogJsV211) &&
+            /estimate-catalog-folder-wrap/.test(indexHtmlV29) &&
+            !/estimate-catalog-tab-sections/.test(indexHtmlV29) &&
+            !/estimate-catalog-section-kind/.test(indexHtmlV29));
+
         // 4. Окно экспорта: четыре выбора из макета и их списки в CONFIG.
         ok('v2.11.0: окно экспорта — тип, вид кошториса, колір шапки, формат',
             /id="estimate-export-types"/.test(indexHtmlV29) &&

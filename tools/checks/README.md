@@ -186,16 +186,21 @@ npm run lint            # eslint: встроенные обработчики и
      кнопку без меню, и раскрывать её стало бы негде; рядом проверяется общий помощник
      `placeSideMenu()` (одно место для меню кабинета и меню раздела);
   3. **папки и подпапки справочника** — одно дерево (`parent_id` в модуле), действия
-     `addEstimateFolder` / `addEstimateSubsection` есть и в модуле, и в разметке
-     (`data-action="addEstimateFolder"`), а родителем нельзя выбрать сам раздел и его подпапки
-     (`sectionAndDescendants`);
+     `addEstimateFolder` / `addEstimateSubsection` / `addEstimateCatalogItem` есть и в
+     модуле, и в разметке (`data-action="addEstimateFolder"`), а родителем нельзя выбрать
+     сам раздел и его подпапки (`sectionAndDescendants`). Отдельной вкладки «Разделы» нет:
+     папки видны в «Работы» и «Материалы» (`renderCatalogTree()`), поэтому проверяется и
+     её отсутствие (`#estimate-catalog-tab-sections` / `#estimate-catalog-section-kind`
+     удалены, появилась обёртка `#estimate-catalog-folder-wrap`);
   4. **окно экспорта документа** — четыре группы выбора в разметке
      (`#estimate-export-types/views/colors/formats`) и их списки в `CONFIG.ESTIMATE`
      (`DOC_KINDS` / `DOC_VIEWS` / `DOC_COLORS` / `DOC_FORMATS`), которые читает модуль смет;
   5. **документы** — `buildKoshtorys6Rows()` и `buildKoshtorys9Rows()` собираются из одной модели
      (`buildEstimateDoc()` + `buildGrid()`), а заливка шапки доезжает до Excel: библиотека
      выгрузки — `xlsx-js-style` с `integrity`, стиль пишется через `{ patternType: 'solid' }` и
-     `cellStyles: true`.
+     `cellStyles: true`. Рамка таблицы не рвётся на объединённых ячейках (v2.11.0-r2: стиль
+     ставится всем ячейкам диапазона) и текст в рамках выровнен по центру
+     (`vertical-align:middle` в `buildDocHtml()`).
 
 
 Возвращает код 1, если есть замечания.

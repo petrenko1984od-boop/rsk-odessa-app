@@ -1933,9 +1933,10 @@
                     <button id="estimate-catalog-tab-materials" data-action="setEstimateCatalogTab" data-arg="materials"
                             class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
                             data-i18n="estimates.tabMaterials">Материалы</button>
-                    <button id="estimate-catalog-tab-sections" data-action="setEstimateCatalogTab" data-arg="sections"
-                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
-                            data-i18n="estimates.tabSections">Разделы</button>
+                    <!-- Вкладки «Разделы» нет: папки и подпапки видны прямо в «Работы» и
+                         «Материалы» — сначала создаётся раздел, потом позиция внутри него
+                         (кнопки «📁➕» и «➕» у строки раздела), см. renderCatalogTree()
+                         в js/modules/estimate-catalog.js. -->
                     <button id="estimate-catalog-tab-units" data-action="setEstimateCatalogTab" data-arg="units"
                             class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
                             data-i18n="estimates.tabUnits">Единицы</button>
@@ -1954,22 +1955,14 @@
                                 data-action="setEstimateCatalogSectionFilter" data-on="change" data-arg-value
                                 class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
                     </div>
-                    <div id="estimate-catalog-section-kind-wrap" class="hidden">
-                        <div class="flex flex-wrap gap-2 items-center">
-                            <select id="estimate-catalog-section-kind"
-                                    data-action="renderEstimateCatalog" data-on="change"
-                                    class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                                <option value="work" data-i18n="estimates.kindWork">Разделы работ</option>
-                                <option value="material" data-i18n="estimates.kindMaterial">Разделы материалов</option>
-                            </select>
-                            <!-- «Папка» — верхний раздел дерева, «подпапка» — раздел внутри
-                                 раздела (кнопка у строки, см. renderSectionsTable в
-                                 js/modules/estimate-catalog.js). В базе это одно поле
-                                 parent_id, поэтому вложенность любая. -->
-                            <button data-action="addEstimateFolder"
-                                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-                                    data-i18n="estimates.addFolder">📁 Новая папка</button>
-                        </div>
+                    <!-- «Раздел» — верхняя папка прайса; внутри раздела можно создать ещё
+                         папку (кнопка «📁➕» у строки). В базе это одно поле parent_id,
+                         поэтому вложенность любая. Кнопка видна только на вкладках
+                         «Работы» и «Материалы» — её прячет renderEstimateCatalog(). -->
+                    <div id="estimate-catalog-folder-wrap" class="hidden">
+                        <button data-action="addEstimateFolder"
+                                class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                data-i18n="estimates.catalogAddSection">📁 Добавить раздел</button>
                     </div>
                     <button id="estimate-catalog-add-btn" data-action="openEstimateCatalogAdd"
                             class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition"
