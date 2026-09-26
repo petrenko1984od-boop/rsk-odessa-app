@@ -680,9 +680,278 @@ if (!fs.existsSync(REGISTRY_MIGRATION)) {
     await db5.close();
 }
 
+// ---------------------------------------------------------------------
+// Самая большая миграция проекта — раздел «📐 Сметы» (v2.10.0). В Supabase
+// ошибка в ней видна только на боевой базе, поэтому файл прогоняется в
+// настоящем Postgres: создаются ли 14 таблиц, включён ли RLS, закрыта ли
+// ПРЯМАЯ запись в смету, выдаёт ли номер команда базы, собирает ли
+// save_estimate() смету целиком с правильными итогами и переживает ли файл
+// повторный запуск. Итоги сверяются с теми, что считает
+// js/modules/estimate-doc.js (количество материалов вверх, давальческие не
+// считаются): расхождение здесь = разные суммы в списке и в документе.
+// ---------------------------------------------------------------------
+const ESTIMATE_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.10-estimates.sql');
+
+if (!fs.existsSync(ESTIMATE_MIGRATION)) {
+    ok('есть файл database/migrate-v2.10-estimates.sql', false, ESTIMATE_MIGRATION);
+} else {
+    const estimateSql = fs.readFileSync(ESTIMATE_MIGRATION, 'utf8');
+    const db6 = new PGlite();
+
+    // Роли Supabase и зависимость v2.7.0: миграция выдаёт права anon и
+    // authenticated, а право редактирования берёт из роли сотрудника.
+    // В пустом Postgres создаём их сами.
+    await db6.exec(`
+        create role authenticated;
+        create role anon;
+
+        create table public.employees (id bigint primary key, name text);
+        insert into public.employees (id, name) values (1, 'Тест ПТО');
+
+        create table public.projects (id bigint primary key, name text);
+
+        create or replace function public.rsk_current_employee_role()
+        returns text language sql stable as $$ select 'Инженер ПТО'::text $$;
+
+        create or replace function public.rsk_current_employee_id()
+        returns bigint language sql stable as $$ select 1::bigint $$;
+    `);
+
+    let estimateError = null;
+    try { await db6.exec(estimateSql); }
+    catch (error) { estimateError = error; }
+
+    ok('migrate-v2.10-estimates.sql: выполняется на настоящем Postgres без ошибок',
+        estimateError === null, estimateError ? estimateError.message : '');
+
+    if (estimateError === null) {
+        const estimateTables = [
+            'estimate_units', 'estimate_work_sections', 'estimate_material_sections',
+            'estimate_works', 'estimate_materials', 'estimate_work_materials',
+            'estimate_clients', 'estimate_company', 'estimates', 'estimate_sections',
+            'estimate_items', 'estimate_item_materials', 'estimate_limits',
+            'estimate_command_log'
+        ];
+        const list = estimateTables.map((name) => "'" + name + "'").join(', ');
+
+        const schemaInfo = (await db6.query(`
+            select count(*)::int as n,
+                   count(*) filter (where c.relrowsecurity)::int as rls,
+                   count(*) filter (where has_table_privilege('anon', c.oid, 'select'))::int as anon_reads
+              from pg_class c
+              join pg_namespace n on n.oid = c.relnamespace
+             where n.nspname = 'public' and c.relkind = 'r' and c.relname in (${list})
+        `)).rows[0];
+
+        ok('сметы: 14 таблиц, RLS включён на всех, anon не читает',
+            schemaInfo?.n === 14 && schemaInfo?.rls === 14 && schemaInfo?.anon_reads === 0,
+            JSON.stringify(schemaInfo || {}));
+
+        const writeInfo = (await db6.query(`
+            select count(*) filter (where has_table_privilege('authenticated', c.oid, 'insert'))::int as writable,
+                   count(*) filter (where has_table_privilege('authenticated', c.oid, 'select'))::int as readable
+              from pg_class c
+              join pg_namespace n on n.oid = c.relnamespace
+             where n.nspname = 'public' and c.relkind = 'r'
+               and c.relname in ('estimates', 'estimate_sections', 'estimate_items',
+                                 'estimate_item_materials', 'estimate_limits', 'estimate_command_log')
+        `)).rows[0];
+
+        ok('сметы: смета читается, но прямая запись запрещена (пишут только команды)',
+            writeInfo?.writable === 0 && writeInfo?.readable === 6,
+            JSON.stringify(writeInfo || {}));
+
+        // Номер сметы выдаёт команда базы — под блокировкой, вида '00001/год'.
+        const nextNumber = (await db6.query('select * from public.estimate_next_number()')).rows[0];
+
+        ok('сметы: estimate_next_number() выдаёт номер вида 00001/год',
+            /^00001\/\d{4}$/.test(String(nextNumber?.number || '')) &&
+            Number(nextNumber?.number_seq) === 1 &&
+            Number(nextNumber?.number_year) === new Date().getFullYear(),
+            JSON.stringify(nextNumber || {}));
+
+        // Сохранение сметы целиком: payload — ровно тот, что собирает
+        // js/modules/estimates.js → buildEstimatePayload().
+        const saveRow = (data, id, key) => db6.query(
+            'select public.save_estimate($1::jsonb, $2::bigint, $3::uuid) as row',
+            [JSON.stringify(data), id, key]
+        );
+
+        const payload = {
+            title: 'Тестова смета',
+            object_name: 'Объект 1',
+            project_id: null,
+            client_id: null,
+            notes: '',
+            vat_percent: 20,
+            vat_base: 'both',
+            status: 'draft',
+            sections: [{
+                name: 'Стіни',
+                items: [{
+                    name: 'Штукатурка', unit: 'м²', quantity: 10,
+                    price_worker: 80, price_client: 100, work_id: null,
+                    materials: [
+                        // Суміш: 2.2 мішка → в смете 3 (количество вверх).
+                        { name: 'Суміш', unit: 'міш', quantity: 2.2, price_purchase: 30, price_client: 50, is_customer_supplied: false },
+                        // Давальческий: заказчик привёз сам, в суммы не входит.
+                        { name: 'Гіпсокартон', unit: 'шт', quantity: 3.9, price_purchase: 10, price_client: 20, is_customer_supplied: true }
+                    ]
+                }]
+            }],
+            limits: [{ name: 'Непередбачені витрати', percent: 10, base: 'both' }]
+        };
+
+        const commandKey = '11111111-1111-1111-1111-111111111111';
+
+        // Ошибку команды показываем в отчёте, а не роняем прогон: иначе
+        // администратор видит «упало» без причины.
+        const callCommand = async (data, id, key) => {
+            try {
+                const result = await saveRow(data, id, key);
+                return { row: result.rows[0]?.row ?? null, error: null };
+            } catch (error) {
+                return { row: null, error };
+            }
+        };
+
+        const first = await callCommand(payload, null, commandKey);
+        const saved = first.row;
+
+        // Работы: 10 × 100 = 1000 (кошторис), 10 × 80 = 800 (наряд).
+        // Материалы: ceil(2.2) = 3 → 3 × 50 = 150 и 3 × 30 = 90; давальческий
+        // (ceil(3.9) = 4 × 20) не считается вовсе.
+        // Лимит: 10% от (1000 + 150) = 115 → подытог 1265, ПДВ 20% = 253.
+        ok('сметы: save_estimate() собрал смету целиком и посчитал итоги',
+            first.error === null &&
+            saved?.title === 'Тестова смета' &&
+            String(saved?.number || '').startsWith('00001/') &&
+            Number(saved?.total_client) === 1518 &&
+            Number(saved?.total_materials) === 150 &&
+            Number(saved?.total_naryad) === 890 &&
+            Number(saved?.items_count) === 1,
+            first.error ? String(first.error.message || first.error) : JSON.stringify({
+                number: saved?.number, client: saved?.total_client,
+                materials: saved?.total_materials, naryad: saved?.total_naryad,
+                items: saved?.items_count }));
+
+        const tree = (await db6.query(`
+            select (select count(*)::int from public.estimate_sections) as sections,
+                   (select count(*)::int from public.estimate_items) as items,
+                   (select count(*)::int from public.estimate_item_materials) as materials,
+                   (select count(*)::int from public.estimate_limits) as limits
+        `)).rows[0];
+
+        ok('сметы: разделы, позиции, материалы позиции и лимиты сохранены',
+            tree?.sections === 1 && tree?.items === 1 && tree?.materials === 2 && tree?.limits === 1,
+            JSON.stringify(tree || {}));
+
+        // Повтор той же команды (двойной клик, повторная отправка после обрыва
+        // связи) возвращает прежнюю смету, а не создаёт вторую.
+        await callCommand(payload, null, commandKey);
+        const afterRepeat = (await db6.query('select count(*)::int as n from public.estimates')).rows[0];
+
+        ok('сметы: повтор команды с тем же ключом не создаёт вторую смету',
+            afterRepeat?.n === 1, String(afterRepeat?.n));
+
+        // Правка существующей сметы: номер и год не меняются (смета уже у
+        // заказчика), а итоги пересчитываются — здесь ПДВ сняли.
+        const editResult = await callCommand(
+            { ...payload, title: 'Тестова смета (правка)', vat_percent: 0 },
+            Number(saved?.id), '22222222-2222-2222-2222-222222222222');
+        const edited = editResult.row;
+
+        ok('сметы: правка сохраняет номер и пересчитывает итоги',
+            editResult.error === null && edited?.number === saved?.number &&
+            edited?.title === 'Тестова смета (правка)' &&
+            Number(edited?.total_client) === 1265 && Number(edited?.total_materials) === 150,
+            editResult.error ? String(editResult.error.message || editResult.error)
+                : JSON.stringify({ number: edited?.number, client: edited?.total_client }));
+
+        // Смена статуса и удаление — отдельные команды: статус переключают из
+        // списка, а удалённая смета уносит содержимое каскадом.
+        const statusCommand = async (status) => {
+            try {
+                const result = await db6.query(
+                    'select public.set_estimate_status($1::bigint, $2::text) as row',
+                    [Number(saved?.id), status]);
+                return { row: result.rows[0]?.row ?? null, error: null };
+            } catch (error) {
+                return { row: null, error };
+            }
+        };
+
+        const approved = await statusCommand('approved');
+        const badStatus = await statusCommand('подписана');
+
+        ok('сметы: set_estimate_status() утверждает смету и отклоняет чужой статус',
+            approved.row?.status === 'approved' && badStatus.error !== null &&
+            /Неизвестный статус/.test(String(badStatus.error?.message || '')),
+            JSON.stringify({ status: approved.row?.status,
+                bad: badStatus.error ? String(badStatus.error.message || '') : 'принят неизвестный статус' }));
+
+        let deleteError = null;
+        let deleteResult = null;
+        try {
+            deleteResult = (await db6.query('select public.delete_estimate($1::bigint) as done',
+                [Number(saved?.id)])).rows[0];
+        } catch (error) { deleteError = error; }
+
+        const leftAfterDelete = (await db6.query(`
+            select (select count(*)::int from public.estimates) as estimates,
+                   (select count(*)::int from public.estimate_sections) as sections,
+                   (select count(*)::int from public.estimate_items) as items,
+                   (select count(*)::int from public.estimate_item_materials) as materials
+        `)).rows[0];
+
+        ok('сметы: delete_estimate() убирает смету вместе с содержимым (каскад)',
+            deleteError === null && deleteResult?.done === true &&
+            leftAfterDelete?.estimates === 0 && leftAfterDelete?.sections === 0 &&
+            leftAfterDelete?.items === 0 && leftAfterDelete?.materials === 0,
+            deleteError ? String(deleteError.message || deleteError) : JSON.stringify(leftAfterDelete || {}));
+
+        // Роль вне тройки ПТО: и команды, и политики RLS опираются на одну
+        // проверку — Прораб смету не сохранит, даже открыв консоль браузера.
+        await db6.exec(`create or replace function public.rsk_current_employee_role()
+            returns text language sql stable as $$ select 'Прораб'::text $$`);
+
+        const outsider = await callCommand(payload, null, '33333333-3333-3333-3333-333333333333');
+
+        await db6.exec(`create or replace function public.rsk_current_employee_role()
+            returns text language sql stable as $$ select 'Инженер ПТО'::text $$`);
+
+        ok('сметы: роль вне тройки ПТО не может сохранить смету',
+            outsider.error !== null && /Сметы доступны/.test(String(outsider.error?.message || '')),
+            outsider.error ? String(outsider.error.message || outsider.error) : 'Прораб сохранил смету');
+
+        // Повторный запуск файла: администратор запускает его ещё раз (например,
+        // после правки политики) — таблицы и права должны уцелеть.
+        let rerunError = null;
+        try { await db6.exec(estimateSql); } catch (error) { rerunError = error; }
+
+        const afterRerun = (await db6.query(`
+            select count(*)::int as n,
+                   count(*) filter (where c.relrowsecurity)::int as rls,
+                   count(*) filter (where has_table_privilege('anon', c.oid, 'select'))::int as anon_reads
+              from pg_class c
+              join pg_namespace n on n.oid = c.relnamespace
+             where n.nspname = 'public' and c.relkind = 'r'
+               and c.relname in ('estimates', 'estimate_items', 'estimate_limits', 'estimate_works')
+        `)).rows[0];
+
+        ok('migrate-v2.10-estimates.sql: повторный запуск безопасен (таблицы и RLS на месте)',
+            rerunError === null && afterRerun?.n === 4 && afterRerun?.rls === 4 &&
+            afterRerun?.anon_reads === 0,
+            rerunError ? String(rerunError.message || rerunError) : JSON.stringify(afterRerun || {}));
+    }
+
+    await db6.close();
+}
+
+
 log('--- ИТОГ ---');
 log(failed === 0
-    ? '  ВСЁ ВЕРНО: миграция применяется на настоящем Postgres и защищена от обрыва наполовину'
+    ? '  ВСЁ ВЕРНО: миграции применяются на настоящем Postgres и защищены от обрыва наполовину, а раздел «Сметы» (v2.10.0) собирает смету целиком под RLS'
     : '  не прошло проверок: ' + failed);
 
 const outDir = path.join(os.tmpdir(), 'freedom-fin');

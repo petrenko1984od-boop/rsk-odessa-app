@@ -212,6 +212,12 @@
                     <button data-action="switchTab" data-arg="orders" id="btn-orders" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение</button>
                     <button data-action="switchTab" data-arg="cash-requests" id="btn-cash-requests" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Финансы</button>
                     <button data-action="switchTab" data-arg="registry" id="btn-registry" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
+                    <!-- СМЕТЫ (конструктор смет для ПТО, v2.10.0 — js/modules/estimates.js).
+                         Видна Администратору, Главному инженеру и Инженеру ПТО: право
+                         manage_estimate (js/permissions.js → TAB_REQUIREMENTS.estimates).
+                         Кнопку прячет applyPermissionsToUI() в js/main.js, а данные закрывает
+                         RLS базы (database/migrate-v2.10-estimates.sql → rsk_is_estimate_editor()). -->
+                    <button data-action="switchTab" data-arg="estimates" id="btn-estimates" data-i18n="estimates.nav" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">📐 Сметы</button>
                     <!-- Диагностика: журнал ошибок сотрудников (js/modules/diagnostics.js).
                          Видна только Администратору и Директору — тем же ролям, которых
                          пускает к журналу RLS; остальным кнопку прячет applyPermissionsToUI()
@@ -658,6 +664,164 @@
                 <div id="diag-groups-block"></div>
                 <div id="diag-recent-block"></div>
                 <div id="diag-people-block"></div>
+            </section>
+
+            <!-- СМЕТЫ (конструктор смет для ПТО) -->
+            <section id="tab-estimates" class="hidden space-y-4">
+                <!-- СПИСОК СМЕТ -->
+                <div id="estimates-list-view" class="space-y-4">
+                    <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
+                        <div>
+                            <h2 class="text-lg font-bold text-gray-800" data-i18n="estimates.title">📐 Сметы</h2>
+                            <p class="text-xs text-gray-500" data-i18n="estimates.subtitle">
+                                Сметы для заказчика: две цены (наряд и кошторис), материалы по нормам,
+                                лимитированные расходы, ПДВ и документы.
+                            </p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button data-action="openNewEstimate"
+                                    class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition"
+                                    data-i18n="estimates.new">➕ Новая смета</button>
+                            <button data-action="openEstimateCatalog" data-arg="works"
+                                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                    data-i18n="estimates.catalog">📚 Справочники</button>
+                            <button data-action="openEstimateCompanyModal"
+                                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                    data-i18n="estimates.company">🏢 Реквизиты</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-sm border">
+                        <!-- data-arg-value передаёт значение поля, поэтому у поиска и статуса
+                             свои действия: у каждого один аргумент (см. js/actions.js). -->
+                        <input type="text" id="estimate-filter-search"
+                               data-action="setEstimatesSearch" data-on="input" data-arg-value
+                               data-i18n-placeholder="estimates.searchPlaceholder" placeholder="Поиск: номер, название, объект"
+                               class="flex-1 min-w-[12rem] border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <select id="estimate-filter-status"
+                                data-action="setEstimatesStatus" data-on="change" data-arg-value
+                                class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="" data-i18n="estimates.statusAll">Все статусы</option>
+                            <option value="draft" data-i18n="estimates.statusDraft">📝 Черновик</option>
+                            <option value="approved" data-i18n="estimates.statusApproved">✅ Утверждена</option>
+                            <option value="archived" data-i18n="estimates.statusArchived">📥 Архив</option>
+                        </select>
+                    </div>
+
+                    <div id="estimates-list" class="space-y-3"></div>
+                </div>
+
+                <!-- РЕДАКТОР СМЕТЫ -->
+                <div id="estimate-editor-view" class="hidden space-y-4">
+                    <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] space-y-3">
+                        <div class="flex justify-between items-start gap-3 flex-wrap">
+                            <div>
+                                <button data-action="closeEstimateEditor"
+                                        class="text-xs text-gray-500 hover:text-gray-700 font-semibold"
+                                        data-i18n="estimates.back">‹ К списку смет</button>
+                                <h2 id="estimate-number" class="text-lg font-bold text-gray-800" data-i18n="estimates.editorHeading">Смета</h2>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <button data-action="saveEstimate" id="estimate-save-btn"
+                                        class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition"
+                                        data-i18n="estimates.save">💾 Сохранить</button>
+                                <button data-action="openEstimateExportModal" id="estimate-docs-btn"
+                                        class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                        data-i18n="estimates.docs">📥 Документы</button>
+                                <button data-action="applyEstimateToProject" id="estimate-apply-project-btn"
+                                        class="hidden bg-amber-50 hover:bg-amber-100 text-amber-800 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                        data-i18n="estimates.applyProject">📤 В план объекта</button>
+                            </div>
+                        </div>
+                        <!-- ПОЛЯ СМЕТЫ -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <label class="space-y-1">
+                                <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.fieldTitle">Название сметы</span>
+                                <input type="text" id="estimate-title" data-action="setEstimateField" data-pass-event data-on="input"
+                                       data-scope="estimate" data-field="title"
+                                       class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            </label>
+                            <label class="space-y-1">
+                                <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.fieldObject">Объект (адрес для документа)</span>
+                                <input type="text" id="estimate-object" data-action="setEstimateField" data-pass-event data-on="input"
+                                       data-scope="estimate" data-field="object_name"
+                                       class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            </label>
+                            <label class="space-y-1">
+                                <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.fieldProject">Объект стройки (для плана и план-факта)</span>
+                                <select id="estimate-project" data-action="setEstimateField" data-pass-event data-on="change"
+                                        data-scope="estimate" data-field="project_id"
+                                        class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                            </label>
+                            <label class="space-y-1">
+                                <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.fieldClient">Заказчик</span>
+                                <select id="estimate-client" data-action="setEstimateField" data-pass-event data-on="change"
+                                        data-scope="estimate" data-field="client_id"
+                                        class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                            </label>
+                            <label class="space-y-1">
+                                <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.fieldStatus">Статус</span>
+                                <select id="estimate-status" data-action="setEstimateField" data-pass-event data-on="change"
+                                        data-scope="estimate" data-field="status"
+                                        class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                                    <option value="draft" data-i18n="estimates.statusDraft">📝 Черновик</option>
+                                    <option value="approved" data-i18n="estimates.statusApproved">✅ Утверждена</option>
+                                    <option value="archived" data-i18n="estimates.statusArchived">📥 Архив</option>
+                                </select>
+                            </label>
+                            <div class="grid grid-cols-2 gap-2">
+                                <label class="space-y-1">
+                                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.vat">ПДВ, %</span>
+                                    <input type="number" step="0.01" id="estimate-vat-percent"
+                                           data-action="setEstimateField" data-pass-event data-on="input"
+                                           data-scope="estimate" data-field="vat_percent"
+                                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                                </label>
+                                <label class="space-y-1">
+                                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.vatBase">ПДВ считается</span>
+                                    <select id="estimate-vat-base" data-action="setEstimateField" data-pass-event data-on="change"
+                                            data-scope="estimate" data-field="vat_base"
+                                            class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                                        <option value="works" data-i18n="estimates.baseWorks">от работ</option>
+                                        <option value="materials" data-i18n="estimates.baseMaterials">от материалов</option>
+                                        <option value="both" data-i18n="estimates.baseBoth">от работ и материалов</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <label class="space-y-1 md:col-span-2">
+                                <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.fieldNotes">Примечания (печатаются в документе)</span>
+                                <textarea id="estimate-notes" rows="2" data-action="setEstimateField" data-pass-event data-on="input"
+                                          data-scope="estimate" data-field="notes"
+                                          class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></textarea>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-4 rounded-xl shadow-sm border space-y-2">
+                        <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider" data-i18n="estimates.totals">Итоги сметы</h3>
+                        <div id="estimate-totals"></div>
+                    </div>
+
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center flex-wrap gap-2 px-1">
+                            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider" data-i18n="estimates.sections">Разделы и позиции</h3>
+                            <button data-action="addEstimateSection"
+                                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                    data-i18n="estimates.addSection">➕ Добавить раздел</button>
+                        </div>
+                        <div id="estimate-sections-container" class="space-y-3"></div>
+                    </div>
+
+                    <div class="bg-white p-4 rounded-xl shadow-sm border space-y-3">
+                        <div class="flex justify-between items-center flex-wrap gap-2">
+                            <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wider" data-i18n="estimates.limits">Лимитированные расходы</h3>
+                            <button data-action="addEstimateLimit"
+                                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                    data-i18n="estimates.addLimit">➕ Добавить лимит</button>
+                        </div>
+                        <div id="estimate-limits-container"></div>
+                    </div>
+                </div>
             </section>
 
           </main>
@@ -1713,5 +1877,441 @@
         </div>
     </div>
 
+    <!-- ============================================================ -->
+    <!-- СМЕТЫ: СПРАВОЧНИКИ (прайс работ и материалов)                 -->
+    <!-- ============================================================ -->
+    <div id="estimate-catalog-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-5xl max-h-[92vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.catalogTitle">📚 Справочники сметы</h3>
+                    <p class="text-[11px] text-gray-500" data-i18n="estimates.catalogHint">
+                        Прайс компании: цены «наряд» (рабочим и поставщикам) и «кошторис» (заказчику).
+                        Из справочника работы и материалы подставляются в смету.
+                    </p>
+                </div>
+                <button data-action="hideModal" data-arg="estimate-catalog-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <div class="p-4 border-b space-y-3">
+                <div class="flex flex-wrap gap-2">
+                    <button id="estimate-catalog-tab-works" data-action="setEstimateCatalogTab" data-arg="works"
+                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white"
+                            data-i18n="estimates.tabWorks">Работы</button>
+                    <button id="estimate-catalog-tab-materials" data-action="setEstimateCatalogTab" data-arg="materials"
+                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
+                            data-i18n="estimates.tabMaterials">Материалы</button>
+                    <button id="estimate-catalog-tab-sections" data-action="setEstimateCatalogTab" data-arg="sections"
+                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
+                            data-i18n="estimates.tabSections">Разделы</button>
+                    <button id="estimate-catalog-tab-units" data-action="setEstimateCatalogTab" data-arg="units"
+                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
+                            data-i18n="estimates.tabUnits">Единицы</button>
+                    <button id="estimate-catalog-tab-clients" data-action="setEstimateCatalogTab" data-arg="clients"
+                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
+                            data-i18n="estimates.tabClients">Клиенты</button>
+                </div>
+
+                <div class="flex flex-wrap gap-2 items-center">
+                    <input type="text" id="estimate-catalog-search"
+                           data-action="setEstimateCatalogSearch" data-on="input" data-arg-value
+                           data-i18n-placeholder="estimates.catalogSearch" placeholder="Поиск по названию"
+                           class="flex-1 min-w-[10rem] border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    <div id="estimate-catalog-section-filter-wrap">
+                        <select id="estimate-catalog-section-filter"
+                                data-action="setEstimateCatalogSectionFilter" data-on="change" data-arg-value
+                                class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                    </div>
+                    <div id="estimate-catalog-section-kind-wrap" class="hidden">
+                        <select id="estimate-catalog-section-kind"
+                                data-action="renderEstimateCatalog" data-on="change"
+                                class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                            <option value="work" data-i18n="estimates.kindWork">Разделы работ</option>
+                            <option value="material" data-i18n="estimates.kindMaterial">Разделы материалов</option>
+                        </select>
+                    </div>
+                    <button id="estimate-catalog-add-btn" data-action="openEstimateCatalogAdd"
+                            class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition"
+                            data-i18n="estimates.catalogAdd">➕ Добавить</button>
+                </div>
+            </div>
+
+            <div id="estimate-catalog-table" class="p-4 overflow-auto flex-1"></div>
+        </div>
+    </div>
+
+    <!-- СМЕТЫ: РАБОТА -->
+    <div id="estimate-work-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-lg max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 id="estimate-work-modal-title" class="text-lg font-bold text-gray-800" data-i18n="estimates.workTitle">Работа</h3>
+                <button data-action="hideModal" data-arg="estimate-work-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="estimate-work-form" class="p-4 space-y-3" data-action="saveEstimateWork" data-on="submit" data-pass-event>
+                <input type="hidden" id="estimate-work-id">
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.workName">Название работы</span>
+                    <input type="text" id="estimate-work-name" required
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.unit">Единица измерения</span>
+                        <select id="estimate-work-unit" class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                    </label>
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.section">Раздел</span>
+                        <select id="estimate-work-section" class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                    </label>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.priceWorker">Наряд (рабочим), грн</span>
+                        <input type="number" step="0.01" id="estimate-work-price-worker"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.priceClient">Кошторис (заказчику), грн</span>
+                        <input type="number" step="0.01" id="estimate-work-price-client"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                </div>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.description">Описание (необязательно)</span>
+                    <textarea id="estimate-work-description" rows="2"
+                              class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></textarea>
+                </label>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" data-action="hideModal" data-arg="estimate-work-modal"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                            data-i18n="common.cancel">Отмена</button>
+                    <button type="submit"
+                            class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                            data-i18n="common.save">💾 Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <!-- СМЕТЫ: МАТЕРИАЛ -->
+    <div id="estimate-material-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-lg max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 id="estimate-material-modal-title" class="text-lg font-bold text-gray-800" data-i18n="estimates.materialTitle">Материал</h3>
+                <button data-action="hideModal" data-arg="estimate-material-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="estimate-material-form" class="p-4 space-y-3" data-action="saveEstimateMaterial" data-on="submit" data-pass-event>
+                <input type="hidden" id="estimate-material-id">
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.materialName">Название материала</span>
+                    <input type="text" id="estimate-material-name" required
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.unit">Единица измерения</span>
+                        <select id="estimate-material-unit" class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                    </label>
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.section">Раздел</span>
+                        <select id="estimate-material-section" class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                    </label>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.pricePurchase">Закупка (наряд), грн</span>
+                        <input type="number" step="0.01" id="estimate-material-price-purchase"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.priceClient">Кошторис (заказчику), грн</span>
+                        <input type="number" step="0.01" id="estimate-material-price-client"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                </div>
+                <label class="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <input type="checkbox" id="estimate-material-customer-supplied" class="accent-[#15803d]">
+                    <span class="text-xs text-amber-900" data-i18n="estimates.customerSupplied">
+                        Материал привозит заказчик: в суммы сметы не входит
+                    </span>
+                </label>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" data-action="hideModal" data-arg="estimate-material-modal"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                            data-i18n="common.cancel">Отмена</button>
+                    <button type="submit"
+                            class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                            data-i18n="common.save">💾 Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <!-- СМЕТЫ: РАЗДЕЛ СПРАВОЧНИКА -->
+    <div id="estimate-section-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 id="estimate-section-modal-title" class="text-lg font-bold text-gray-800" data-i18n="estimates.sectionTitle">Раздел</h3>
+                <button data-action="hideModal" data-arg="estimate-section-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="estimate-section-form" class="p-4 space-y-3" data-action="saveEstimateSection" data-on="submit" data-pass-event>
+                <input type="hidden" id="estimate-section-id">
+                <input type="hidden" id="estimate-section-kind" value="work">
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.sectionName">Название раздела</span>
+                    <input type="text" id="estimate-section-name" required
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.sectionParent">Родительский раздел (для подразделов)</span>
+                    <select id="estimate-section-parent" class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                </label>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.order">Порядок (меньше — выше)</span>
+                    <input type="number" step="1" id="estimate-section-order"
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" data-action="hideModal" data-arg="estimate-section-modal"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                            data-i18n="common.cancel">Отмена</button>
+                    <button type="submit"
+                            class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                            data-i18n="common.save">💾 Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- СМЕТЫ: ЕДИНИЦА ИЗМЕРЕНИЯ -->
+    <div id="estimate-unit-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 id="estimate-unit-modal-title" class="text-lg font-bold text-gray-800" data-i18n="estimates.unitTitle">Единица измерения</h3>
+                <button data-action="hideModal" data-arg="estimate-unit-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="estimate-unit-form" class="p-4 space-y-3" data-action="saveEstimateUnit" data-on="submit" data-pass-event>
+                <input type="hidden" id="estimate-unit-id">
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.unitShort">Сокращение (м², шт, люд.-год)</span>
+                    <input type="text" id="estimate-unit-name" required
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.unitFull">Полное название</span>
+                    <input type="text" id="estimate-unit-full-name"
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.order">Порядок (меньше — выше)</span>
+                    <input type="number" step="1" id="estimate-unit-order"
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" data-action="hideModal" data-arg="estimate-unit-modal"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                            data-i18n="common.cancel">Отмена</button>
+                    <button type="submit"
+                            class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                            data-i18n="common.save">💾 Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <!-- СМЕТЫ: КЛИЕНТ -->
+    <div id="estimate-client-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 id="estimate-client-modal-title" class="text-lg font-bold text-gray-800" data-i18n="estimates.clientTitle">Клиент</h3>
+                <button data-action="hideModal" data-arg="estimate-client-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="estimate-client-form" class="p-4 space-y-3" data-action="saveEstimateClient" data-on="submit" data-pass-event>
+                <input type="hidden" id="estimate-client-id">
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.clientName">Название или ФИО заказчика</span>
+                    <input type="text" id="estimate-client-name" required
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.phone">Телефон</span>
+                        <input type="text" id="estimate-client-phone"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.email">E-mail</span>
+                        <input type="text" id="estimate-client-email"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                </div>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.address">Адрес</span>
+                    <input type="text" id="estimate-client-address"
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.notes">Примечания</span>
+                    <textarea id="estimate-client-notes" rows="2"
+                              class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></textarea>
+                </label>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" data-action="hideModal" data-arg="estimate-client-modal"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                            data-i18n="common.cancel">Отмена</button>
+                    <button type="submit"
+                            class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                            data-i18n="common.save">💾 Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <!-- СМЕТЫ: РЕКВИЗИТЫ КОМПАНИИ (шапка документов) -->
+    <div id="estimate-company-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[92vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.companyTitle">🏢 Реквизиты компании</h3>
+                <button data-action="hideModal" data-arg="estimate-company-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <form id="estimate-company-form" class="p-4 space-y-3" data-action="saveEstimateCompany" data-on="submit" data-pass-event>
+                <p class="text-[11px] text-gray-500" data-i18n="estimates.companyHint">
+                    Эти строки печатаются шапкой кошториса, наряда и ведомости материалов.
+                </p>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.companyName">Название компании</span>
+                    <input type="text" id="estimate-company-name"
+                           class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                </label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.phone">Телефон</span>
+                        <input type="text" id="estimate-company-phone"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.email">E-mail</span>
+                        <input type="text" id="estimate-company-email"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.website">Сайт</span>
+                        <input type="text" id="estimate-company-website"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                    <label class="space-y-1 block">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.address">Адрес</span>
+                        <input type="text" id="estimate-company-address"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                </div>
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.companyNotes">Примечания по умолчанию (в новые сметы)</span>
+                    <textarea id="estimate-company-notes" rows="2"
+                              class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></textarea>
+                </label>
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" data-action="hideModal" data-arg="estimate-company-modal"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                            data-i18n="common.cancel">Отмена</button>
+                    <button type="submit"
+                            class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                            data-i18n="common.save">💾 Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <!-- СМЕТЫ: НОРМЫ РАСХОДА МАТЕРИАЛОВ НА РАБОТУ -->
+    <div id="estimate-work-materials-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-2xl max-h-[92vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <div>
+                    <h3 id="estimate-work-norms-title" class="text-lg font-bold text-gray-800" data-i18n="estimates.normsTitle">📦 Нормы расхода материалов</h3>
+                    <p class="text-[11px] text-gray-500" data-i18n="estimates.normsHint">
+                        Сколько материала нужно на 1 единицу работы: тогда в смете материалы подставятся сами.
+                    </p>
+                </div>
+                <button data-action="hideModal" data-arg="estimate-work-materials-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div class="p-4 border-b space-y-3">
+                <input type="hidden" id="estimate-work-norms-work-id">
+                <div class="flex flex-wrap gap-2 items-end">
+                    <label class="space-y-1 flex-1 min-w-[12rem]">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.material">Материал</span>
+                        <select id="estimate-work-norms-material"
+                                class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                    </label>
+                    <label class="space-y-1 w-32">
+                        <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.consumption">Расход на 1 ед.</span>
+                        <input type="number" step="0.0001" id="estimate-work-norms-consumption"
+                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    </label>
+                    <button data-action="addEstimateWorkNorm"
+                            class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-2 rounded-lg text-xs font-semibold shadow transition"
+                            data-i18n="estimates.normsAdd">➕ Добавить норму</button>
+                </div>
+            </div>
+            <div id="estimate-work-norms-list" class="p-4 overflow-auto flex-1"></div>
+        </div>
+    </div>
+    <!-- СМЕТЫ: ВЫБОР РАБОТЫ ИЗ СПРАВОЧНИКА -->
+    <div id="estimate-work-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-lg max-h-[92vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.pickWorkTitle">➕ Работа из справочника</h3>
+                <button data-action="hideModal" data-arg="estimate-work-picker-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div class="p-4 border-b">
+                <input type="text" id="estimate-work-picker-search"
+                       data-action="setEstimateWorkPickerSearch" data-on="input" data-arg-value
+                       data-i18n-placeholder="estimates.pickSearch" placeholder="Поиск по названию"
+                       class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+            </div>
+            <div id="estimate-work-picker-list" class="p-2 overflow-auto flex-1 space-y-1"></div>
+        </div>
+    </div>
+
+    <!-- СМЕТЫ: ВЫБОР МАТЕРИАЛА ИЗ СПРАВОЧНИКА -->
+    <div id="estimate-material-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-lg max-h-[92vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.pickMaterialTitle">📦 Материал из справочника</h3>
+                <button data-action="hideModal" data-arg="estimate-material-picker-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div class="p-4 border-b">
+                <input type="text" id="estimate-material-picker-search"
+                       data-action="setEstimateMaterialPickerSearch" data-on="input" data-arg-value
+                       data-i18n-placeholder="estimates.pickSearch" placeholder="Поиск по названию"
+                       class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+            </div>
+            <div id="estimate-material-picker-list" class="p-2 overflow-auto flex-1 space-y-1"></div>
+        </div>
+    </div>
+
+    <!-- СМЕТЫ: ДОКУМЕНТЫ -->
+    <div id="estimate-export-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.docsTitle">📥 Документы сметы</h3>
+                <button data-action="hideModal" data-arg="estimate-export-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+            <div class="p-4 space-y-3">
+                <label class="space-y-1 block">
+                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.docType">Документ</span>
+                    <select id="estimate-export-doc"
+                            class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                </label>
+                <p class="text-[11px] text-gray-500" data-i18n="estimates.docsHint">
+                    Кошторис печатают заказчику, наряд — бригаде (нарядные цены), ведомость материалов — снабжению.
+                </p>
+                <div class="grid grid-cols-2 gap-2 pt-2 border-t">
+                    <button data-action="exportEstimateDoc" data-arg="excel"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                            data-i18n="common.export">📥 Excel</button>
+                    <button data-action="exportEstimateDoc" data-arg="pdf"
+                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                            data-i18n="estimates.pdf">📄 PDF</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

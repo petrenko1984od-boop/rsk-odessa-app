@@ -117,7 +117,7 @@ function copyIssues(text) {
 }
 
 function main() {
-    log('Проверка миграций базы (v2.4.0 … v2.9.0): ' + path.relative(ROOT, MIGRATION));
+    log('Проверка миграций базы (v2.4.0 … v2.10.0): ' + path.relative(ROOT, MIGRATION));
 
     if (!fs.existsSync(MIGRATION)) {
         ok('файл миграции существует', false, MIGRATION);
@@ -830,14 +830,18 @@ function main() {
             /'\.\/js\/pagination\.js'/.test(swJs) &&
             /id="orders-toolbar"/.test(indexHtml));
 
-        // 8. Версия приложения одна в config.js и sw.js: с v2.9.0 меняется имя
+        // 8. Версия приложения одна в config.js и sw.js: смена версии меняет имя
         //    кэша оболочки, и расхождение версий оставило бы сотрудников на
-        //    старых js — то есть на списке без страниц.
+        //    старых js — то есть на списке без страниц. Текущая версия здесь
+        //    закреплена НАМЕРЕННО: поднимая её, нужно осознанно пройти процедуру
+        //    выпуска (README → «Выпуск новой версии»: SHELL_REVISION = r1, новое
+        //    имя кэша в README и пересборка Tailwind под новую версию).
+        const CURRENT_VERSION = '2.10.0';
         const configVersion = (configJs.match(/VERSION:\s*'([0-9.]+)'/) || [])[1];
         const swVersion = (swJs.match(/const APP_VERSION = '([0-9.]+)'/) || [])[1];
-        ok('v2.9.0: версия приложения совпадает в js/config.js и sw.js',
-            configVersion === '2.9.0' && swVersion === configVersion,
-            'config: ' + configVersion + ', sw: ' + swVersion);
+        ok('v2.10.0: версия приложения совпадает в js/config.js и sw.js и поднята осознанно',
+            swVersion === configVersion && configVersion === CURRENT_VERSION,
+            'config: ' + configVersion + ', sw: ' + swVersion + ', ожидается: ' + CURRENT_VERSION);
 
         const v29Copy = copyIssues(v29);
         ok('migrate-v2.9-scale-indexes.sql чистый для копирования (кавычки, пробелы, скобки, $$)',
@@ -996,6 +1000,121 @@ function main() {
         /id="foreman-tasks"/.test(dashboardJs) &&
         /db\.selectAllPaged\('orders'/.test(dashboardJs));
 
+    // --- 3м. Миграция v2.10.0: раздел «📐 Сметы» ---------------------------
+    // Повод: раздел пришёл из отдельного проекта («СметаPRO» на React+Prisma), и
+    // его SQL — самый большой файл в database/. Ломается он ровно там, где
+    // ломались предыдущие миграции: RLS забыли включить (цены «наряд» и
+    // «кошторис» — это прибыль компании), политику создали без предварительного
+    // drop (повторный запуск падает), смету разрешили писать прямыми
+    // insert/update (обрыв сети оставляет её без разделов), номер выдают без
+    // блокировки (двое получают одинаковый номер), а notify pgrst стоит не
+    // последним — тогда часть объектов в кэш API не попадает и приложение
+    // получает PGRST205 уже в бою. Тем же блоком сверяются имена команд с
+    // js/database.js → RPC_ESTIMATES и связка с разметкой/оболочкой.
+    const ESTIMATE_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.10-estimates.sql');
+
+    if (!fs.existsSync(ESTIMATE_MIGRATION)) {
+        ok('есть файл database/migrate-v2.10-estimates.sql', false, ESTIMATE_MIGRATION);
+    } else {
+        const v210 = fs.readFileSync(ESTIMATE_MIGRATION, 'utf8');
+        const estimatesJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'estimates.js'), 'utf8');
+        const estimateDocJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'estimate-doc.js'), 'utf8');
+        const swJsEstimates = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+        const dbJsEst = fs.readFileSync(path.join(ROOT, 'js', 'database.js'), 'utf8');
+
+        // 1. Повторный запуск файла безопасен: таблицы через if not exists.
+        const createTables = (v210.match(/create table if not exists public\./g) || []).length;
+        ok('v2.10.0: 14 таблиц смет создаются через if not exists (повтор безопасен)',
+            createTables === 14 && !/create table(?! if not exists)/.test(v210),
+            'таблиц: ' + createTables);
+
+        // 2. RLS + политики: включён, снимается перед созданием, anon не допущен.
+        ok('v2.10.0: RLS включён, политики снимаются перед созданием, anon закрыт',
+            /alter table public\.estimates enable row level security;/.test(v210) &&
+            /enable row level security/.test(v210) &&
+            /drop policy if exists estimates_estimate_editor on public\.estimates;/.test(v210) &&
+            /revoke all on table public\.estimates from anon;/.test(v210) &&
+            !/to anon/.test(v210));
+
+        // 3. Прямая запись в смету отобрана: её собирает только save_estimate().
+        ok('v2.10.0: смета пишется только командами (прямой insert/update отобран)',
+            /revoke all on table public\.estimates from authenticated;/.test(v210) &&
+            /grant select on table public\.estimates to authenticated;/.test(v210) &&
+            /grant select on table public\.%I to authenticated/.test(v210));
+
+        // 4. Команды: пять функций, у каждой фиксированный search_path.
+        const estimateFuncs = ['save_estimate', 'delete_estimate', 'set_estimate_status',
+            'estimate_next_number', 'rsk_is_estimate_editor'];
+        ok('v2.10.0: пять команд смет объявлены с фиксированным search_path',
+            estimateFuncs.every((name) => v210.includes('create or replace function public.' + name)) &&
+            (v210.match(/set search_path = pg_catalog, public/g) || []).length >= estimateFuncs.length,
+            'search_path: ' + (v210.match(/set search_path = pg_catalog, public/g) || []).length);
+
+        // 5. Номер под блокировкой и ключ идемпотентности: два одновременных
+        //    сохранения не дают один номер и не создают вторую смету.
+        ok('v2.10.0: номер под блокировкой, повтор ключа не создаёт вторую смету',
+            /pg_advisory_xact_lock/.test(v210) &&
+            /estimate_command_log/.test(v210) &&
+            /on conflict \(command_key\) do nothing/.test(v210));
+
+        // 6. Итоги списка считает база, и правила совпадают с модулем: количество
+        //    материалов вверх, давальческие не считаются (иначе список и
+        //    документ показывали бы разные суммы).
+        ok('v2.10.0: итоги сметы считает база по тем же правилам, что модуль',
+            /ceil\(coalesce\(m\.quantity, 0\)\)/.test(v210) &&
+            /is_customer_supplied/.test(v210) &&
+            /total_naryad/.test(v210) &&
+            /Math\.ceil\(/.test(estimateDocJs) &&
+            /in \('works', 'materials', 'both'\)/.test(v210));
+
+        // 7. Самопроверка с MISSING, а notify pgrst — ПОСЛЕДНЯЯ команда файла:
+        //    всё созданное после него в кэш API не попадёт, и раздел ответит
+        //    «Could not find the table ... in the schema cache».
+        ok('v2.10.0: есть самопроверка с MISSING, reload schema — последним',
+            v210.includes('11. САМОПРОВЕРКА') &&
+            /MISSING - создано/.test(v210) &&
+            /MISSING - anon имеет права/.test(v210) &&
+            /MISSING - прямая запись открыта/.test(v210) &&
+            /MISSING - нет rsk_current_employee/.test(v210) &&
+            v210.trimEnd().endsWith("notify pgrst, 'reload schema';"));
+
+        const v210Copy = copyIssues(v210);
+        ok('migrate-v2.10-estimates.sql чистый для копирования (кавычки, пробелы, скобки, $$)',
+            v210Copy.clean, v210Copy.detail);
+
+        // 8. Имена команд живут в двух местах (js/database.js → RPC_ESTIMATES и
+        //    SQL): опечатка даёт PGRST202 только в бою.
+        const rpcEstimates = (dbJsEst.match(/export const RPC_ESTIMATES = \{([\s\S]*?)\n\};/) || [])[1] || '';
+        const estimateRpcNames = [...rpcEstimates.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]) || [];
+        ok('v2.10.0: имена команд совпадают в js/database.js и в миграции',
+            estimateRpcNames.length >= 3 &&
+            estimateRpcNames.every((name) => v210.includes('function public.' + name + '(')),
+            estimateRpcNames.join(', '));
+
+        // 9. Модуль зовёт команды, а не пишет в таблицы сметы напрямую: прямую
+        //    запись база всё равно отклонит, и сотрудник получил бы отказ уже
+        //    после нажатия «Сохранить».
+        ok('v2.10.0: раздел зовёт команды, а не пишет в таблицы сметы',
+            /db\.rpc\(RPC_ESTIMATES\.SAVE/.test(estimatesJs) &&
+            /db\.rpc\(RPC_ESTIMATES\.DELETE/.test(estimatesJs) &&
+            /db\.rpc\(RPC_ESTIMATES\.SET_STATUS/.test(estimatesJs) &&
+            !/db\.insert\('estimates'/.test(estimatesJs) &&
+            !/db\.update\('estimates'/.test(estimatesJs) &&
+            !/db\.remove\('estimate_sections'/.test(estimatesJs));
+
+        // 10. Разметка и оболочка: вкладка существует, модули кэшируются — иначе
+        //     после обновления раздела у сотрудника его просто не будет.
+        ok('v2.10.0: вкладка есть в разметке, модули — в кэше оболочки (sw.js)',
+            /id="btn-estimates"/.test(indexHtmlV29) &&
+            /id="tab-estimates"/.test(indexHtmlV29) &&
+            ['estimates.js', 'estimate-catalog.js', 'estimate-doc.js']
+                .every((file) => swJsEstimates.includes('js/modules/' + file)));
+
+        ok('v2.10.0: database/schema.sql описывает таблицы смет и команды',
+            /estimate_items/.test(schema) && /save_estimate/.test(schema) &&
+            /migrate-v2\.10-estimates\.sql/.test(schema));
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'
@@ -1029,7 +1148,7 @@ function main() {
 
     log('--- ИТОГ ---');
     log(failed === 0
-        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.9.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
+        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.10.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
         : '  не прошло проверок: ' + failed);
 }
 

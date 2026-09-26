@@ -87,6 +87,11 @@ import {
     loadDiagnostics
 } from './modules/diagnostics.js';
 
+// Сметы (конструктор для ПТО): справочники и список смет.
+// Раздел виден только трём ролям (право manage_estimate) — см. TAB_REQUIREMENTS.
+import { loadEstimateCatalog } from './modules/estimate-catalog.js';
+import { loadEstimates } from './modules/estimates.js';
+
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
@@ -102,8 +107,8 @@ export const AppState = {
 // НАВИГАЦИЯ
 // =====================================================================
 
-const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'diagnostics'];
-const TAB_BUTTONS = ['projects', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'diagnostics'];
+const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'estimates', 'diagnostics'];
+const TAB_BUTTONS = ['projects', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'estimates', 'diagnostics'];
 
 export function switchTab(tabId) {
     if (!canSeeTab(tabId) && tabId !== 'welcome' && tabId !== 'project-detail') {
@@ -151,6 +156,11 @@ export function switchTab(tabId) {
     if (tabId === 'orders') loadOrders();
     if (tabId === 'cash-requests') loadCashRequests();
     if (tabId === 'registry') loadRegistry();
+    if (tabId === 'estimates') {
+        // Справочник нужен смете для подстановки работ и материалов, поэтому
+        // грузим его вместе со списком (повторные вызовы берут кэш).
+        loadEstimateCatalog().then(loadEstimates);
+    }
     if (tabId === 'diagnostics') loadDiagnostics();
 }
 
@@ -171,6 +181,7 @@ const TAB_BUTTONS_MAP = [
     ['btn-orders',        'orders'],
     ['btn-cash-requests', 'cash-requests'],
     ['btn-registry',      'registry'],
+    ['btn-estimates',     'estimates'],
     ['btn-diagnostics',   'diagnostics']
 ];
 

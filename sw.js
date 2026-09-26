@@ -34,7 +34,7 @@
 // так было в r2 (подробности в README → «Политика Content-Security-Policy»).
 // =====================================================================
 
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.10.0';
 const CACHE_PREFIX = 'freedom';
 // Прежний префикс кэша: приложение называлось иначе, и у сотрудников, которые
 // уже установили его, кэш с этим префиксом ещё лежит на устройстве. Без этого
@@ -286,7 +286,19 @@ const LEGACY_CACHE_PREFIXES = ['rsk-odessa'];
 //        Оболочка переустанавливается потому, что изменились index.html,
 //        css/style.css, js/main.js, состав APP_SHELL (logo2.png) и
 //        css/tailwind.css — строка-отпечаток в конце файла.
-const SHELL_REVISION = 'r16';
+//   r17 — раздел «📐 Сметы» (v2.10.0): конструктор смет для ПТО —
+//        справочники работ и материалов с двумя ценами, нормы расхода,
+//        лимитированные расходы, ПДВ, выгрузка кошториса/наряда/ведомости
+//        материалов и перенос плана в разделы объекта. Оболочка обновилась
+//        потому, что добавились js/modules/estimate-doc.js,
+//        js/modules/estimate-catalog.js, js/modules/estimates.js, кнопка
+//        раздела в index.html и новые утилитарные классы в css/tailwind.css
+//        (строка-отпечаток в конце файла).
+//   v2.10.0 начинается с r1: имя кэша и так меняется вместе с APP_VERSION.
+//   r1 — выпуск v2.10.0: раздел «📐 Сметы» (см. r17 выше) плюс прогон его
+//        миграции в настоящем Postgres и самопроверка самой миграции
+//        (tools/checks/migration-run-check.mjs, database/migrate-v2.10-estimates.sql).
+const SHELL_REVISION = 'r1';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
@@ -318,6 +330,9 @@ const APP_SHELL = [
     './js/modules/projects.js',
     './js/modules/sections.js',
     './js/modules/estimate.js',
+    './js/modules/estimate-doc.js',
+    './js/modules/estimate-catalog.js',
+    './js/modules/estimates.js',
     './js/modules/gantt.js',
     './js/modules/orders.js',
     './js/modules/invoices.js',

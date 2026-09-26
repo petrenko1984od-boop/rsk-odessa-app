@@ -20,6 +20,9 @@
 --
 -- Это полная схема вместе с изменениями версии v2.4.0 (счёт поставщика,
 -- статус «Доставлено на объект», маркер source = 'financier_topup').
+-- Из v2.10.0 здесь описаны таблицы раздела «📐 Сметы» (состав — ниже, в
+-- разделе «ТАБЛИЦЫ РАЗДЕЛА ...»; полное определение, политики и команды —
+-- database/migrate-v2.10-estimates.sql).
 -- Если база уже развёрнута, применяйте не этот файл, а пошаговые миграции:
 -- database/migrate-v2.4.sql (и предыдущие migrate-v*.sql по порядку).
 -- =====================================================================
@@ -383,6 +386,80 @@ group by e.id, e.name;
 -- total_vat. Вспомогательные функции вида — public.rsk_delivery_kind(text, text)
 -- (та же логика, что в js/utils.js → getDeliveryItemType) и
 -- public.rsk_json_amount(jsonb, text) (разбор чисел из позиций расхода).
+-- =====================================================================
+
+-- =====================================================================
+-- ТАБЛИЦЫ РАЗДЕЛА «📐 СМЕТЫ» (v2.10.0)
+-- =====================================================================
+-- Конструктор смет для ПТО: справочники работ и материалов, клиенты,
+-- реквизиты своей компании и сами сметы (разделы → позиции → материалы
+-- позиции + лимиты). Раздел открыт Администратору, Главному инженеру и
+-- Инженеру ПТО (право manage_estimate, js/permissions.js).
+--
+-- Полное определение — database/migrate-v2.10-estimates.sql (это файл,
+-- который применяют в SQL Editor). Здесь состав, чтобы схему можно было
+-- прочитать целиком:
+--
+--   estimate_units              id, name (уникально), full_name, order_index, created_at
+--   estimate_work_sections      id, name, parent_id (→ себя), order_index, created_at
+--   estimate_material_sections  то же дерево для материалов
+--   estimate_works              id, name, unit, price_worker (наряд),
+--                               price_client (кошторис), description, section_id, created_at
+--   estimate_materials          id, name, unit, price_purchase (закупка), price_client,
+--                               is_customer_supplied (давальческий), section_id, created_at
+--   estimate_work_materials     id, work_id, material_id, consumption — норма расхода:
+--                               сколько материала нужно на 1 единицу работы; уникально (work_id, material_id)
+--   estimate_clients            id, name, phone, email, address, notes, created_at
+--   estimate_company            id (всегда 1), company_name, phone, email, website, address,
+--                               default_notes, updated_at — шапка документов
+--   estimates                   id, number ('00001/2026', уникален), number_year, number_seq,
+--                               title, object_name, project_id (→ projects), client_id (→ estimate_clients),
+--                               notes, vat_percent, vat_base (works|materials|both),
+--                               status (draft|approved|archived), created_by_employee_id (→ employees),
+--                               created_at, updated_at, total_client, total_materials,
+--                               total_naryad, items_count
+--   estimate_sections           id, estimate_id (→ estimates, каскад), name, order_index
+--   estimate_items              id, section_id (каскад), work_id (→ estimate_works), name, unit,
+--                               quantity, price_worker, price_client, order_index
+--   estimate_item_materials     id, item_id (каскад), material_id, name, unit, quantity,
+--                               price_purchase, price_client, consumption, is_customer_supplied, order_index
+--   estimate_limits             id, estimate_id (каскад), name, percent, base (works|materials|both),
+--                               order_index
+--   estimate_command_log        command_key (uuid, первичный ключ), estimate_id, created_at
+--
+-- ЧЕТЫРЕ ПРАВИЛА, из которых состоит смета (те же — в js/modules/estimate-doc.js):
+--   * у работы и материала ДВЕ цены: «кошторис» заказчику (price_client) и
+--     «наряд» исполнителю (price_worker / price_purchase); разница — прибыль;
+--   * позиция ХРАНИТ свои цены, а не только ссылку на справочник: правка
+--     прайса не должна менять уже выданную заказчику смету;
+--   * количество материалов округляется ВВЕРХ до целого, а давальческие
+--     (is_customer_supplied) в суммы не входят ни по кошторису, ни по наряду;
+--   * подытог = работы + материалы + лимиты, ПДВ = подытог × vat_percent / 100.
+--
+-- ЗАПИСЬ ИДЁТ ТОЛЬКО КОМАНДАМИ (та же схема, что у v2.8.0 для финансов): у
+-- роли authenticated прямой insert/update отобран у estimates и её дочерних
+-- таблиц, разрешён select. Смета — агрегат: собрать её «по кускам» из браузера
+-- значит оставить половинкой при обрыве сети. Команды:
+--
+--   save_estimate(p_payload jsonb, p_estimate_id bigint, p_command_key uuid) → jsonb
+--       сохраняет смету целиком (шапка + разделы + позиции + материалы позиций +
+--       лимиты) в одной транзакции и пересчитывает её итоги; повтор с тем же
+--       p_command_key возвращает прежний результат, а не вторую смету (журнал
+--       estimate_command_log);
+--   delete_estimate(p_estimate_id bigint) → boolean — удаляет смету, содержимое
+--       уходит каскадом;
+--   set_estimate_status(p_estimate_id bigint, p_status text) → jsonb —
+--       draft ⇄ approved ⇄ archived прямо из списка;
+--   estimate_next_number() → number, number_year, number_seq — номер вида
+--       '00001/2026' под блокировкой (pg_advisory_xact_lock): два одновременных
+--       сохранения не получат один номер (колонка number уникальна);
+--   rsk_is_estimate_editor() → boolean — Администратор, Главный инженер, Инженер
+--       ПТО; на ней стоят все политики смет.
+--
+-- Зависимость: rsk_current_employee_role() и rsk_current_employee_id() из
+-- migrate-v2.7-rls-finance.sql (роль решает, кому открыт раздел; id пишется
+-- автором сметы). Таблицы смет закрыты от anon полностью, RLS включён на всех
+-- 14. Самопроверка — в конце самой миграции (ok / MISSING).
 -- =====================================================================
 
 -- =====================================================================
