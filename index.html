@@ -33,7 +33,7 @@
          установленным приложением останется старая политика (см. README → CSP).
          ============================================================= -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in; connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in https://*.workers.dev https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self' blob:">
-    <title>RSK Odessa — Управление строительством</title>
+    <title>FreeDOM — Единый центр управления строительством</title>
     <link rel="icon" type="image/png" href="./logo.png">
 
     <!-- PWA: приложение можно установить на рабочий стол телефона и ПК.
@@ -44,7 +44,7 @@
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-title" content="RSK Odessa">
+    <meta name="apple-mobile-web-app-title" content="FreeDOM">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -105,13 +105,13 @@
     <div id="auth-screen" class="fixed inset-0 bg-gray-900 flex items-center justify-center z-[100] p-4">
         <div class="bg-white rounded-xl shadow-2xl p-8 max-w-sm w-full">
             <div class="text-center mb-6">
-                <img src="./logo.png" alt="RSK Odessa" class="h-20 mx-auto object-contain"
+                <img src="./logo.png" alt="FreeDOM" class="h-20 mx-auto object-contain"
                      data-fallback-show="auth-logo-fallback">
                 <!-- Запасная надпись вместо логотипа: показывается, если картинка
                      не загрузилась (js/actions.js → обработчик ошибки). -->
                 <div id="auth-logo-fallback"
-                     class="bg-[#15803d] w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl font-bold shadow-lg hidden">R</div>
-                <p class="text-xs text-gray-500 mt-4">Управление строительством</p>
+                     class="bg-[#15803d] w-16 h-16 rounded-2xl mx-auto flex items-center justify-center text-white text-2xl font-bold shadow-lg hidden">F</div>
+                <p class="text-xs text-gray-500 mt-4">Единый центр управления строительством</p>
             </div>
 
             <div class="flex bg-gray-100 rounded-lg p-1 mb-4">
@@ -169,31 +169,39 @@
             <div class="max-w-6xl w-full mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3 min-w-0">
                 <div class="flex items-center gap-3 shrink-0">
                     <div class="bg-white p-1.5 rounded-lg shadow-sm flex items-center justify-center">
-                        <img src="./logo.png" alt="RSK Logo" class="h-8 w-auto object-contain"
+                        <img src="./logo.png" alt="FreeDOM" class="h-8 w-auto object-contain"
                              data-fallback-show="header-logo-fallback">
                         <!-- Запасная надпись вместо логотипа: показывает js/actions.js,
                              если картинка не загрузилась. -->
-                        <span id="header-logo-fallback" class="text-[#15803d] font-bold text-lg px-1 hidden">RSK</span>
+                        <span id="header-logo-fallback" class="text-[#15803d] font-bold text-lg px-1 hidden">FreeDOM</span>
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-2 items-center justify-end min-w-0">
-                    <button data-action="switchTab" data-arg="tasks" id="btn-tasks" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Рабочий экран</button>
-                    <button data-action="switchTab" data-arg="projects" id="btn-projects" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты</button>
-                    <button data-action="switchTab" data-arg="employees" id="btn-employees" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники</button>
-                    <button data-action="switchTab" data-arg="orders" id="btn-orders" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение</button>
-                    <button data-action="switchTab" data-arg="cash-requests" id="btn-cash-requests" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Финансы</button>
-                    <button data-action="switchTab" data-arg="registry" id="btn-registry" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
+                    <!-- Кнопки шапки. Классы nav-chip (раздел) и nav-cta (действие)
+                         рисует css/theme.css: обычный раздел — полупрозрачная белая
+                         плашка на фирменном фоне, активный раздел — БЕЛАЯ плашка с
+                         фирменным текстом (класс is-active ставит switchTab() в
+                         js/main.js), действия — тёмная плашка в белой рамке. Так
+                         активная кнопка видна на любой схеме; раньше её цвет
+                         собирался из тех же фирменных утилит, что и фон шапки,
+                         поэтому на насыщенной схеме (красной) она сливалась. -->
+                    <button data-action="switchTab" data-arg="tasks" id="btn-tasks" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Рабочий экран</button>
+                    <button data-action="switchTab" data-arg="projects" id="btn-projects" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты</button>
+                    <button data-action="switchTab" data-arg="employees" id="btn-employees" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники</button>
+                    <button data-action="switchTab" data-arg="orders" id="btn-orders" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение</button>
+                    <button data-action="switchTab" data-arg="cash-requests" id="btn-cash-requests" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Финансы</button>
+                    <button data-action="switchTab" data-arg="registry" id="btn-registry" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
                     <!-- Диагностика: журнал ошибок сотрудников (js/modules/diagnostics.js).
                          Видна только Администратору и Директору — тем же ролям, которых
                          пускает к журналу RLS; остальным кнопку прячет applyPermissionsToUI()
                          (право view_diagnostics, js/permissions.js). -->
-                    <button data-action="switchTab" data-arg="diagnostics" id="btn-diagnostics" data-i18n="diag.title" class="px-3 py-2 bg-[#16a34a]/70 hover:bg-[#16a34a] rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">🩺 Диагностика</button>
-                    <button data-action="openNewOrderForm" id="btn-new-order" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заказ материалов</button>
-                    <button data-action="openNewCashRequestForm" id="btn-new-cash-request" class="px-3 py-2 bg-[#22c55e] hover:bg-[#15803d] text-white rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Финансовые запросы</button>
+                    <button data-action="switchTab" data-arg="diagnostics" id="btn-diagnostics" data-i18n="diag.title" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">🩺 Диагностика</button>
+                    <button data-action="openNewOrderForm" id="btn-new-order" class="nav-cta px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заказ материалов</button>
+                    <button data-action="openNewCashRequestForm" id="btn-new-cash-request" class="nav-cta px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Финансовые запросы</button>
 
                     <div class="relative">
                         <button data-action="toggleProfileMenu" id="profile-btn"
-                                class="flex items-center gap-2 px-2 py-1.5 bg-[#16a34a] hover:bg-[#166534] rounded-lg text-xs sm:text-sm font-semibold transition shadow text-white">
+                                class="nav-chip flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition shadow">
                             <span id="profile-avatar" class="w-7 h-7 rounded-full bg-white text-[#15803d] flex items-center justify-center font-bold text-xs">?</span>
                             <span id="profile-name-short" class="hidden sm:inline max-w-[80px] truncate">Кабинет</span>
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -650,7 +658,7 @@
 
             <div class="bg-gray-50 border rounded-lg p-3 flex justify-between items-center text-xs text-gray-600">
                 <span data-i18n="settings.version">Версия приложения</span>
-                <span id="settings-version" class="font-semibold text-gray-800">RSK Odessa</span>
+                <span id="settings-version" class="font-semibold text-gray-800">FreeDOM</span>
             </div>
 
             <button type="button" data-action="hideModal" data-arg="settings-modal"
@@ -1626,7 +1634,7 @@
         <div class="flex items-start gap-3">
             <img src="./icons/icon-192.png" alt="" class="h-12 w-12 rounded-xl shadow-sm shrink-0">
             <div class="min-w-0 flex-1">
-                <p id="pwa-install-title" class="text-sm font-bold text-gray-800">Установить RSK Odessa?</p>
+                <p id="pwa-install-title" class="text-sm font-bold text-gray-800">Установить FreeDOM?</p>
                 <p id="pwa-install-text" class="text-xs text-gray-500 mt-1">
                     Приложение откроется в отдельном окне, а значок появится на рабочем столе.
                 </p>

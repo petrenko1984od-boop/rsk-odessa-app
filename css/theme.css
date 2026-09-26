@@ -185,6 +185,50 @@ html[data-theme='graphite'] {
 [class~="focus:ring-emerald-500/50"]:focus { --tw-ring-color: rgba(var(--brand-600-rgb), 0.5) !important; }
 
 /* ---------------------------------------------------------------------
+   ВЕРХНЕЕ МЕНЮ (разделы, действия, кабинет)
+   ---------------------------------------------------------------------
+   Кнопки шапки больше не собираются из фирменных утилит: на насыщенной
+   схеме (красной) активный раздел отличался от остальных на пару
+   процентов яркости, а сами кнопки сливались с фоном шапки. Теперь три
+   роли читаются одинаково в любой схеме:
+
+     * .nav-chip — обычный раздел: полупрозрачная белая плашка;
+     * .nav-chip.is-active — активный раздел: сплошная БЕЛАЯ плашка с
+       фирменным текстом (класс ставит switchTab() в js/main.js);
+     * .nav-cta — действие («Заказ материалов», «Финансовые запросы»):
+       тёмная плашка в белой рамке, её не спутать с разделом.
+
+   Классы проставлены в разметке (index.html), цвета — только здесь,
+   чтобы схема по-прежнему жила в одном файле.
+   --------------------------------------------------------------------- */
+.nav-chip {
+    background-color: rgba(255, 255, 255, 0.14) !important;
+    border: 1px solid rgba(255, 255, 255, 0.26);
+    color: #fff !important;
+}
+.nav-chip:hover {
+    background-color: rgba(255, 255, 255, 0.28) !important;
+    border-color: rgba(255, 255, 255, 0.6);
+}
+.nav-chip.is-active {
+    background-color: #fff !important;
+    border-color: #fff;
+    color: var(--brand-darker) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.28) !important;
+}
+.nav-chip.is-active:hover { background-color: #fff !important; }
+
+.nav-cta {
+    background-color: rgba(15, 23, 42, 0.34) !important;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    color: #fff !important;
+}
+.nav-cta:hover {
+    background-color: rgba(15, 23, 42, 0.52) !important;
+    border-color: #fff;
+}
+
+/* ---------------------------------------------------------------------
    ГРАФИК РАБОТ (Gantt)
    ---------------------------------------------------------------------
    Цвета полос заданы в <style> внутри index.html с !important, поэтому

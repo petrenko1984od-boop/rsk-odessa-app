@@ -206,7 +206,18 @@ const CACHE_PREFIX = 'rsk-odessa';
 //        не сбрасывается на зелёное; обновлены инструкции (02 и 09).
 //        Оболочка переустанавливается потому, что изменился css/theme.css —
 //        файлы оболочки кэшируются целиком.
-const SHELL_REVISION = 'r9';
+//  r10 — приложение называется FreeDOM: «FreeDOM — Единый центр управления
+//        строительством» в <title> index.html и в manifest.json (заголовок
+//        вкладки и окно установленного приложения), короткое имя — в
+//        CONFIG.APP.NAME (окно «Настройки», консоль). Верхнее меню
+//        переработано: кнопки шапки носят классы nav-chip / nav-cta
+//        (css/theme.css), активный раздел — белая плашка с фирменным текстом
+//        (класс is-active ставит switchTab(), js/main.js). Раньше активная
+//        кнопка отличалась от остальных только оттенком и на насыщенной
+//        красной схеме сливалась с фоном шапки.
+//        Оболочка переустанавливается потому, что изменились index.html,
+//        manifest.json, css/theme.css, js/main.js, js/i18n.js, js/config.js.
+const SHELL_REVISION = 'r10';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
@@ -266,12 +277,12 @@ const OFFLINE_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RSK Odessa — нет соединения</title>
+<title>FreeDOM — нет соединения</title>
 </head>
 <body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
              background:#111827;color:#fff;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
     <div style="max-width:22rem;padding:2rem;text-align:center">
-        <img src="./logo.png" alt="RSK Odessa" style="height:3rem;background:#fff;border-radius:.5rem;padding:.5rem">
+        <img src="./logo.png" alt="FreeDOM" style="height:3rem;background:#fff;border-radius:.5rem;padding:.5rem">
         <h1 style="font-size:1.25rem;margin:1.25rem 0 .5rem">Нет соединения с интернетом</h1>
         <p style="font-size:.875rem;color:#9ca3af;margin:0 0 1.5rem">
             Приложение загрузилось из кэша, но данные объектов приходят с сервера.

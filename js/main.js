@@ -124,13 +124,11 @@ export function switchTab(tabId) {
     TAB_BUTTONS.forEach(t => {
         const btn = document.getElementById(`btn-${t}`);
         if (!btn) return;
-        if (t === highlightTab) {
-            btn.classList.remove('bg-[#16a34a]/70', 'hover:bg-[#16a34a]');
-            btn.classList.add('bg-[#16a34a]');
-        } else {
-            btn.classList.add('bg-[#16a34a]/70', 'hover:bg-[#16a34a]');
-            btn.classList.remove('bg-[#16a34a]');
-        }
+        // Кнопка активного раздела выделяется классом из css/theme.css
+        // (nav-chip.is-active → белая плашка с фирменным текстом): раньше
+        // активная кнопка отличалась от остальных только оттенком и на
+        // насыщенной схеме (красной) сливалась с фоном шапки.
+        btn.classList.toggle('is-active', t === highlightTab);
     });
 
     AppState.currentTab = tabId;
