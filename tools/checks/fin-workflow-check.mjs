@@ -1061,9 +1061,12 @@ try {
         '   return Array.prototype.filter.call(box.children,' +
         '     (el) => ids.indexOf(el.id) > -1 && getComputedStyle(el).display !== "none")' +
         '     .map((el) => el.id)[0] || ""; })(),' +
-        ' navLeft: (() => { const c = document.getElementById("btn-cash-requests");' +
+        ' navBefore: (() => { const c = document.getElementById("btn-cash-requests");' +
         '   const p = document.getElementById("btn-projects");' +
-        '   return Math.round(c.getBoundingClientRect().left) < Math.round(p.getBoundingClientRect().left); })(),' +
+        '   const rc = c.getBoundingClientRect(), rp = p.getBoundingClientRect();' +
+        '   return Math.abs(rc.top - rp.top) < 4' +
+        '     ? Math.round(rc.left) < Math.round(rp.left)' +
+        '     : Math.round(rc.top) < Math.round(rp.top); })(),' +
         ' hintVisible: vis("financier-balance-hint"),' +
         ' tasks: vis("btn-tasks"), orders: vis("btn-orders"), registry: vis("btn-registry"),' +
         ' employees: vis("btn-employees"), projects: vis("btn-projects"),' +
@@ -1073,9 +1076,9 @@ try {
         ' lists: (document.getElementById("cash-requests-container") || {}).innerText || "" }; })()');
     ok('финансист попадает на свой рабочий стол', finUi.tab === true && finUi.title.includes('Рабочий стол финансиста'), finUi.title);
     ok('раздел в шапке называется «Рабочий стол»', finUi.navBtn.includes('Рабочий стол'), finUi.navBtn);
-    ok('«Рабочий стол» — первая кнопка в шапке финансиста',
-        finUi.navFirst === 'btn-cash-requests' && finUi.navLeft === true,
-        finUi.navFirst + ' :: левее «Объектов»: ' + finUi.navLeft);
+    ok('«Рабочий стол» — первая кнопка меню финансиста (на ПК — верхняя в сайдбаре, на телефоне — левая в шапке)',
+        finUi.navFirst === 'btn-cash-requests' && finUi.navBefore === true,
+        finUi.navFirst + ' :: перед «Объектами»: ' + finUi.navBefore);
     ok('панель показывает «Мой баланс» с суммой 10 000',
         finUi.panel.toLowerCase().includes('мой баланс') && finUi.panel.replace(/\s/g, '').includes('10000'),
         finUi.panel.replace(/\n/g, ' | '));

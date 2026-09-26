@@ -129,10 +129,12 @@ th {
 }
 tbody tr:nth-child(even) td { background: #fcfcfd; }
 
-/* ---------- макет верхнего меню приложения ----------
-   Показывает, как выглядит шапка в новой версии: активный раздел — белая
-   плашка, обычные — полупрозрачные, действия («Заказ материалов»,
-   «Финансовые запросы») — тёмные. Классы те же, что в css/theme.css. */
+/* ---------- макет меню приложения ----------
+   Показывает, как выглядит меню: строка кнопок (телефон и планшет) или
+   вертикальная колонка (ПК — класс .nav-demo--side, ширина от 1024px).
+   Активный раздел — белая плашка, обычные — полупрозрачные, действия
+   («Заказ материалов», «Финансовые запросы») — тёмные. Классы те же, что в
+   css/theme.css. */
 .nav-demo {
     display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
     background: var(--brand); border-radius: 10px; padding: 9px 10px; margin: 0 0 10px;
@@ -143,6 +145,15 @@ tbody tr:nth-child(even) td { background: #fcfcfd; }
 }
 .nav-demo .chip.active { background: #fff; border-color: #fff; color: var(--brand-deep); }
 .nav-demo .chip.cta { background: rgba(17, 24, 39, .34); border-color: rgba(255, 255, 255, .45); }
+
+/* Колонка — как меню на ПК: плашки во всю ширину, кнопки действий отбиты
+   вниз, текст по левому краю (в приложении так же). */
+.nav-demo--side {
+    flex-direction: column; align-items: stretch; gap: 4px;
+    width: 180px; max-width: 100%; padding: 10px;
+}
+.nav-demo--side .chip { text-align: left; }
+.nav-demo--side .chip.cta { margin-top: 10px; }
 .caption { margin: -4px 0 10px; font-size: 8.5pt; color: var(--muted); }
 
 /* ---------- врезки ---------- */
