@@ -61,7 +61,13 @@
          менять нельзя: css/theme.css подключается последней и перекрашивает
          утилиты под выбранную цветовую схему. -->
     <link rel="stylesheet" href="./css/tailwind.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
+    <!-- xlsx-js-style: SheetJS 0.18.5 + ЗАПИСЬ СТИЛЕЙ (заливка шапки документа,
+         цвета и кегль). Бесплатный SheetJS `cell.s` при записи молча выбрасывает,
+         поэтому с ним «колір шапки» работал бы только в PDF. API у библиотек один
+         (XLSX.utils, XLSX.writeFile), поэтому остальные выгрузки не тронуты.
+         Хост cdn.jsdelivr.net уже разрешён в script-src и connect-src; политика
+         продублирована в vercel.json (см. README → «Политика Content-Security-Policy»). -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js" integrity="sha384-OUW9euuUyxyHcAhTqbhI+Iyb8LMssXt/cpz0yXhs9UWG2/R/uaWdakx/4cfww7Vb" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js" integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o" crossorigin="anonymous"></script>
      <!-- Frappe Gantt -->
     <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js" integrity="sha384-vIVXvmnGMKcWl9tl8Erv6xZ+73fWqZSOY0D31kkKw/VZocq7VAG3zqYhuOn0Yzlq" crossorigin="anonymous"></script>
@@ -212,12 +218,38 @@
                     <button data-action="switchTab" data-arg="orders" id="btn-orders" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Снабжение</button>
                     <button data-action="switchTab" data-arg="cash-requests" id="btn-cash-requests" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">💰 Финансы</button>
                     <button data-action="switchTab" data-arg="registry" id="btn-registry" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📊 Реестр</button>
-                    <!-- СМЕТЫ (конструктор смет для ПТО, v2.10.0 — js/modules/estimates.js).
+                    <!-- СМЕТЫ (конструктор смет для ПТО, v2.10.0; меню — v2.11.0).
+                         Кнопка «📐 Сметы» раскрывает МЕНЮ действий: создать смету, список
+                         смет, справочники, клиенты, настройки (js/main.js →
+                         toggleEstimatesMenu). Вторым действием (data-after) идёт switchTab:
+                         одно нажатие и открывает раздел, и показывает меню.
                          Видна Администратору, Главному инженеру и Инженеру ПТО: право
                          manage_estimate (js/permissions.js → TAB_REQUIREMENTS.estimates).
                          Кнопку прячет applyPermissionsToUI() в js/main.js, а данные закрывает
-                         RLS базы (database/migrate-v2.10-estimates.sql → rsk_is_estimate_editor()). -->
-                    <button data-action="switchTab" data-arg="estimates" id="btn-estimates" data-i18n="estimates.nav" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">📐 Сметы</button>
+                         RLS базы (database/migrate-v2.10-estimates.sql → rsk_is_estimate_editor()).
+                         Обёртка #nav-estimates-wrap — НЕ кнопка раздела: applyNavOrder()
+                         (js/main.js) пропускает её, иначе роль со своим порядком меню
+                         перенесла бы кнопку из обёртки и меню оторвалось бы от неё. -->
+                    <div class="relative" id="nav-estimates-wrap">
+                        <button data-action="toggleEstimatesMenu" data-after="switchTab" data-after-arg="estimates"
+                                id="btn-estimates"
+                                class="nav-chip flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">
+                            <span data-nav-label><span data-i18n="estimates.nav">📐 Сметы</span></span>
+                            <svg class="w-3 h-3 lg:ml-auto lg:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                        </button>
+
+                        <!-- Меню раздела. На телефоне — карточка по центру экрана, на ПК —
+                             панель ВБОК от колонки меню (координаты считает место, как и у
+                             меню кабинета: placeSideMenus() в js/main.js), поэтому `fixed`-меню
+                             не обрезается прокруткой сайдбара (`lg:overflow-y-auto`). -->
+                        <div id="estimates-menu" class="hidden absolute right-0 top-full mt-2 w-60 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden">
+                            <button data-action="openNewEstimate" data-after="closeEstimatesMenu" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">➕ <span data-i18n="estimates.menuNew">Создать смету</span></button>
+                            <button data-action="showEstimatesList" data-after="closeEstimatesMenu" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span data-i18n="estimates.menuList">Список смет</span></button>
+                            <button data-action="openEstimateCatalog" data-arg="works" data-after="closeEstimatesMenu" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📚 <span data-i18n="estimates.menuCatalog">Справочники</span></button>
+                            <button data-action="openEstimateCatalog" data-arg="clients" data-after="closeEstimatesMenu" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">👥 <span data-i18n="estimates.menuClients">Клиенты</span></button>
+                            <button data-action="openEstimateSettings" data-after="closeEstimatesMenu" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2">⚙️ <span data-i18n="estimates.menuSettings">Настройки</span></button>
+                        </div>
+                    </div>
                     <!-- Диагностика: журнал ошибок сотрудников (js/modules/diagnostics.js).
                          Видна только Администратору и Директору — тем же ролям, которых
                          пускает к журналу RLS; остальным кнопку прячет applyPermissionsToUI()
@@ -1923,12 +1955,21 @@
                                 class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
                     </div>
                     <div id="estimate-catalog-section-kind-wrap" class="hidden">
-                        <select id="estimate-catalog-section-kind"
-                                data-action="renderEstimateCatalog" data-on="change"
-                                class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                            <option value="work" data-i18n="estimates.kindWork">Разделы работ</option>
-                            <option value="material" data-i18n="estimates.kindMaterial">Разделы материалов</option>
-                        </select>
+                        <div class="flex flex-wrap gap-2 items-center">
+                            <select id="estimate-catalog-section-kind"
+                                    data-action="renderEstimateCatalog" data-on="change"
+                                    class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                                <option value="work" data-i18n="estimates.kindWork">Разделы работ</option>
+                                <option value="material" data-i18n="estimates.kindMaterial">Разделы материалов</option>
+                            </select>
+                            <!-- «Папка» — верхний раздел дерева, «подпапка» — раздел внутри
+                                 раздела (кнопка у строки, см. renderSectionsTable в
+                                 js/modules/estimate-catalog.js). В базе это одно поле
+                                 parent_id, поэтому вложенность любая. -->
+                            <button data-action="addEstimateFolder"
+                                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                    data-i18n="estimates.addFolder">📁 Новая папка</button>
+                        </div>
                     </div>
                     <button id="estimate-catalog-add-btn" data-action="openEstimateCatalogAdd"
                             class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition"
@@ -2286,30 +2327,54 @@
         </div>
     </div>
 
-    <!-- СМЕТЫ: ДОКУМЕНТЫ -->
+    <!-- СМЕТЫ: ЭКСПОРТ ДОКУМЕНТА (v2.11.0).
+         Сотрудник выбирает четыре вещи: тип документа, вид кошториса (6/9 граф),
+         колір шапки и формат файла. Плитки вариантов рисует
+         renderEstimateExportOptions() (js/modules/estimates.js) — списки берутся из
+         CONFIG.ESTIMATE, поэтому окно и документы не разойдутся; здесь — только
+         подписи блоков и кнопки. -->
     <div id="estimate-export-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-lg max-h-[92vh] flex flex-col">
             <div class="flex justify-between items-center p-4 border-b">
-                <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.docsTitle">📥 Документы сметы</h3>
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.exportTitle">📥 Экспорт документа</h3>
                 <button data-action="hideModal" data-arg="estimate-export-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
-            <div class="p-4 space-y-3">
-                <label class="space-y-1 block">
-                    <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.docType">Документ</span>
-                    <select id="estimate-export-doc"
-                            class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
-                </label>
+
+            <div class="p-4 space-y-4 overflow-y-auto flex-1">
+                <div class="space-y-1.5">
+                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportType">1. Тип документа</p>
+                    <div id="estimate-export-types" class="space-y-1.5"></div>
+                </div>
+
+                <!-- Блок «Вид кошторису» есть только у кошториса: у наряда и ведомости
+                     таблица одна (6 граф), и его прячет renderEstimateExportOptions(). -->
+                <div id="estimate-export-views-wrap" class="space-y-1.5">
+                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportView">2. Вид кошторису</p>
+                    <div id="estimate-export-views" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportColor">3. Колір шапки</p>
+                    <div id="estimate-export-colors" class="flex items-center gap-2 flex-wrap"></div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportFormat">4. Формат</p>
+                    <div id="estimate-export-formats" class="grid grid-cols-2 gap-2"></div>
+                </div>
+
                 <p class="text-[11px] text-gray-500" data-i18n="estimates.docsHint">
                     Кошторис печатают заказчику, наряд — бригаде (нарядные цены), ведомость материалов — снабжению.
                 </p>
-                <div class="grid grid-cols-2 gap-2 pt-2 border-t">
-                    <button data-action="exportEstimateDoc" data-arg="excel"
-                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
-                            data-i18n="common.export">📥 Excel</button>
-                    <button data-action="exportEstimateDoc" data-arg="pdf"
-                            class="px-3 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
-                            data-i18n="estimates.pdf">📄 PDF</button>
-                </div>
+            </div>
+
+            <div class="p-4 border-t flex justify-end gap-2">
+                <button type="button" data-action="hideModal" data-arg="estimate-export-modal"
+                        class="px-4 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
+                        data-i18n="common.cancel">Отмена</button>
+                <button type="button" data-action="downloadEstimateDoc"
+                        class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
+                        data-i18n="estimates.download">⬇️ Завантажити</button>
             </div>
         </div>
     </div>

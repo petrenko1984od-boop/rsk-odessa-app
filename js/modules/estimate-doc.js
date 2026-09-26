@@ -29,9 +29,7 @@
 // =====================================================================
 
 import { CONFIG } from '../config.js';
-import { log, toast, escapeHtml, formatMoney, formatNumber, roundMoney } from '../utils.js';
-
-const DOCS = CONFIG.ESTIMATE?.DOCS || [];
+import { log, toast, escapeHtml, roundMoney } from '../utils.js';
 
 // =====================================================================
 // ЧИСЛА
@@ -197,16 +195,86 @@ export function calcEstimate(estimate) {
 }
 
 // =====================================================================
-// ДОКУМЕНТЫ: СТРОКИ ТАБЛИЦ
+// ДОКУМЕНТЫ: МОДЕЛЬ, HTML (PDF) И EXCEL
 // =====================================================================
-// Одна и та же структура идёт и в Excel, и в PDF: массив заголовков + массив
-// строк. Так документ собирается ОДИН раз, а форматы лишь рисуют его.
+// Модель документа собирается ОДИН раз (buildEstimateDoc) и дальше только
+// рисуется: таблицей HTML для PDF (html2canvas + jsPDF) и листом Excel.
+// Поэтому все четыре вида документа (кошторис 6 граф, кошторис 9 граф, наряд,
+// відомість матеріалів) выглядят одинаково в обоих форматах: расхождение
+// возможно только в рисовальщике, но не в цифрах и не в наборе строк.
+//
+// ЧТО ВЫБИРАЕТ СОТРУДНИК (окно «📥 Експорт документа», js/modules/estimates.js):
+//   * вид документа — кошторис / наряд на роботи / відомість матеріалів;
+//   * вид кошторису — 6-ти графка (книжна, портрет) или 9-ти (альбомна);
+//   * колір шапки — заливка строки заголовків таблицы;
+//   * формат — PDF или Excel.
+// Списки вариантов лежат в CONFIG.ESTIMATE (DOC_KINDS / DOC_VIEWS / DOC_COLORS)
+// — там же их видит разметка, дублировать их здесь нельзя.
+//
+// ДЕВЯТЬ ГРАФ — ЭТО РАЗБИВКА ЦЕНЫ И ВАРТОСТИ НА РОБОТИ/МАТЕРІАЛИ:
+//   № | Найменування | Од. вим. | К-сть | Ціна одиниці (Роботи|Матеріали) |
+//   Вартість (Роботи|Матеріали|Всього). Шесть граф — то же самое одной строкой:
+//   № | Найменування | Од. | К-сть | Ціна | Сума (материалы позиции — отдельными
+//   строками с «•»).
+//
+// КОЛІР ШАПКИ в Excel требует записи заливки: бесплатный SheetJS (CDN xlsx
+// 0.18.5) её молча выбрасывает, поэтому приложение грузит совместимый
+// xlsx-js-style (см. index.html → script и README → «Библиотеки с CDN»).
+//
+// КОШТОРИС ПЕЧАТАЕТ ЦЕНЫ «КОШТОРИС» (price_client), а не «наряд»: в кошторисе
+// заказчик видит свою цену. Наряд («Наряд на роботи») — наоборот, цены
+// исполнителям (price_worker / price_purchase).
+// =====================================================================
 
-/** Сведения о документе по его коду ('koshtorys9' и т.д.). */
-export function getDocInfo(docType) {
-    return DOCS.find(doc => doc.value === docType) || DOCS[0] || {
-        value: 'koshtorys6', label: 'Кошторис'
+const DOC_KINDS = CONFIG.ESTIMATE?.DOC_KINDS || [];
+const DOC_VIEWS = CONFIG.ESTIMATE?.DOC_VIEWS || [];
+const DOC_COLORS = CONFIG.ESTIMATE?.DOC_COLORS || [];
+
+/** Деньги в документе: всегда два знака после запятой («1 500,00»). */
+function moneyText(value) {
+    return (Number(value) || 0).toLocaleString('ru-RU', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
+/** Целое количество: материалы округляются вверх (полмешка не купить). */
+function intText(value) {
+    return String(Math.round(Number(value) || 0));
+}
+
+/**
+ * Ячейка документа: текст и оформление. Все рисовальщики читают ТОЛЬКО её —
+ * поэтому новое поле (ещё одна колонка документа) не приходится добавлять в
+ * двух местах.
+ *   style: company | companySmall | title | meta | subtitle | section | header |
+ *          cell | material | total | summary | grand | notesTitle | note |
+ *          signature | line | gap
+ */
+function cell(text, options = {}) {
+    return {
+        text: text === null || text === undefined ? '' : text,
+        colspan: Math.max(1, Number(options.colspan) || 1),
+        rowspan: Math.max(1, Number(options.rowspan) || 1),
+        align: options.align || 'left',
+        style: options.style || 'cell',
+        money: Boolean(options.money),
+        int: Boolean(options.int),
+        suffix: options.suffix || ''
     };
+}
+
+/** Публичные списки вариантов — их показывает окно экспорта. */
+export function getDocKinds() {
+    return DOC_KINDS;
+}
+
+export function getDocViews() {
+    return DOC_VIEWS;
+}
+
+export function getDocColors() {
+    return DOC_COLORS;
 }
 
 /** Имя файла без символов, которые ломают загрузку в Windows. */
@@ -262,383 +330,732 @@ export function aggregateMaterials(estimate) {
     }));
 }
 
-/**
- * Таблица документа: заголовки + строки + с какой колонки значения числовые
- * (Excel записывает числа числами — по ним считают формулы).
- * Многоточие «...и т.д.» здесь неуместно: каждый документ описан целиком.
- */
-export function buildDocTable(estimate, totals, docType) {
-    if (docType === 'naryad') return buildNaryadTable(totals);
-    if (docType === 'materials') return buildMaterialsTable(estimate, totals);
-    return buildKoshtorysTable(totals, docType === 'koshtorys9');
-}
-
-/** Наряд: только работы по нарядным ценам — то, что получает бригада. */
-function buildNaryadTable(totals) {
-    const headers = ['№', 'Найменування робіт', 'Од.', 'К-сть', 'Ціна (наряд)', 'Сума'];
-    const rows = [];
-    let index = 0;
-
-    totals.sections.forEach((section, sectionIndex) => {
-        rows.push([`${sectionIndex + 1}. ${section.section.name}`, '', '', '', '', '']);
-
-        section.rows.forEach(({ item, sums }) => {
-            index += 1;
-            rows.push([
-                index,
-                item.name || '',
-                item.unit || '',
-                Number(item.quantity) || 0,
-                Number(item.price_worker) || 0,
-                sums.workWorker
-            ]);
-        });
-
-        rows.push(['', `Разом за розділом ${sectionIndex + 1}`, '', '', '', section.workerTotal]);
-    });
-
-    rows.push(['', 'ВСЬОГО ЗА НАРЯДОМ', '', '', '', totals.naryadTotal]);
-
-    return { headers, rows, numericFrom: 3 };
-}
-
-/** Ведомость материалов: что и сколько закупать по всей смете. */
-function buildMaterialsTable(estimate, totals) {
-    const headers = ['№', 'Матеріал', 'Од.', 'К-сть', 'Ціна закупівлі', 'Сума', 'Давальницький'];
-    const rows = aggregateMaterials(estimate).map((material, index) => [
-        index + 1,
-        material.name || '',
-        material.unit,
-        material.qty,
-        material.pricePurchase,
-        material.sum,
-        material.isCustomerSupplied ? 'так (у суму не входить)' : ''
-    ]);
-
-    rows.push(['', 'ВСЬОГО ДО ЗАКУПІВЛІ', '', '', '', totals.matWorker, '']);
-
-    return { headers, rows, numericFrom: 3 };
-}
 
 /**
- * Кошторис: 6 граф — компактный (для печати), 9 граф — полный, с материалами
- * отдельными строками под работой.
+ * Приводит настройки документа к общему виду.
+ * Принимает и старый код строкой ('koshtorys6', 'koshtorys9', 'naryad',
+ * 'materials' — так документ заказывали до v2.11.0), и объект из окна экспорта
+ * ({ kind, view, color }): старые вызовы ломать ради нового окна незачем.
  */
-function buildKoshtorysTable(totals, wide) {
-    const headers = wide
-        ? ['№', 'Найменування', 'Од. вим.', 'К-сть', 'Ціна за од.', 'Сума робіт',
-            'Витрати на матеріали', 'Разом за позицією', 'Примітка']
-        : ['№', 'Найменування', 'Од. вим.', 'К-сть', 'Ціна за од.', 'Сума'];
-
-    const width = headers.length;
-    const fit = (row) => {
-        const result = row.slice(0, width);
-        while (result.length < width) result.push('');
-        return result;
-    };
-
-    const rows = [];
-    let index = 0;
-
-    totals.sections.forEach((section, sectionIndex) => {
-        rows.push(fit([`${sectionIndex + 1}. ${section.section.name}`]));
-
-        section.rows.forEach(({ item, sums }) => {
-            index += 1;
-
-            if (wide) {
-                rows.push(fit([
-                    index,
-                    item.name || '',
-                    item.unit || '',
-                    Number(item.quantity) || 0,
-                    Number(item.price_client) || 0,
-                    sums.workClient,
-                    sums.matClient,
-                    sums.clientTotal,
-                    sums.matCount > 0 ? `матеріалів: ${sums.matCount}` : ''
-                ]));
-
-                (item.materials || []).forEach(material => {
-                    const calc = calcItemMaterial(material);
-                    rows.push(fit([
-                        '',
-                        `   • ${material.name || ''}`,
-                        material.unit || '',
-                        calc.qty,
-                        Number(material.price_client) || 0,
-                        '',
-                        calc.client,
-                        '',
-                        calc.skipped ? 'давальницький' : ''
-                    ]));
-                });
-            } else {
-                rows.push(fit([
-                    index,
-                    item.name || '',
-                    item.unit || '',
-                    Number(item.quantity) || 0,
-                    Number(item.price_client) || 0,
-                    sums.clientTotal
-                ]));
-            }
-        });
-
-        rows.push(fit([
-            '',
-            `Разом за розділом ${sectionIndex + 1}`,
-            '',
-            '',
-            '',
-            roundMoney(section.workClient + section.matClient),
-            wide ? section.matClient : '',
-            wide ? section.clientTotal : '',
-            ''
-        ]));
-    });
-
-    (totals.limits || []).forEach(({ limit, amount }) => {
-        rows.push(fit([
-            '',
-            `${limit.name} (${limit.percent}% ${limitBaseLabel(limit.base)})`,
-            '', '', '', amount
-        ]));
-    });
-
-    const worksAndMaterials = roundMoney(totals.workClient + totals.matClient);
-
-    rows.push(fit(['', 'РАЗОМ', '', '', '', worksAndMaterials, wide ? totals.matClient : '', wide ? worksAndMaterials : '']));
-
-    if (totals.vatAmount > 0) {
-        rows.push(fit(['', `ПДВ ${totals.vatPercent}%`, '', '', '', totals.vatAmount]));
+export function normalizeDocOptions(options) {
+    if (typeof options === 'string') {
+        const legacy = options;
+        if (legacy === 'koshtorys6') return normalizeDocOptions({ kind: 'koshtorys', view: '6' });
+        if (legacy === 'koshtorys9') return normalizeDocOptions({ kind: 'koshtorys', view: '9' });
+        if (legacy === 'materials') return normalizeDocOptions({ kind: 'materials' });
+        return normalizeDocOptions({ kind: 'naryad' });
     }
 
-    rows.push(fit(['', 'ВСЬОГО ДО СПЛАТИ', '', '', '', totals.grandTotal]));
+    const source = options || {};
+    const kindInfo = DOC_KINDS.find(item => item.value === source.kind) || DOC_KINDS[0] || {
+        value: 'koshtorys', label: 'Кошторис', view: true
+    };
+    const kind = kindInfo.value;
 
-    return { headers, rows, numericFrom: 3 };
-}
+    // Вид кошторису спрашивают только у кошториса: у наряда и ведомости таблица
+    // всего одна (6 граф), кнопки «6/9» в окне для них не показываются.
+    const view = kindInfo.view && source.view === '9' ? '9' : '6';
+    const viewInfo = DOC_VIEWS.find(item => item.value === view);
 
-// =====================================================================
-// ШАПКА ДОКУМЕНТА
-// =====================================================================
-// Реквизиты своей компании (одна строка в базе), номер и дата сметы, заказчик
-// и объект. И в Excel, и в PDF — одни и те же строки, поэтому документ
-// выглядит одинаково в обоих форматах.
+    const color = DOC_COLORS.some(item => item.value === source.color) ? source.color : 'none';
+    const palette = DOC_COLORS.find(item => item.value === color)
+        || { value: 'none', label: 'Без кольору', bg: null, text: '111827' };
 
-function documentHeader(estimate, company, docInfo, totals) {
-    const money = (value) => Number(value) || 0;
+    const wide = kind === 'koshtorys' && view === '9';
 
     return {
-        company: company || {},
-        title: docInfo?.label || 'Кошторис',
-        number: estimate?.number || '',
-        date: new Date().toLocaleDateString('ru-RU'),
-        client: estimate?.client?.name || '',
-        object: estimate?.object_name || estimate?.title || '',
-        notes: estimate?.notes || '',
-        totals: {
-            works: money(totals?.workClient),
-            materials: money(totals?.matClient),
-            limits: money(totals?.limitsTotal),
-            vat: money(totals?.vatAmount),
-            total: money(totals?.grandTotal)
-        }
+        kind,
+        view,
+        color,
+        palette,
+        wide,
+        columns: wide ? 9 : 6,
+        label: kindInfo.label,
+        viewLabel: viewInfo ? viewInfo.label : '',
+        // Подпись для файла: «Koshtorys-9graph_00001_2026_Покрівля.xlsx».
+        fileBase: kind === 'koshtorys'
+            ? `Koshtorys-${view}graph`
+            : (kind === 'materials' ? 'Vidomist-materialiv' : 'Naryad')
     };
 }
 
-/** Имя файла документа: «Кошторис_00002_2026_Покрівля». */
-export function docFileName(estimate, docInfo, extension) {
+/** Заказчик: в редакторе это client_id, в документах — уже готовое имя. */
+function clientNameOf(estimate) {
+    return estimate?.client_name || estimate?.client?.name || '';
+}
+
+function subtitleOf(doc) {
+    if (doc.kind === 'naryad') return 'Роботи';
+    if (doc.kind === 'materials') return 'Перелік матеріалів';
+    return 'Роботи та матеріали';
+}
+
+function titleOf(doc) {
+    if (doc.kind === 'naryad') return 'НАРЯД НА РОБОТИ';
+    if (doc.kind === 'materials') return 'ВІДОМІСТЬ МАТЕРІАЛІВ';
+    return 'КОШТОРИС';
+}
+
+/**
+ * Шапка документа: реквизиты, название, номер, назва/об'єкт/замовник и
+ * подзаголовок. Одна и та же шапка у кошториса, наряда и ведомости.
+ */
+function titleRows(estimate, company, doc) {
+    const totals = calcEstimate(estimate);
+    const source = company || {};
+    const contacts = [
+        source.address,
+        source.phone ? `тел. ${source.phone}` : '',
+        source.email,
+        source.website
+    ].filter(Boolean).join(' · ');
+
+    const total = doc.columns;
+    const rows = [];
+
+    if (source.company_name) {
+        rows.push(row('company', [cell(source.company_name, { colspan: total, align: 'right', style: 'company' })]));
+    }
+    if (contacts) {
+        rows.push(row('companySmall', [cell(contacts, { colspan: total, align: 'right', style: 'companySmall' })]));
+    }
+
+    const titleWidth = Math.max(1, Math.ceil(total / 2));
+    rows.push(row('title', [
+        cell(titleOf(doc), { colspan: titleWidth, style: 'title' }),
+        cell(`Дата: ${new Date().toLocaleDateString('uk-UA')}`,
+            { colspan: Math.max(1, total - titleWidth), align: 'right', style: 'meta' })
+    ]));
+
+    rows.push(row('number', [cell(`№ ${estimate?.number || '—'}`, { colspan: total, style: 'meta' })]));
+    rows.push(row('gap', [cell('', { colspan: total, style: 'gap' })]));
+    rows.push(row('name', [cell(`Назва: ${estimate?.title || '—'}`, { colspan: total, style: 'meta' })]));
+    rows.push(row('object', [cell(`Об'єкт: ${estimate?.object_name || '—'}`, { colspan: total, style: 'meta' })]));
+    rows.push(row('client', [cell(`Замовник: ${clientNameOf(estimate) || '—'}`, { colspan: total, style: 'meta' })]));
+    rows.push(row('subtitle', [cell(subtitleOf(doc), { colspan: total, style: 'subtitle' })]));
+
+    return { rows, totals };
+}
+
+/**
+ * Кошторис, 9 граф: цена и вартість разложены на роботи/матеріали — то, что
+ * печатают в альбомном виде для согласования. Заголовок двухъярусный, поэтому
+ * он повторяется в каждом разделе отдельным блоком (см. buildGrid).
+ */
+export function buildKoshtorys9Rows(estimate, totals) {
+    const rows = [];
+
+    const headerBlock = () => [
+        row('header', [
+            cell('№', { rowspan: 2, align: 'center', style: 'header' }),
+            cell('Найменування робіт, матеріалів, витрат', { rowspan: 2, style: 'header' }),
+            cell('Од. вим.', { rowspan: 2, align: 'center', style: 'header' }),
+            cell('К-сть', { rowspan: 2, align: 'center', style: 'header' }),
+            cell('Ціна одиниці, грн.', { colspan: 2, align: 'center', style: 'header' }),
+            cell('Вартість, грн.', { colspan: 3, align: 'center', style: 'header' })
+        ]),
+        row('header', [
+            cell('Роботи', { align: 'center', style: 'header' }),
+            cell('Матеріали', { align: 'center', style: 'header' }),
+            cell('Роботи', { align: 'center', style: 'header' }),
+            cell('Матеріали', { align: 'center', style: 'header' }),
+            cell('Всього', { align: 'center', style: 'header' })
+        ])
+    ];
+
+    totals.sections.forEach((section, index) => {
+        rows.push(row('section', [cell(`${index + 1}. ${section.section.name || '—'}`, { colspan: 9, style: 'section' })]));
+        rows.push(...headerBlock());
+
+        let number = 0;
+
+        section.rows.forEach(({ item, sums }) => {
+            number += 1;
+
+            rows.push(row('item', [
+                cell(number, { align: 'center' }),
+                cell(item.name || '—'),
+                cell(item.unit || '', { align: 'center' }),
+                cell(Number(item.quantity) || 0, { align: 'center', money: true }),
+                cell(Number(item.price_client) || 0, { align: 'right', money: true }),
+                cell('', { align: 'right' }),
+                cell(sums.workClient, { align: 'right', money: true }),
+                cell('', { align: 'right' }),
+                cell(sums.clientTotal, { align: 'right', money: true })
+            ]));
+
+            (item.materials || []).forEach(material => {
+                const calc = calcItemMaterial(material);
+
+                rows.push(row('material', [
+                    cell('', { align: 'center' }),
+                    cell(`• ${material.name || ''}`, { style: 'material' }),
+                    cell(material.unit || '', { align: 'center' }),
+                    cell(calc.qty, { align: 'center', int: true }),
+                    cell('', { align: 'right' }),
+                    calc.skipped
+                        ? cell('Замовник', { align: 'center', style: 'material' })
+                        : cell(Number(material.price_client) || 0, { align: 'right', money: true }),
+                    cell('', { align: 'right' }),
+                    calc.skipped ? cell('—', { align: 'center' }) : cell(calc.client, { align: 'right', money: true }),
+                    calc.skipped ? cell('—', { align: 'center' }) : cell(calc.client, { align: 'right', money: true })
+                ]));
+            });
+        });
+
+        rows.push(row('sectionTotal', [
+            cell('Всього по розділу:', { colspan: 5, align: 'right', style: 'total' }),
+            cell('', { align: 'right', style: 'total' }),
+            cell(section.workClient, { align: 'right', style: 'total', money: true }),
+            cell(section.matClient, { align: 'right', style: 'total', money: true }),
+            cell(roundMoney(section.workClient + section.matClient), { align: 'right', style: 'total', money: true })
+        ]));
+    });
+
+    return rows;
+}
+
+/**
+ * Наряд на роботи: только работы по нарядным ценам и материалы по закупке —
+ * документ для бригады и снабжения, а не для заказчика.
+ */
+export function buildNaryadRows(estimate, totals) {
+    const rows = [];
+
+    totals.sections.forEach((section, index) => {
+        rows.push(row('section', [cell(`${index + 1}. ${section.section.name || '—'}`, { colspan: 6, style: 'section' })]));
+        rows.push(headerRow6('naryad'));
+
+        let number = 0;
+
+        section.rows.forEach(({ item, sums }) => {
+            number += 1;
+
+            rows.push(row('item', [
+                cell(number, { align: 'center' }),
+                cell(item.name || '—'),
+                cell(item.unit || '', { align: 'center' }),
+                cell(Number(item.quantity) || 0, { align: 'center', money: true }),
+                cell(Number(item.price_worker) || 0, { align: 'right', money: true }),
+                cell(sums.workWorker, { align: 'right', money: true })
+            ]));
+
+            (item.materials || []).forEach(material => {
+                const calc = calcItemMaterial(material);
+
+                rows.push(row('material', [
+                    cell('', { align: 'center' }),
+                    cell(`• ${material.name || ''}`, { style: 'material' }),
+                    cell(material.unit || '', { align: 'center' }),
+                    cell(calc.qty, { align: 'center', int: true }),
+                    calc.skipped
+                        ? cell('Замовник', { align: 'center', style: 'material' })
+                        : cell(Number(material.price_purchase) || 0, { align: 'right', money: true }),
+                    calc.skipped ? cell('—', { align: 'center' }) : cell(calc.worker, { align: 'right', money: true })
+                ]));
+            });
+        });
+
+        rows.push(row('sectionTotal', [
+            cell('Всього по розділу:', { colspan: 4, align: 'right', style: 'total' }),
+            cell('', { align: 'right', style: 'total' }),
+            cell(roundMoney(section.workerTotal), { align: 'right', style: 'total', money: true })
+        ]));
+    });
+
+    return rows;
+}
+
+/**
+ * Відомість матеріалів: что и сколько закупать по всей смете. Одинаковые
+ * материалы из разных работ собираются в одну строку (aggregateMaterials),
+ * давальческие видны, но в сумму не входят.
+ */
+export function buildMaterialsRows(estimate) {
+    const rows = [headerRow6('materials')];
+    let number = 0;
+
+    aggregateMaterials(estimate).forEach(material => {
+        number += 1;
+
+        rows.push(row('item', [
+            cell(number, { align: 'center' }),
+            cell(material.name || '—'),
+            cell(material.unit || '', { align: 'center' }),
+            cell(material.qty, { align: 'center', int: true }),
+            material.isCustomerSupplied
+                ? cell('Замовник', { align: 'center', style: 'material' })
+                : cell(material.pricePurchase, { align: 'right', money: true }),
+            material.isCustomerSupplied
+                ? cell('—', { align: 'center' })
+                : cell(material.sum, { align: 'right', money: true })
+        ]));
+    });
+
+    if (number === 0) {
+        rows.push(row('item', [cell('Матеріалів у сметі немає', { colspan: 6, align: 'center', style: 'material' })]));
+    }
+
+    return rows;
+}
+
+// =====================================================================
+// ИТОГИ, ПРИМЕЧАНИЯ, ПОДПИСИ
+// =====================================================================
+
+/**
+ * Строки итогов документа: работы, материалы, лимиты, подытог, ПДВ.
+ * Подписи — украинские: это печатный документ, а не экран приложения.
+ */
+function summaryRows(estimate, totals, doc) {
+    const total = doc.columns;
+    const labelSpan = total - 1;
+    const rows = [];
+
+    const pairs = doc.kind === 'naryad'
+        ? [
+            ['Разом за роботами:', roundMoney(totals.workWorker), true],
+            ['Матеріали (закупівля):', roundMoney(totals.matWorker), false]
+        ]
+        : (doc.kind === 'materials'
+            ? [['ВСЬОГО ДО ЗАКУПІВЛІ:', roundMoney(totals.matWorker), true]]
+            : [
+                ['Разом по роботах:', roundMoney(totals.workClient), true],
+                ['Разом по матеріалах:', roundMoney(totals.matClient), false]
+            ]);
+
+    pairs.forEach(([label, value, suffix]) => {
+        rows.push(row('summary', [
+            cell(label, { colspan: labelSpan, align: 'right', style: 'summary' }),
+            cell(value, { align: 'right', style: 'summary', money: true, suffix: suffix ? ' грн' : '' })
+        ]));
+    });
+
+    if (doc.kind === 'koshtorys') {
+        (totals.limits || []).forEach(({ limit, amount }) => {
+            if (!(amount > 0)) return;
+            rows.push(row('summary', [
+                cell(`${limit.name} (${limit.percent}% ${limitBaseLabel(limit.base)}):`,
+                    { colspan: labelSpan, align: 'right', style: 'summary' }),
+                cell(amount, { align: 'right', style: 'summary', money: true, suffix: ' грн' })
+            ]));
+        });
+
+        if (totals.limitsTotal > 0) {
+            rows.push(row('summary', [
+                cell('Проміжний підсумок:', { colspan: labelSpan, align: 'right', style: 'summary' }),
+                cell(totals.subTotal, { align: 'right', style: 'summary', money: true, suffix: ' грн' })
+            ]));
+        }
+
+        if (totals.vatAmount > 0) {
+            rows.push(row('summary', [
+                cell(`ПДВ ${totals.vatPercent}% (${limitBaseLabel(estimate?.vat_base || 'both')}):`,
+                    { colspan: labelSpan, align: 'right', style: 'summary' }),
+                cell(totals.vatAmount, { align: 'right', style: 'summary', money: true, suffix: ' грн' })
+            ]));
+        }
+    }
+
+    rows.push(row('gap', [cell('', { colspan: total, style: 'gap' })]));
+
+    const grandLabel = doc.kind === 'naryad' ? 'ВСЬОГО ЗА НАРЯДОМ:'
+        : (doc.kind === 'materials' ? 'ВСЬОГО:' : 'ВСЬОГО:');
+    const grandValue = doc.kind === 'naryad' ? totals.naryadTotal
+        : (doc.kind === 'materials' ? totals.matWorker : totals.grandTotal);
+
+    rows.push(row('grand', [
+        cell(grandLabel, { colspan: labelSpan, align: 'right', style: 'grand' }),
+        cell(grandValue, { align: 'right', style: 'grand', money: true, suffix: ' грн' })
+    ]));
+
+    return rows;
+}
+
+/** Примечания сметы: печатаются нумерованным списком под итогами. */
+function notesRows(estimate, doc) {
+    const notes = String(estimate?.notes || '').trim();
+    if (!notes) return [];
+
+    const total = doc.columns;
+    const lines = notes.split('\n').map(line => line.trim()).filter(Boolean);
+
+    return [
+        row('notesTitle', [cell('Примітки:', { colspan: total, style: 'notesTitle' })]),
+        ...lines.map((line, index) => row('note', [
+            cell(`${index + 1}. ${line}`, { colspan: total, style: 'note' })
+        ]))
+    ];
+}
+
+/** Подписи: исполнитель и заказчик (у наряда — бригадир). */
+function signatureRows(doc) {
+    const total = doc.columns;
+    const half = Math.ceil(total / 2);
+
+    const right = doc.kind === 'naryad' ? 'Бригадир / робітник' : 'Замовник';
+
+    return [
+        row('gap', [cell('', { colspan: total, style: 'gap' })]),
+        row('signature', [
+            cell('Виконавець', { colspan: half, style: 'signature' }),
+            cell(right, { colspan: total - half, style: 'signature' })
+        ]),
+        row('line', [
+            cell('__________________', { colspan: half, style: 'line' }),
+            cell('__________________', { colspan: total - half, style: 'line' })
+        ])
+    ];
+}
+
+// =====================================================================
+// СБОРКА ДОКУМЕНТА
+// =====================================================================
+
+/**
+ * Документ целиком: строки (шапка, таблица, итоги, подписи) и сетка ячеек.
+ * Модель читают оба рисовальщика — HTML для PDF и Excel, — поэтому строки и
+ * цифры в файлах совпадают by construction.
+ */
+export function buildEstimateDoc(estimate, company, options) {
+    const doc = normalizeDocOptions(options);
+    const { rows: headRows, totals } = titleRows(estimate, company, doc);
+
+    const tableRows = doc.kind === 'naryad'
+        ? buildNaryadRows(estimate, totals)
+        : (doc.kind === 'materials'
+            ? buildMaterialsRows(estimate)
+            : (doc.wide ? buildKoshtorys9Rows(estimate, totals) : buildKoshtorys6Rows(estimate, totals)));
+
+    const rows = [
+        ...headRows,
+        ...tableRows,
+        ...summaryRows(estimate, totals, doc),
+        ...notesRows(estimate, doc),
+        ...signatureRows(doc)
+    ];
+
+    const { grid, merges } = buildGrid(rows, doc.columns);
+
+    return { doc, totals, rows, grid, merges, columns: doc.columns };
+}
+
+/**
+ * Раскладывает строки в прямоугольную сетку: адреса ячеек и объединения.
+ * Нужна из-за rowspan в шапке 9-ти графки: Excel объявляет такие ячейки через
+ * `!merges`, HTML — атрибутами, а без сетки пришлось бы считать это дважды.
+ * В покрытых ячейках стоит null — рисовальщик их пропускает.
+ */
+export function buildGrid(rows, total) {
+    const grid = [];
+    const merges = [];
+    const occupied = [];
+
+    const mark = (r, c, value) => {
+        if (!grid[r]) grid[r] = [];
+        if (!occupied[r]) occupied[r] = [];
+        grid[r][c] = value;
+        occupied[r][c] = true;
+    };
+    const isOccupied = (r, c) => Boolean(occupied[r] && occupied[r][c]);
+
+    rows.forEach((line, r) => {
+        let column = 0;
+
+        line.cells.forEach(entry => {
+            while (isOccupied(r, column)) column += 1;
+
+            for (let dr = 0; dr < entry.rowspan; dr += 1) {
+                for (let dc = 0; dc < entry.colspan; dc += 1) {
+                    const origin = dr === 0 && dc === 0;
+                    mark(r + dr, column + dc, origin ? { cell: entry } : null);
+                }
+            }
+
+            if (entry.rowspan > 1 || entry.colspan > 1) {
+                merges.push({
+                    s: { r, c: column },
+                    e: { r: r + entry.rowspan - 1, c: column + entry.colspan - 1 }
+                });
+            }
+
+            column += entry.colspan;
+        });
+    });
+
+    for (let r = 0; r < rows.length; r += 1) {
+        if (!grid[r]) grid[r] = [];
+        for (let c = 0; c < total; c += 1) {
+            if (grid[r][c] === undefined) grid[r][c] = null;
+        }
+    }
+
+    return { grid, merges };
+}
+
+/** Имя файла документа: «Koshtorys-9graph_00002_2026_Покрівля.xlsx». */
+export function docFileName(estimate, doc, extension) {
     const number = String(estimate?.number || '').replace(/\//g, '_');
     const title = safeFilePart(estimate?.title || estimate?.object_name || '');
-    const doc = safeFilePart(docInfo?.label || 'smeta');
-    return `${doc}_${number}_${title}.${extension}`;
+    return `${doc.fileBase}_${number}_${title}.${extension}`;
+}
+
+// =====================================================================
+// HTML ДЛЯ PDF
+// =====================================================================
+// Способ тот же, что и в остальном приложении (js/modules/files.js): готовую
+// разметку снимает html2canvas, а страницы раскладывает jsPDF. Стили заданы
+// АТРИБУТАМИ, а не классами: документ живёт в отсоединённом блоке, имена вида
+// «company» или «section» столкнулись бы с общими правилами приложения (и
+// прогон frontend-check справедливо требует, чтобы каждый класс из модулей был
+// объявлен в стилях). Атрибуты style политика CSP разрешает
+// (style-src 'unsafe-inline') — так же, как в существующей генерации PDF.
+
+const DOC_BORDER = '1px solid #9ca3af';
+
+/** Оформление ячейки в HTML: палитра нужна только строке заголовков. */
+function htmlCellStyle(entry, palette) {
+    const align = entry.align === 'right' ? 'right' : (entry.align === 'center' ? 'center' : 'left');
+    const box = `border:${DOC_BORDER};padding:3px 6px;text-align:${align}`;
+
+    switch (entry.style) {
+        case 'company': return 'font-size:15px;font-weight:700;text-align:right;padding:0 2px';
+        case 'companySmall': return 'font-size:10px;color:#374151;text-align:right;padding:0 2px 8px';
+        case 'title': return 'font-size:20px;font-weight:700;padding:10px 2px 0;vertical-align:bottom';
+        case 'meta': return `font-size:11px;color:#374151;padding:1px 2px;text-align:${align};vertical-align:bottom`;
+        case 'subtitle': return 'font-size:13px;font-weight:700;padding:14px 2px 6px';
+        case 'section': return 'font-size:11px;font-weight:700;padding:10px 2px 3px';
+        case 'header': {
+            const background = palette.bg ? `#${palette.bg}` : '#f3f4f6';
+            const color = palette.bg ? `#${palette.text}` : '#111827';
+            return `${box};font-weight:700;text-align:center;background:${background};color:${color}`;
+        }
+        case 'material': return `${box};font-size:10px;font-style:italic;color:#4b5563`;
+        case 'total': return `${box};font-weight:700`;
+        case 'summary': return `padding:2px 6px;font-weight:700;text-align:${align}`;
+        case 'grand': return `padding:8px 6px 2px;font-weight:700;font-size:14px;text-align:${align}`;
+        case 'notesTitle': return 'font-size:10px;font-weight:700;padding:12px 2px 2px';
+        case 'note': return 'font-size:10px;color:#374151;padding:1px 2px';
+        case 'signature': return 'font-size:11px;padding:36px 2px 2px';
+        case 'line': return 'border-bottom:1px solid #111827;padding:0 2px 1px;height:1px';
+        case 'gap': return 'height:10px;line-height:10px;font-size:10px;padding:0';
+        default: return box;
+    }
+}
+
+/** Текст ячейки для HTML: деньги — с двумя знаками, подпись наряда — «• имя». */
+function htmlCellText(entry) {
+    const value = entry.cell.text;
+    const base = typeof value === 'number'
+        ? (entry.cell.int ? intText(value) : moneyText(value))
+        : String(value);
+    return escapeHtml(base + entry.cell.suffix);
+}
+
+/**
+ * Разметка документа: из неё собирается PDF (и она же — «бумажный» вид
+ * документа). Пиксельная ширина выставляется вызывающим кодом: 9-ти графка
+ * шире, поэтому печатается альбомной страницей.
+ */
+export function buildDocHtml(model) {
+    const { doc, grid } = model;
+    const palette = doc.palette;
+
+    const body = grid.map(line => {
+        const cells = line.map(entry => {
+            if (!entry) return '';
+
+            const span = (entry.cell.rowspan > 1 ? ` rowspan="${entry.cell.rowspan}"` : '')
+                + (entry.cell.colspan > 1 ? ` colspan="${entry.cell.colspan}"` : '');
+
+            const text = entry.cell.style === 'line' ? '' : htmlCellText(entry);
+            return `<td${span} style="${htmlCellStyle(entry.cell, palette)}">${text}</td>`;
+        }).join('');
+
+        return `<tr>${cells}</tr>`;
+    }).join('');
+
+    return `
+        <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#111827">
+            <table style="width:100%;border-collapse:collapse;font-size:11px">
+                <tbody>${body}</tbody>
+            </table>
+        </div>
+    `;
 }
 
 // =====================================================================
 // EXCEL
 // =====================================================================
+// Числа записываются числами (aoa_to_sheet + формат ячеек): в Excel по ним
+// считают формулы, а текст «12 345,60 грн» не посчитать. Подписи « грн» из
+// модели в Excel не попадают — их роль играет денежный формат колонки.
+//
+// ЗАЛИВКУ ШАПКИ пишет xlsx-js-style (совместимая замена SheetJS CE): прежняя
+// библиотека (xlsx 0.18.5) `cell.s` молча выбрасывала, и «колір шапки» работал
+// бы только в PDF. Библиотеки одного API, менять вызовы не потребовалось.
+
+const EXCEL_BORDER = {
+    top: { style: 'thin', color: { rgb: '999999' } },
+    left: { style: 'thin', color: { rgb: '999999' } },
+    bottom: { style: 'thin', color: { rgb: '999999' } },
+    right: { style: 'thin', color: { rgb: '999999' } }
+};
+
+const EXCEL_MONEY_FORMAT = '#,##0.00';
+const EXCEL_INT_FORMAT = '0';
+
+/**
+ * Оформление ячейки Excel по стилю из модели документа.
+ *
+ * Ключи стиля — КАК В XML, а не как в javascript-обёртках: размер шрифта `sz`
+ * (в exceljs он `size`) и заливка `{ patternType: 'solid', fgColor }`. Это
+ * правило xlsx-js-style: неизвестный ключ молча теряется (так `size` не попал
+ * бы в файл, а шапка осталась бы 11-м кеглем).
+ */
+function excelStyle(entry, palette) {
+    const font = { name: 'Calibri', sz: 10, color: { rgb: '111827' } };
+    const align = { horizontal: entry.align, vertical: 'middle' };
+
+    switch (entry.style) {
+        case 'company': return { font: { ...font, sz: 14, bold: true }, alignment: { horizontal: 'right' } };
+        case 'companySmall': return { font: { ...font, color: { rgb: '374151' } }, alignment: { horizontal: 'right' } };
+        case 'title': return { font: { ...font, sz: 18, bold: true }, alignment: { horizontal: 'left', vertical: 'bottom' } };
+        case 'meta': return { font: { ...font, sz: 11, color: { rgb: '374151' } }, alignment: align };
+        case 'subtitle': return { font: { ...font, sz: 13, bold: true } };
+        case 'section': return { font: { ...font, sz: 11, bold: true } };
+        case 'header': {
+            const style = {
+                font: {
+                    name: 'Calibri',
+                    sz: 10,
+                    bold: true,
+                    color: { rgb: palette.bg ? palette.text : '111827' }
+                },
+                // wrapText библиотека не пишет: длинные подписи шапки укладываются
+                // в ширину колонок (40 знаков) при высоте строки 26pt — см. !rows.
+                alignment: { horizontal: 'center', vertical: 'middle' },
+                border: EXCEL_BORDER
+            };
+            if (palette.bg) style.fill = { patternType: 'solid', fgColor: { rgb: palette.bg } };
+            return style;
+        }
+        case 'material': return {
+            font: { ...font, sz: 9, italic: true, color: { rgb: '4B5563' } },
+            alignment: align,
+            border: EXCEL_BORDER
+        };
+        case 'total': return { font: { ...font, bold: true }, alignment: align, border: EXCEL_BORDER };
+        case 'summary': return { font: { ...font, bold: true }, alignment: align };
+        case 'grand': return { font: { ...font, sz: 14, bold: true }, alignment: align };
+        case 'notesTitle': return { font: { ...font, bold: true } };
+        case 'note': return { font: { ...font, sz: 9, color: { rgb: '374151' } } };
+        case 'signature': return { font: { ...font } };
+        case 'line': return { font: { ...font } };
+        case 'gap': return null;
+        default: return { font, alignment: align, border: EXCEL_BORDER };
+    }
+}
+
+/** Ширина колонок листа: наименование — широкое, числа — узкие. */
+function excelWidths(doc) {
+    const widths = doc.wide
+        ? [6, 40, 10, 12, 18, 18, 18, 18, 18]
+        : [6, 45, 10, 12, 18, 18];
+    return widths.map(wch => ({ wch }));
+}
+
+/** Имя листа Excel: 31 символ без запрещённых знаков. */
+function excelSheetName(doc) {
+    const label = doc.viewLabel ? `${doc.label} ${doc.viewLabel}` : doc.label;
+    return String(label || 'Документ').replace(/[\\/?*[\]:]/g, '').slice(0, 31);
+}
 
 /**
  * Выгружает документ сметы в .xlsx.
- *
- * Числа записываем числами (aoa_to_sheet + формат колонок): в Excel по ним
- * считают формулы, а текст «12 345,60 грн» не посчитать.
+ * @returns {boolean} — получилось ли собрать файл
  */
-export function exportEstimateExcel(estimate, company, docType) {
+export function exportEstimateExcel(estimate, company, options) {
     if (typeof XLSX === 'undefined') {
         toast('Библиотека XLSX не загружена', 'error');
         return false;
     }
 
-    const totals = calcEstimate(estimate);
-    const docInfo = getDocInfo(docType);
-    const { headers, rows } = buildDocTable(estimate, totals, docType);
-    const head = documentHeader(estimate, company, docInfo, totals);
+    const model = buildEstimateDoc(estimate, company, options);
+    const { doc, grid, merges } = model;
 
-    const title = [];
-    if (head.company.company_name) title.push([head.company.company_name]);
-    title.push([head.title]);
-    title.push([`№ ${head.number} від ${head.date}`]);
-    if (head.client) title.push([`Замовник: ${head.client}`]);
-    if (head.object) title.push([`Об'єкт: ${head.object}`]);
-    title.push([]);
-
-    const aoa = [...title, headers, ...rows, [], ['Разом до сплати', '', '', '', '', head.totals.total]];
+    const aoa = grid.map(line => line.map(entry => {
+        if (!entry) return '';
+        const value = entry.cell.text;
+        if (entry.cell.money || entry.cell.int) return Number(value) || 0;
+        return value;
+    }));
 
     const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    sheet['!merges'] = merges;
+    sheet['!cols'] = excelWidths(doc);
 
-    // Ширина колонок: наименование — самое широкое, числа — узкие.
-    sheet['!cols'] = headers.map((header) => {
-        if (header === 'Найменування' || header === 'Найменування робіт' || header === 'Матеріал') {
-            return { wch: 48 };
-        }
-        if (header === 'Примітка') return { wch: 22 };
-        if (header === 'Од.' || header === 'Од. вим.') return { wch: 8 };
-        if (header === '№') return { wch: 5 };
-        return { wch: 14 };
-    });
+    // Оформление: заливка шапки (колір шапки), жирные итоги, форматы чисел.
+    const heights = [];
+    grid.forEach((line, r) => {
+        const kind = model.rows[r] ? model.rows[r].kind : '';
+        if (kind === 'header') heights[r] = { hpt: 26 };
+        if (kind === 'gap') heights[r] = { hpt: 8 };
 
-    // Деньги — числовой формат с двумя знаками и разделителями тысяч.
-    const moneyColumns = headers
-        .map((header, index) => ({ header, index }))
-        .filter(({ header }) => /Ціна|Сума|Витрати|Разом|Сума/.test(header))
-        .map(({ index }) => index);
+        line.forEach((entry, c) => {
+            if (!entry) return;
 
-    const range = XLSX.utils.decode_range(sheet['!ref']);
-    for (let row = range.s.r; row <= range.e.r; row += 1) {
-        moneyColumns.forEach((col) => {
-            const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
-            if (cell && typeof cell.v === 'number') cell.z = '#,##0.00';
+            const address = XLSX.utils.encode_cell({ r, c });
+            const target = sheet[address];
+            if (!target) return;
+
+            const style = excelStyle(entry.cell, doc.palette);
+            if (style) target.s = style;
+            if (entry.cell.money) target.z = EXCEL_MONEY_FORMAT;
+            if (entry.cell.int) target.z = EXCEL_INT_FORMAT;
         });
-    }
+    });
+    sheet['!rows'] = heights;
 
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, sheet, docInfo.label.replace(/[\\/?*[\]:]/g, '').slice(0, 31));
-    XLSX.writeFile(workbook, docFileName(estimate, docInfo, 'xlsx'));
+    XLSX.utils.book_append_sheet(workbook, sheet, excelSheetName(doc));
+    XLSX.writeFile(workbook, docFileName(estimate, doc, 'xlsx'), { cellStyles: true });
 
-    log.info(`Смета ${estimate?.number}: выгружен документ «${docInfo.label}» в Excel`);
+    log.info(`Смета ${estimate?.number}: выгружен документ «${doc.label}${doc.viewLabel ? ' ' + doc.viewLabel : ''}» в Excel`);
     return true;
 }
 
 // =====================================================================
 // PDF
 // =====================================================================
-// Способ тот же, что уже используется в проекте для PDF сметы
-// (js/modules/files.js): собранную разметку рисуем в canvas (html2canvas) и
-// раскладываем по страницам A4 (jsPDF). Так документ выглядит как бумажный:
-// одна таблица, шапка с реквизитами, итоги внизу.
+// Разметку (buildDocHtml) снимает html2canvas, страницы раскладывает jsPDF —
+// тем же способом, что уже делается для PDF сметы объекта и графика Ганта.
+// Ориентация страницы зависит от вида документа: 9-ти графка альбомная.
 
-/**
- * Разметка документа: из неё собирается PDF.
- *
- * Стили — АТРИБУТАМИ, а не классами. Причина: документ живёт в отсоединённом
- * блоке и печатается один раз, а имена вида «company» или «section» в общем
- * css приложения столкнулись бы с другими правилами (и прогон
- * tools/checks/frontend-check.mjs справедливо требует, чтобы каждый класс из
- * модулей был объявлен в стилях). Атрибуты style политика CSP разрешает
- * (style-src 'unsafe-inline'), как и в существующей генерации PDF
- * (js/modules/files.js).
- */
-export function buildDocHtml(estimate, head, table, docType) {
-    const cell = 'border:1px solid #9ca3af;padding:4px 6px;vertical-align:top';
-    const numCell = `${cell};text-align:right;white-space:nowrap`;
-    const headCell = `${cell};background:#f3f4f6;text-align:left;font-weight:600`;
-    const tableStyle = 'width:100%;border-collapse:collapse;margin-top:12px;font-size:11px';
-
-    const headRows = [
-        head.company.company_name
-            ? `<div style="font-size:18px;font-weight:700">${escapeHtml(head.company.company_name)}</div>`
-            : '',
-        head.company.phone || head.company.email || head.company.address
-            ? `<div style="font-size:11px;color:#4b5563;margin-bottom:10px">${escapeHtml([
-                head.company.address,
-                head.company.phone ? `тел. ${head.company.phone}` : '',
-                head.company.email || ''
-            ].filter(Boolean).join(' · '))}</div>`
-            : ''
-    ].join('');
-
-    const bodyRows = table.rows.map((row) => {
-        const isSection = typeof row[1] === 'string' && /^\d+\.\s/.test(row[1]);
-        const isTotal = typeof row[1] === 'string' && /^(РАЗОМ|ВСЬОГО|ПДВ|Разом за розділом)/.test(row[1]);
-        const rowStyle = isSection
-            ? ' style="background:#eef2ff;font-weight:600"'
-            : (isTotal ? ' style="font-weight:700"' : '');
-
-        const cells = row.map((value, index) => {
-            if (typeof value === 'number' && index >= table.numericFrom) {
-                return `<td style="${numCell}">${formatNumber(value, 2)}</td>`;
-            }
-            return `<td style="${cell}">${escapeHtml(value)}</td>`;
-        }).join('');
-
-        return `<tr${rowStyle}>${cells}</tr>`;
-    }).join('');
-
-    const headers = table.headers.map((header, index) => {
-        const style = index >= table.numericFrom ? `${headCell};text-align:right` : headCell;
-        return `<th style="${style}">${escapeHtml(header)}</th>`;
-    }).join('');
-
-    const footer = docType === 'naryad'
-        ? ''
-        : `<div style="margin-top:12px;font-size:12px">
-            Роботи: <b>${formatMoney(head.totals.works)}</b> ·
-            Матеріали: <b>${formatMoney(head.totals.materials)}</b>
-            ${head.totals.limits > 0 ? ` · Лімітовані витрати: <b>${formatMoney(head.totals.limits)}</b>` : ''}
-            ${head.totals.vat > 0 ? ` · ПДВ: <b>${formatMoney(head.totals.vat)}</b>` : ''}
-            <div style="font-size:14px;font-weight:700;margin-top:6px">
-                До сплати: ${formatMoney(head.totals.total)}
-            </div>
-        </div>`;
-
-    return `
-        <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#111827">
-            ${headRows}
-            <h1 style="font-size:20px;font-weight:700;margin:6px 0 2px">${escapeHtml(head.title)}</h1>
-            <div style="font-size:12px;color:#374151;margin-bottom:4px">
-                № ${escapeHtml(head.number)} від ${escapeHtml(head.date)}
-            </div>
-            ${head.client ? `<div style="font-size:12px;color:#374151">Замовник: <b>${escapeHtml(head.client)}</b></div>` : ''}
-            ${head.object ? `<div style="font-size:12px;color:#374151">Об'єкт: ${escapeHtml(head.object)}</div>` : ''}
-            <table style="${tableStyle}">
-                <thead><tr>${headers}</tr></thead>
-                <tbody>${bodyRows}</tbody>
-            </table>
-            ${footer}
-            ${head.notes
-                ? `<div style="margin-top:10px;font-size:11px;color:#374151;white-space:pre-wrap">${escapeHtml(head.notes)}</div>`
-                : ''}
-        </div>
-    `;
-}
-
+const DOC_PAGE_WIDTH = { 6: 1000, 9: 1500 };
 
 /**
  * Скачивает документ сметы в PDF.
  * @returns {Promise<boolean>} — получилось ли собрать файл
  */
-export async function exportEstimatePdf(estimate, company, docType) {
+export async function exportEstimatePdf(estimate, company, options) {
     if (typeof html2canvas === 'undefined' || !window.jspdf?.jsPDF) {
         toast('Библиотеки html2canvas или jsPDF не загружены', 'error');
         return false;
     }
 
-    const totals = calcEstimate(estimate);
-    const docInfo = getDocInfo(docType);
-    const table = buildDocTable(estimate, totals, docType);
-    const head = documentHeader(estimate, company, docInfo, totals);
-    const wide = docType === 'koshtorys9' || docType === 'materials';
+    const model = buildEstimateDoc(estimate, company, options);
+    const { doc } = model;
+    const width = DOC_PAGE_WIDTH[doc.columns] || DOC_PAGE_WIDTH[6];
 
     const wrapper = document.createElement('div');
     wrapper.style.position = 'fixed';
     wrapper.style.left = '-9999px';
     wrapper.style.top = '0';
-    wrapper.style.width = wide ? '1500px' : '1000px';
+    wrapper.style.width = width + 'px';
     wrapper.style.padding = '30px';
     wrapper.style.background = '#ffffff';
-    wrapper.innerHTML = buildDocHtml(estimate, head, table, docType);
+    wrapper.innerHTML = buildDocHtml(model);
 
     document.body.appendChild(wrapper);
 
@@ -651,11 +1068,15 @@ export async function exportEstimatePdf(estimate, company, docType) {
             useCORS: true,
             backgroundColor: '#ffffff',
             logging: false,
-            windowWidth: wide ? 1500 : 1000
+            windowWidth: width
         });
 
         const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF({ orientation: wide ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+        const pdf = new jsPDF({
+            orientation: doc.wide ? 'landscape' : 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
 
         const pageWidth = pdf.internal.pageSize.getWidth();
         const pageHeight = pdf.internal.pageSize.getHeight();
@@ -676,8 +1097,8 @@ export async function exportEstimatePdf(estimate, company, docType) {
             heightLeft -= (pageHeight - 20);
         }
 
-        pdf.save(docFileName(estimate, docInfo, 'pdf'));
-        log.info(`Смета ${estimate?.number}: выгружен документ «${docInfo.label}» в PDF`);
+        pdf.save(docFileName(estimate, doc, 'pdf'));
+        log.info(`Смета ${estimate?.number}: выгружен документ «${doc.label}${doc.viewLabel ? ' ' + doc.viewLabel : ''}» в PDF`);
         return true;
 
     } catch (error) {
@@ -688,4 +1109,90 @@ export async function exportEstimatePdf(estimate, company, docType) {
     } finally {
         wrapper.remove();
     }
+}
+
+
+
+
+
+// =====================================================================
+// ТАБЛИЦЫ ДОКУМЕНТОВ
+// =====================================================================
+
+/** Строка документа: вид (для отступов и оформления) + ячейки. */
+function row(kind, cells) {
+    return { kind, cells };
+}
+
+/** Заголовки 6 граф — как в бумажной смете. */
+function header6(kind) {
+    if (kind === 'naryad') {
+        return ['№', 'Найменування робіт', 'Од.', 'К-сть', 'Ціна (наряд)', 'Сума'];
+    }
+    if (kind === 'materials') {
+        return ['№', 'Найменування матеріалу', 'Од.', 'К-сть', 'Ціна', 'Сума'];
+    }
+    return ['№', 'Найменування', 'Од.', 'К-сть', 'Ціна', 'Сума'];
+}
+
+function headerRow6(kind) {
+    return row('header', header6(kind).map((text, index) => cell(text, {
+        style: 'header',
+        align: index === 1 ? 'left' : (index === 0 || index === 2 ? 'center' : 'right')
+    })));
+}
+
+/**
+ * Кошторис, 6 граф. Материалы позиции идут отдельными строками с «•»: так
+ * видно, из чего сложилась сумма, и таблица остаётся книжной (портрет А4).
+ */
+export function buildKoshtorys6Rows(estimate, totals) {
+    const rows = [];
+
+    totals.sections.forEach((section, index) => {
+        rows.push(row('section', [cell(`${index + 1}. ${section.section.name || '—'}`, { colspan: 6, style: 'section' })]));
+        rows.push(headerRow6('koshtorys'));
+
+        // Итог раздела берём из расчёта (calcSection): складывать строки вручную
+        // здесь нельзя — материалы позиции уже входят в сумму позиции, и «плюс
+        // материал отдельной строкой» посчитал бы их дважды.
+        const sectionTotal = roundMoney(section.workClient + section.matClient);
+
+        let number = 0;
+
+        section.rows.forEach(({ item, sums }) => {
+            number += 1;
+
+            rows.push(row('item', [
+                cell(number, { align: 'center' }),
+                cell(item.name || '—'),
+                cell(item.unit || '', { align: 'center' }),
+                cell(Number(item.quantity) || 0, { align: 'center', money: true }),
+                cell(Number(item.price_client) || 0, { align: 'right', money: true }),
+                cell(sums.clientTotal, { align: 'right', money: true })
+            ]));
+
+            (item.materials || []).forEach(material => {
+                const calc = calcItemMaterial(material);
+
+                rows.push(row('material', [
+                    cell('', { align: 'center' }),
+                    cell(`• ${material.name || ''}`, { style: 'material' }),
+                    cell(material.unit || '', { align: 'center' }),
+                    cell(calc.qty, { align: 'center', int: true }),
+                    calc.skipped
+                        ? cell('Замовник', { align: 'center', style: 'material' })
+                        : cell(Number(material.price_client) || 0, { align: 'right', money: true }),
+                    calc.skipped ? cell('—', { align: 'center' }) : cell(calc.client, { align: 'right', money: true })
+                ]));
+            });
+        });
+
+        rows.push(row('sectionTotal', [
+            cell('Всього по розділу:', { colspan: 5, align: 'right', style: 'total' }),
+            cell(sectionTotal, { align: 'right', style: 'total', money: true })
+        ]));
+    });
+
+    return rows;
 }

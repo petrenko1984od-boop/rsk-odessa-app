@@ -35,11 +35,20 @@ import {
 import {
     loadEstimateCatalog, getEstimateCatalog, getEstimateUnits, getEstimateCompany,
     getWorkMaterialsFor, findEstimateWork, findEstimateMaterial,
-    onEstimateCatalogChange
+    onEstimateCatalogChange, openEstimateCompanyModal
 } from './estimate-catalog.js';
 
 const STATUS_LABELS = CONFIG.ESTIMATE?.STATUS_LABELS || {};
-const DOCS = CONFIG.ESTIMATE?.DOCS || [];
+
+// Документы сметы: сотрудник выбирает вид документа, вид кошториса (6/9 граф),
+// колір шапки и формат файла (окно «📥 Експорт документа»). Списки живут в
+// CONFIG — здесь только чтение, чтобы окно и документы не разошлись.
+const DOC_KINDS = CONFIG.ESTIMATE?.DOC_KINDS || [];
+const DOC_VIEWS = CONFIG.ESTIMATE?.DOC_VIEWS || [];
+const DOC_COLORS = CONFIG.ESTIMATE?.DOC_COLORS || [];
+const DOC_FORMATS = CONFIG.ESTIMATE?.DOC_FORMATS || [];
+const DEFAULT_DOC = CONFIG.ESTIMATE?.DEFAULT_DOC
+    || { kind: 'koshtorys', view: '9', color: 'none', format: 'pdf' };
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -54,6 +63,7 @@ const state = {
     editor: null,          // смета, которую правят сейчас
     totals: null,
     exportEstimateId: null,// смета, для которой открыто окно документов
+    doc: { ...DEFAULT_DOC },// выбранный документ: вид, графка, колір шапки, формат
     keySeq: 0,             // счётчик локальных ключей строк (_key)
     picker: null           // { kind: 'work'|'material', sectionKey, itemKey }
 };
@@ -1311,32 +1321,125 @@ export async function toggleEstimateStatus(id) {
 // =====================================================================
 // ДОКУМЕНТЫ: ОКНО ВЫГРУЗКИ
 // =====================================================================
+// Сотрудник выбирает четыре вещи (макет — «Експорт документа»):
+//   1. тип документа   — кошторис / наряд на роботи / відомість матеріалів;
+//   2. вид кошторису   — 6-ти графка (книжна) или 9-ти (альбомна);
+//   3. колір шапки     — заливка строки заголовків таблицы;
+//   4. формат          — PDF или Excel.
+// Выбор держим в state.doc, а плитки окна перерисовывает
+// renderEstimateExportOptions(): подсветка выбранного — это классы, собирать их
+// в разметке (состояния на четыре группы выбора) было бы нечитаемо.
+// Вид кошторису спрашивают только у кошториса — у наряда и ведомости таблица
+// одна, поэтому блок «Вид кошторису» прячется (как в макете).
+
+/** Классы плитки: выбранная — рамка и подложка схемы, остальные — серые. */
+function docOptionClass(active) {
+    return active
+        ? 'border-[#15803d] bg-emerald-50 text-emerald-900'
+        : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50';
+}
+
+/** Плитка окна: один вид разметки для всех четырёх групп выбора. */
+function docTile(action, value, label, active) {
+    return `
+        <button type="button" data-action="${action}" data-arg="${escapeHtml(value)}"
+                class="w-full text-left px-3.5 py-2.5 rounded-xl border-2 text-sm font-medium transition ${docOptionClass(active)}">
+            ${escapeHtml(label)}
+        </button>
+    `;
+}
+
+/** Перерисовывает содержимое окна под текущий выбор. */
+export function renderEstimateExportOptions() {
+    const kinds = el('estimate-export-types');
+    if (kinds) {
+        kinds.innerHTML = DOC_KINDS
+            .map(kind => docTile('setEstimateExportType', kind.value, kind.label, state.doc.kind === kind.value))
+            .join('');
+    }
+
+    const kind = DOC_KINDS.find(item => item.value === state.doc.kind) || DOC_KINDS[0];
+    const viewWrap = el('estimate-export-views-wrap');
+    const showView = Boolean(kind && kind.view);
+    if (viewWrap) viewWrap.classList.toggle('hidden', !showView);
+
+    const views = el('estimate-export-views');
+    if (views && showView) {
+        views.innerHTML = DOC_VIEWS
+            .map(view => docTile('setEstimateExportView', view.value, view.label, state.doc.view === view.value))
+            .join('');
+    }
+
+    const colors = el('estimate-export-colors');
+    if (colors) {
+        colors.innerHTML = DOC_COLORS.map(color => {
+            const active = state.doc.color === color.value;
+            const ring = active
+                ? 'border-[#15803d] ring-2 ring-emerald-200 scale-110'
+                : 'border-gray-300 hover:border-gray-500';
+            const mark = active
+                ? '<span class="text-[10px] font-bold leading-none text-white">✓</span>'
+                : '';
+
+            return `
+                <button type="button" data-action="setEstimateExportColor" data-arg="${escapeHtml(color.value)}"
+                        title="${escapeHtml(color.label)}"
+                        class="w-7 h-7 rounded-full border-2 transition flex items-center justify-center ${ring}"
+                        style="background-color:${color.bg ? '#' + color.bg : '#ffffff'}">
+                    ${color.bg ? mark : '<span class="w-full h-px bg-red-400 rotate-45"></span>'}
+                </button>
+            `;
+        }).join('') + `<span class="text-xs text-gray-500 ml-1">${
+            escapeHtml((DOC_COLORS.find(item => item.value === state.doc.color) || {}).label || '')
+        }</span>`;
+    }
+
+    const formats = el('estimate-export-formats');
+    if (formats) {
+        formats.innerHTML = DOC_FORMATS
+            .map(format => docTile('setEstimateExportFormat', format.value, format.label, state.doc.format === format.value))
+            .join('');
+    }
+}
 
 export function openEstimateExportModal(id) {
     if (!requirePermission('manage_estimate')) return;
 
     state.exportEstimateId = Number(id) || state.editor?.id || null;
+    state.doc = { ...DEFAULT_DOC };
 
-    const select = el('estimate-export-doc');
-    if (select) {
-        select.innerHTML = DOCS
-            .map(doc => `<option value="${doc.value}">${escapeHtml(doc.label)}</option>`)
-            .join('');
-        select.value = DOCS[0]?.value || 'koshtorys6';
-    }
-
+    renderEstimateExportOptions();
     showModal('estimate-export-modal');
 }
 
+export function setEstimateExportType(value) {
+    state.doc = { ...state.doc, kind: String(value || '') };
+    renderEstimateExportOptions();
+}
+
+export function setEstimateExportView(value) {
+    state.doc = { ...state.doc, view: String(value || '') };
+    renderEstimateExportOptions();
+}
+
+export function setEstimateExportColor(value) {
+    state.doc = { ...state.doc, color: String(value || '') };
+    renderEstimateExportOptions();
+}
+
+export function setEstimateExportFormat(value) {
+    state.doc = { ...state.doc, format: String(value || '') };
+    renderEstimateExportOptions();
+}
+
 /**
- * Выгружает документ сметы в Excel или PDF.
+ * «⬇️ Завантажити»: собирает и скачивает документ с выбранными настройками.
  * Смету берём из редактора, если он открыт на ней (там свежие правки, которые
  * ещё не сохранены), иначе читаем из базы.
  */
-export async function exportEstimateDoc(format) {
+export async function downloadEstimateDoc() {
     if (!requirePermission('manage_estimate')) return;
 
-    const docType = el('estimate-export-doc')?.value || 'koshtorys6';
     const id = state.exportEstimateId || state.editor?.id;
 
     let estimate = null;
@@ -1357,15 +1460,57 @@ export async function exportEstimateDoc(format) {
         return;
     }
 
+    // В редакторе заказчик — только id: в документ печатаем имя из справочника
+    // клиентов (строка «Замовник: …» в шапке).
+    const payload = { ...estimate, client_name: clientName(estimate.client_id) };
     const company = getEstimateCompany();
+    const options = { ...state.doc };
 
-    if (format === 'pdf') {
-        await exportEstimatePdf(estimate, company, docType);
+    if (options.format === 'excel') {
+        exportEstimateExcel(payload, company, options);
     } else {
-        exportEstimateExcel(estimate, company, docType);
+        await exportEstimatePdf(payload, company, options);
     }
 
     hideModal('estimate-export-modal');
+}
+
+/**
+ * Выгрузка по формату аргументом — прежний вход (кнопки «📥 Excel»/«📄 PDF»).
+ * Оставлен, чтобы старые вызовы продолжали работать: форматы теперь
+ * выбираются в окне, поэтому аргумент просто переопределяет выбор.
+ */
+export async function exportEstimateDoc(format) {
+    if (format === 'excel' || format === 'pdf') {
+        state.doc = { ...state.doc, format };
+    }
+    return downloadEstimateDoc();
+}
+
+// =====================================================================
+// ПУНКТЫ МЕНЮ КНОПКИ «СМЕТЫ»
+// =====================================================================
+// Кнопка «📐 Сметы» раскрывает меню действий (js/main.js → toggleEstimatesMenu):
+// «Создать смету», «Список смет», «Справочники», «Клиенты», «Настройки».
+// Действия уже существуют у модулей — здесь только те, которых не было.
+
+/** «📋 Список смет»: закрывает редактор и показывает список. */
+export async function showEstimatesList() {
+    if (!requirePermission('manage_estimate')) return;
+
+    state.editor = null;
+    state.view = 'list';
+    renderEstimatesList();
+
+    // Список мог быть ещё не загружен: сотрудник мог нажать пункт меню, не
+    // открывая раздел.
+    if (!state.loaded) await loadEstimates();
+}
+
+/** «⚙️ Настройки»: реквизиты компании — ими печатается шапка документов. */
+export function openEstimateSettings() {
+    if (!requirePermission('manage_estimate')) return;
+    openEstimateCompanyModal();
 }
 
 // =====================================================================
@@ -1512,7 +1657,15 @@ window.saveEstimate = saveEstimate;
 window.deleteEstimate = deleteEstimate;
 window.toggleEstimateStatus = toggleEstimateStatus;
 window.openEstimateExportModal = openEstimateExportModal;
+window.renderEstimateExportOptions = renderEstimateExportOptions;
+window.setEstimateExportType = setEstimateExportType;
+window.setEstimateExportView = setEstimateExportView;
+window.setEstimateExportColor = setEstimateExportColor;
+window.setEstimateExportFormat = setEstimateExportFormat;
+window.downloadEstimateDoc = downloadEstimateDoc;
 window.exportEstimateDoc = exportEstimateDoc;
+window.showEstimatesList = showEstimatesList;
+window.openEstimateSettings = openEstimateSettings;
 window.applyEstimateToProject = applyEstimateToProject;
 
 // Правка справочника (цена, норма, единица) меняет подписи в списке смет:

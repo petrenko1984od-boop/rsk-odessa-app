@@ -359,6 +359,7 @@ const DICT = {
         'estimates.companyName': 'Название компании',
         'estimates.website': 'Сайт',
         'estimates.companyNotes': 'Примечания по умолчанию (в новые сметы)',
+        'estimates.addFolder': '📁 Новая папка',
         'estimates.normsTitle': '📦 Нормы расхода материалов',
         'estimates.normsHint': 'Сколько материала нужно на 1 единицу работы: тогда в смете материалы подставятся сами.',
         'estimates.material': 'Материал',
@@ -367,10 +368,21 @@ const DICT = {
         'estimates.pickWorkTitle': '➕ Работа из справочника',
         'estimates.pickMaterialTitle': '📦 Материал из справочника',
         'estimates.pickSearch': 'Поиск по названию',
-        'estimates.docsTitle': '📥 Документы сметы',
-        'estimates.docType': 'Документ',
         'estimates.docsHint': 'Кошторис печатают заказчику, наряд — бригаде (нарядные цены), ведомость материалов — снабжению.',
-        'estimates.pdf': '📄 PDF'
+
+        // Меню кнопки «📐 Сметы» (v2.11.0) и окно экспорта документа.
+        // Порядок пунктов совпадает с index.html → #estimates-menu.
+        'estimates.menuNew': 'Создать смету',
+        'estimates.menuList': 'Список смет',
+        'estimates.menuCatalog': 'Справочники',
+        'estimates.menuClients': 'Клиенты',
+        'estimates.menuSettings': 'Настройки',
+        'estimates.exportTitle': '📥 Экспорт документа',
+        'estimates.exportType': '1. Тип документа',
+        'estimates.exportView': '2. Вид кошторису',
+        'estimates.exportColor': '3. Колір шапки',
+        'estimates.exportFormat': '4. Формат',
+        'estimates.download': '⬇️ Завантажити'
     },
 
     uk: {
@@ -683,6 +695,7 @@ const DICT = {
         'estimates.companyName': 'Назва компанії',
         'estimates.website': 'Сайт',
         'estimates.companyNotes': 'Примітки за замовчуванням (у нові кошториси)',
+        'estimates.addFolder': '📁 Нова тека',
         'estimates.normsTitle': '📦 Норми витрат матеріалів',
         'estimates.normsHint': 'Скільки матеріалу потрібно на 1 одиницю роботи: тоді в кошторисі матеріали підставляться самі.',
         'estimates.material': 'Матеріал',
@@ -691,10 +704,20 @@ const DICT = {
         'estimates.pickWorkTitle': '➕ Робота з довідника',
         'estimates.pickMaterialTitle': '📦 Матеріал з довідника',
         'estimates.pickSearch': 'Пошук за назвою',
-        'estimates.docsTitle': '📥 Документи кошторису',
-        'estimates.docType': 'Документ',
         'estimates.docsHint': 'Кошторис друкують замовнику, наряд — бригаді (нарядні ціни), відомість матеріалів — постачанню.',
-        'estimates.pdf': '📄 PDF'
+
+        // Меню кнопки «📐 Сметы» та вікно експорту документа (v2.11.0).
+        'estimates.menuNew': 'Створити кошторис',
+        'estimates.menuList': 'Список кошторисів',
+        'estimates.menuCatalog': 'Довідники',
+        'estimates.menuClients': 'Клієнти',
+        'estimates.menuSettings': 'Налаштування',
+        'estimates.exportTitle': '📥 Експорт документа',
+        'estimates.exportType': '1. Тип документа',
+        'estimates.exportView': '2. Вид кошторису',
+        'estimates.exportColor': '3. Колір шапки',
+        'estimates.exportFormat': '4. Формат',
+        'estimates.download': '⬇️ Завантажити'
     }
 };
 
@@ -1851,6 +1874,12 @@ const PHRASES = [
     ['📅 График работ', '📅 Графік робіт'],
     ['📅 График производства работ', '📅 Графік виконання робіт'],
     ['Разделы создаёт загрузка сметы', 'Розділи створює завантаження кошторису'],
+    // Папки и подпапки справочника сметы (v2.11.0): это одно дерево разделов
+    // (estimate_work_sections.parent_id), поэтому в украинском — «тека».
+    ['Новая папка', 'Нова тека'],
+    ['Подпапка в', 'Підтека в'],
+    ['Папка добавлена:', 'Теку додано:'],
+    ['Подпапка добавлена:', 'Підтеку додано:'],
     ['График ещё не заполнен', 'Графік ще не заповнено'],
     ['График пока не заполнен', 'Графік поки не заповнено'],
     ['Даты работ устанавливает', 'Дати робіт встановлює'],

@@ -310,10 +310,13 @@ function fillCatalogSectionFilter() {
     if (!select) return;
 
     const kind = state.activeTab === 'materials' ? 'material' : 'work';
-    const sections = kind === 'material' ? state.materialSections : state.workSections;
 
-    select.innerHTML = '<option value="">Все разделы</option>' + sections
-        .map(section => `<option value="${section.id}">${escapeHtml(section.name)}</option>`)
+    // Дерево, а не плоский список: видно, что «Покрівля скатна» — подпапка
+    // «Покрівля», поэтому в фильтре она с отступом.
+    select.innerHTML = '<option value="">Все разделы</option>' + sectionTree(kind)
+        .map(({ section, level }) =>
+            `<option value="${section.id}">${'— '.repeat(level)}${escapeHtml(section.name)}</option>`
+        )
         .join('');
 
     select.value = state.sectionFilter;
@@ -466,7 +469,8 @@ function renderSectionsTable() {
     const tree = sectionTree(kind);
 
     if (tree.length === 0) {
-        return emptyRow('Разделов пока нет. Раздел — это «полка» прайса, например «Покрівля».', 3);
+        return emptyRow('Разделов пока нет. Папка — это «полка» прайса (например «Покрівля»), '
+            + 'внутри папки можно создать подпапку.', 3);
     }
 
     const kindLabel = kind === 'material' ? 'материалов' : 'работ';
@@ -477,7 +481,7 @@ function renderSectionsTable() {
                 <tr>
                     <th class="px-3 py-2 text-left">Раздел ${kindLabel}</th>
                     <th class="px-3 py-2 text-left w-28">Позиций</th>
-                    <th class="px-3 py-2 w-24"></th>
+                    <th class="px-3 py-2 w-32"></th>
                 </tr>
             </thead>
             <tbody class="divide-y">
@@ -493,6 +497,9 @@ function renderSectionsTable() {
                             </td>
                             <td class="px-3 py-2 text-gray-500">${items.length}</td>
                             <td class="px-3 py-2 text-right whitespace-nowrap">
+                                <button data-action="addEstimateSubsection" data-arg="${kind}:${section.id}" data-stop
+                                        class="text-xs px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold transition"
+                                        title="Создать подпапку внутри">📁➕</button>
                                 <button data-action="openEstimateSectionModal" data-arg="edit:${kind}:${section.id}" data-stop
                                         class="text-xs px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition"
                                         title="Править">✏</button>
@@ -566,8 +573,12 @@ function fillSectionSelect(selectId, kind, value, excludeId = null) {
     const select = el(selectId);
     if (!select) return;
 
+    // Из списка убираем сам раздел и все его подпапки: выбрать их родителем
+    // значило бы замкнуть дерево само на себя.
+    const excluded = excludeId ? sectionAndDescendants(kind, excludeId) : [];
+
     const options = sectionTree(kind)
-        .filter(({ section }) => Number(section.id) !== Number(excludeId))
+        .filter(({ section }) => !excluded.includes(Number(section.id)))
         .map(({ section, level }) =>
             `<option value="${section.id}">${'— '.repeat(level)}${escapeHtml(section.name)}</option>`
         )
@@ -952,9 +963,23 @@ export async function deleteEstimateWorkNorm(linkId) {
 // Разделы работ и материалов живут в разных таблицах, поэтому вид раздела
 // («work» / «material») приходит в действии вместе с id: «edit:work:5»,
 // «del:material:3». Иначе кнопка удаления не знала бы, какую таблицу чистить.
+//
+// ПАПКИ И ПОДПАПКИ — это одно и то же дерево: у раздела есть parent_id, поэтому
+// «папка» — раздел без родителя, а «подпапка» — раздел внутри раздела.
+// Вложенность любая, ограничений в базе нет (estimate_work_sections.parent_id
+// ссылается на саму таблицу, см. database/migrate-v2.10-estimates.sql).
 
 function parseSectionArg(arg) {
     const parts = String(arg || '').split(':');
+
+    // «folder:work» — новая папка, «sub:work:5» — подпапка в разделе 5.
+    if (parts[0] === 'folder' || parts[0] === 'sub') {
+        return {
+            mode: parts[0],
+            kind: parts[1] === 'material' ? 'material' : 'work',
+            id: Number(parts[2]) || null
+        };
+    }
 
     if (parts.length === 3) {
         return {
@@ -971,24 +996,76 @@ function sectionList(kind) {
     return kind === 'material' ? state.materialSections : state.workSections;
 }
 
+/** Раздел и все его подпапки: их нельзя выбрать родителем — вышел бы цикл. */
+function sectionAndDescendants(kind, id) {
+    const ids = [];
+
+    const walk = (parentId) => {
+        sectionList(kind)
+            .filter(item => (item.parent_id ?? null) === parentId)
+            .forEach(item => {
+                ids.push(Number(item.id));
+                walk(Number(item.id));
+            });
+    };
+
+    if (id) {
+        ids.push(Number(id));
+        walk(Number(id));
+    }
+
+    return ids;
+}
+
+/** Подпись окна раздела: создание, правка, новая папка или подпапка. */
+function sectionTitle(mode, kind, section) {
+    const label = kind === 'material' ? 'раздел материалов' : 'раздел работ';
+
+    if (mode === 'edit' && section) return `✏ Раздел: ${section.name}`;
+    if (mode === 'sub' && section) return `📁 Подпапка в «${section.name}»`;
+    if (mode === 'folder') return '📁 Новая папка';
+    return `➕ Новый ${label}`;
+}
+
+/** «📁 Новая папка»: раздел верхнего уровня (parent_id пустой). */
+export function addEstimateFolder() {
+    if (!requirePermission('manage_estimate')) return;
+    openEstimateSectionModal(`folder:${sectionsKind()}`);
+}
+
+/** «➕ Подпапка» у строки: раздел внутри выбранного (arg = «work:5»). */
+export function addEstimateSubsection(arg) {
+    if (!requirePermission('manage_estimate')) return;
+
+    const parts = String(arg || '').split(':');
+    const kind = parts[0] === 'material' ? 'material' : 'work';
+    const parentId = Number(parts[1]) || null;
+    if (!parentId) return;
+
+    openEstimateSectionModal(`sub:${kind}:${parentId}`);
+}
+
 export function openEstimateSectionModal(arg) {
     if (!requirePermission('manage_estimate')) return;
 
-    const { kind, id } = parseSectionArg(arg);
+    const { mode, kind, id } = parseSectionArg(arg);
     const section = id ? sectionList(kind).find(item => Number(item.id) === Number(id)) : null;
+    const isEditing = mode === 'edit' && Boolean(section);
 
     setValue('estimate-section-kind', kind);
-    setValue('estimate-section-id', section ? section.id : '');
-    setValue('estimate-section-name', section ? section.name : '');
-    setValue('estimate-section-order', section ? section.order_index : 0);
+    setValue('estimate-section-id', isEditing ? section.id : '');
+    setValue('estimate-section-name', isEditing ? section.name : '');
+    setValue('estimate-section-order', isEditing ? section.order_index : 0);
 
     const title = el('estimate-section-modal-title');
-    if (title) {
-        const label = kind === 'material' ? 'раздел материалов' : 'раздел работ';
-        title.textContent = section ? `✏ Раздел: ${section.name}` : `➕ Новый ${label}`;
-    }
+    if (title) title.textContent = sectionTitle(mode, kind, section);
 
-    fillSectionSelect('estimate-section-parent', kind, section ? section.parent_id : '', section ? section.id : null);
+    // Подпапка создаётся сразу внутри выбранного раздела — родитель уже стоит.
+    const parentValue = mode === 'sub' && section
+        ? section.id
+        : (isEditing ? section.parent_id : '');
+
+    fillSectionSelect('estimate-section-parent', kind, parentValue, isEditing ? section.id : null);
 
     showModal(MODAL_IDS.section);
 }
@@ -1023,7 +1100,11 @@ export async function saveEstimateSection(event) {
         return false;
     }
 
-    toast(id ? 'Раздел обновлён' : `Раздел «${name}» добавлен`, 'success');
+    toast(id
+        ? 'Раздел обновлён'
+        : (payload.parent_id
+            ? `Подпапка добавлена: «${name}»`
+            : `Папка добавлена: «${name}»`), 'success');
     hideModal(MODAL_IDS.section);
 
     await loadEstimateCatalog({ force: true });
@@ -1300,6 +1381,8 @@ window.openEstimateWorkNorms = openEstimateWorkNorms;
 window.addEstimateWorkNorm = addEstimateWorkNorm;
 window.deleteEstimateWorkNorm = deleteEstimateWorkNorm;
 window.openEstimateSectionModal = openEstimateSectionModal;
+window.addEstimateFolder = addEstimateFolder;
+window.addEstimateSubsection = addEstimateSubsection;
 window.saveEstimateSection = saveEstimateSection;
 window.deleteEstimateSection = deleteEstimateSection;
 window.openEstimateUnitModal = openEstimateUnitModal;

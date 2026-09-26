@@ -836,7 +836,7 @@ function main() {
         //    закреплена НАМЕРЕННО: поднимая её, нужно осознанно пройти процедуру
         //    выпуска (README → «Выпуск новой версии»: SHELL_REVISION = r1, новое
         //    имя кэша в README и пересборка Tailwind под новую версию).
-        const CURRENT_VERSION = '2.10.0';
+        const CURRENT_VERSION = '2.11.0';
         const configVersion = (configJs.match(/VERSION:\s*'([0-9.]+)'/) || [])[1];
         const swVersion = (swJs.match(/const APP_VERSION = '([0-9.]+)'/) || [])[1];
         ok('v2.10.0: версия приложения совпадает в js/config.js и sw.js и поднята осознанно',
@@ -1113,6 +1113,66 @@ function main() {
         ok('v2.10.0: database/schema.sql описывает таблицы смет и команды',
             /estimate_items/.test(schema) && /save_estimate/.test(schema) &&
             /migrate-v2\.10-estimates\.sql/.test(schema));
+
+        // --- v2.11.0: меню раздела, папки справочника и окно экспорта ---
+        // Отдельная база здесь не нужна: это правки интерфейса, и ломаются они
+        // тихо — кнопка есть, а меню не раскрывается; папку создать нельзя;
+        // в окне экспорта нет выбора графки или цвета. Поэтому проверяем связку
+        // «разметка ↔ модуль ↔ конфигурация ↔ кэш оболочки».
+        const configJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'config.js'), 'utf8');
+        const catalogJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'estimate-catalog.js'), 'utf8');
+        const estimateDocJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'estimate-doc.js'), 'utf8');
+        const mainJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'main.js'), 'utf8');
+
+        // 1. Меню кнопки «Сметы»: пять пунктов и их действия существуют.
+        const menuActions = ['openNewEstimate', 'showEstimatesList', 'openEstimateCatalog',
+            'openEstimateSettings', 'closeEstimatesMenu', 'toggleEstimatesMenu'];
+        ok('v2.11.0: меню кнопки «Сметы» собрано из пяти пунктов и все действия есть',
+            /id="estimates-menu"/.test(indexHtmlV29) &&
+            /id="nav-estimates-wrap"/.test(indexHtmlV29) &&
+            menuActions.every((name) => new RegExp('window\\.' + name + '\\s*=').test(
+                name === 'toggleEstimatesMenu' || name === 'closeEstimatesMenu'
+                    ? mainJsV211
+                    : (name === 'openNewEstimate' || name === 'showEstimatesList' || name === 'openEstimateSettings'
+                        ? estimatesJs : catalogJsV211))),
+            menuActions.join(', '));
+
+        // 2. Меню лежит в обёртке: applyNavOrder() обязан её пропускать, иначе
+        //    роль со своим порядком разделов перенесла бы кнопку без меню.
+        ok('v2.11.0: обёртка меню не считается кнопкой раздела (applyNavOrder)',
+            /NAV_WRAPPERS/.test(mainJsV211) && /nav-estimates-wrap/.test(mainJsV211) &&
+            /placeSideMenu/.test(mainJsV211));
+
+        // 3. Папки и подпапки: у разделов справочника есть родитель (одно дерево),
+        //    создание папки и подпапки есть в модуле и в разметке.
+        ok('v2.11.0: справочник умеет папки и подпапки (parent_id + два действия)',
+            /parent_id/.test(catalogJsV211) &&
+            /addEstimateFolder/.test(catalogJsV211) &&
+            /addEstimateSubsection/.test(catalogJsV211) &&
+            /data-action="addEstimateFolder"/.test(indexHtmlV29) &&
+            /sectionAndDescendants/.test(catalogJsV211));
+
+        // 4. Окно экспорта: четыре выбора из макета и их списки в CONFIG.
+        ok('v2.11.0: окно экспорта — тип, вид кошториса, колір шапки, формат',
+            /id="estimate-export-types"/.test(indexHtmlV29) &&
+            /id="estimate-export-views"/.test(indexHtmlV29) &&
+            /id="estimate-export-colors"/.test(indexHtmlV29) &&
+            /id="estimate-export-formats"/.test(indexHtmlV29) &&
+            /DOC_KINDS/.test(configJsV211) && /DOC_VIEWS/.test(configJsV211) &&
+            /DOC_COLORS/.test(configJsV211) && /DOC_FORMATS/.test(configJsV211) &&
+            /DOC_KINDS/.test(estimatesJs) && /setEstimateExportView/.test(estimatesJs));
+
+        // 5. Документы: 6 и 9 граф собираются из одного дерева строк, цвет шапки
+        //    доезжает до Excel (для этого библиотека с записью стилей).
+        ok('v2.11.0: 6-ти и 9-ти графка собираются из одной модели документа',
+            /buildKoshtorys6Rows/.test(estimateDocJsV211) &&
+            /buildKoshtorys9Rows/.test(estimateDocJsV211) &&
+            /buildEstimateDoc/.test(estimateDocJsV211) &&
+            /buildGrid/.test(estimateDocJsV211));
+        ok('v2.11.0: заливка шапки пишется в Excel (xlsx-js-style с integrity)',
+            /xlsx-js-style/.test(indexHtmlV29) &&
+            /patternType: 'solid'/.test(estimateDocJsV211) &&
+            /cellStyles: true/.test(estimateDocJsV211));
     }
 
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
@@ -1148,7 +1208,7 @@ function main() {
 
     log('--- ИТОГ ---');
     log(failed === 0
-        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.10.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
+        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.11.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
         : '  не прошло проверок: ' + failed);
 }
 
