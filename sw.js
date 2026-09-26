@@ -229,7 +229,7 @@ const LEGACY_CACHE_PREFIXES = ['rsk-odessa'];
 //        устройствах сотрудников не остаётся мёртвых кэшей.
 //        Оболочка переустанавливается потому, что изменились index.html,
 //        manifest.json, css/theme.css, js/* и Документация.
-const SHELL_REVISION = 'r11';
+const SHELL_REVISION = 'r12';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

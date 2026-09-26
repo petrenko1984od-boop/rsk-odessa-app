@@ -40,7 +40,11 @@
          Манифест — имя/иконки/цвета, sw.js — офлайн-кэш, js/pwa.js — установка и обновление.
          Инструкция: README → «Установка приложения (PWA)». -->
     <link rel="manifest" href="./manifest.json">
-    <meta name="theme-color" content="#15803d">
+    <!-- Цвет строки браузера: фирменный красный из логотипа (#c8102e) — та же
+         схема, что стоит по умолчанию (js/theme.js → DEFAULT_THEME = 'red').
+         Сотрудник может выбрать другую схему — тогда js/theme.js перепишет
+         этот тег на её цвет (см. applyTheme). -->
+    <meta name="theme-color" content="#c8102e">
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
