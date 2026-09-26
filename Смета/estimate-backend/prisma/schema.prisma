@@ -1,0 +1,243 @@
+// Prisma schema
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ================ ПОЛЬЗОВАТЕЛЬ ================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  clients          Client[]
+  works            CatalogWork[]
+  materials        CatalogMaterial[]
+  catalogSections  CatalogSection[]
+  materialSections MaterialSection[]
+  vedomosti        Vedomost[]
+  companySettings  CompanySettings?
+}
+
+// ================ НАСТРОЙКИ КОМПАНИИ ================
+
+model CompanySettings {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id])
+
+  companyName String?
+  phone       String?
+  email       String?
+  website     String?
+  address     String?
+  logoUrl     String?
+
+  defaultNotes String?
+
+  updatedAt DateTime @updatedAt
+}
+
+// ================ КЛИЕНТЫ ================
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  vedomosti Vedomost[]
+}
+
+// ================ РАЗДЕЛЫ СПРАВОЧНИКА РАБОТ ================
+
+model CatalogSection {
+  id        String   @id @default(cuid())
+  name      String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  parentId String?
+  parent   CatalogSection?  @relation("SectionHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children CatalogSection[] @relation("SectionHierarchy")
+
+  works CatalogWork[]
+}
+
+// ================ СПРАВОЧНИК РАБОТ ================
+
+model CatalogWork {
+  id          String   @id @default(cuid())
+  name        String
+  unit        String
+  priceWorker Float
+  priceClient Float
+  description String?
+  createdAt   DateTime @default(now())
+
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  materials WorkMaterial[]
+  items     VedomostItem[]
+
+  sectionId String?
+  section   CatalogSection? @relation(fields: [sectionId], references: [id])
+}
+
+// ================ РАЗДЕЛЫ СПРАВОЧНИКА МАТЕРИАЛОВ ================
+
+model MaterialSection {
+  id        String   @id @default(cuid())
+  name      String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  parentId String?
+  parent   MaterialSection?  @relation("MaterialSectionHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children MaterialSection[] @relation("MaterialSectionHierarchy")
+
+  materials CatalogMaterial[]
+}
+
+// ================ СПРАВОЧНИК МАТЕРИАЛОВ ================
+
+model CatalogMaterial {
+  id                 String   @id @default(cuid())
+  name               String
+  unit               String
+  pricePurchase      Float
+  priceClient        Float
+  isCustomerSupplied Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id])
+
+  materialSectionId String?
+  materialSection   MaterialSection? @relation(fields: [materialSectionId], references: [id])
+
+  works WorkMaterial[]
+  items VedomostItemMaterial[]
+}
+
+// ================ СПРАВОЧНИК ЕДИНИЦ ИЗМЕРЕНИЯ ================
+
+model CatalogUnit {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  fullName  String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+// ================ СВЯЗЬ РАБОТА ↔ МАТЕРИАЛ ================
+
+model WorkMaterial {
+  id          String @id @default(cuid())
+  workId      String
+  materialId  String
+  consumption Float
+
+  work     CatalogWork     @relation(fields: [workId], references: [id], onDelete: Cascade)
+  material CatalogMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@unique([workId, materialId])
+}
+
+// ================ ВЕДОМОСТЬ ================
+
+model Vedomost {
+  id        String   @id @default(cuid())
+  title     String
+  object    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  number     String @unique
+  numberYear Int
+  numberSeq  Int
+
+  notes String?
+
+  vatPercent Float  @default(0)
+  vatBase    String @default("both")
+
+  userId   String
+  user     User             @relation(fields: [userId], references: [id])
+  clientId String?
+  client   Client?          @relation(fields: [clientId], references: [id])
+  sections VedomostSection[]
+  limits   VedomostLimit[]
+}
+
+model VedomostSection {
+  id    String @id @default(cuid())
+  name  String
+  order Int    @default(0)
+
+  vedomostId String
+  vedomost   Vedomost      @relation(fields: [vedomostId], references: [id], onDelete: Cascade)
+  items      VedomostItem[]
+}
+
+model VedomostItem {
+  id          String @id @default(cuid())
+  name        String
+  unit        String
+  quantity    Float  @default(0)
+  priceWorker Float  @default(0)
+  priceClient Float  @default(0)
+
+  sectionId     String
+  section       VedomostSection       @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  catalogWorkId String?
+  catalogWork   CatalogWork?          @relation(fields: [catalogWorkId], references: [id])
+  materials     VedomostItemMaterial[]
+}
+
+model VedomostItemMaterial {
+  id                 String  @id @default(cuid())
+  name               String
+  unit               String
+  quantity           Float   @default(0)
+  pricePurchase      Float   @default(0)
+  priceClient        Float   @default(0)
+  consumption        Float?
+  isCustomerSupplied Boolean @default(false)
+
+  itemId            String
+  item              VedomostItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  catalogMaterialId String?
+  catalogMaterial   CatalogMaterial? @relation(fields: [catalogMaterialId], references: [id])
+}
+
+// ================ ЛИМИТИРОВАННЫЕ РАСХОДЫ ================
+
+model VedomostLimit {
+  id         String @id @default(cuid())
+  name       String
+  percent    Float  @default(0)
+  base       String @default("both")
+  order      Int    @default(0)
+
+  vedomostId String
+  vedomost   Vedomost @relation(fields: [vedomostId], references: [id], onDelete: Cascade)
+}
