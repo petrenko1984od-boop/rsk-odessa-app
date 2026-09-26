@@ -332,7 +332,8 @@ function registryViewRows() {
     // Заявки, где своя доставка уже оплачена из подотчёта: строка заявки из
     // реестра уходит, вместо неё показывается расход (иначе сумма — дважды).
     const coveredOwnDelivery = new Set(store.cash_operations
-        .filter((op) => op.source === 'own_delivery' && op.order_id != null)
+        .filter((op) => op.source === 'own_delivery' &&
+            op.order_id !== null && op.order_id !== undefined)
         .map((op) => String(op.order_id)));
 
     const rows = [];
@@ -1269,7 +1270,8 @@ async function main() {
     const settingsText = await evaluate(text('settings-modal'));
     ok('в настройках есть оба языка и 6 цветов',
         settingsText.includes('Русский') && settingsText.includes('Українська') &&
-        settingsText.includes('Зелёная') && settingsText.includes('Графит'),
+        settingsText.includes('Зелёная') && settingsText.includes('Красная') &&
+        settingsText.includes('Графит'),
         settingsText.replace(/\n/g, ' | ').slice(0, 160));
 
     await evaluate('window.chooseTheme("blue")');
@@ -1283,6 +1285,21 @@ async function main() {
         themeState.attr === 'blue' && themeState.brand === '#1d4ed8' &&
         themeState.button === 'rgb(29, 78, 216)',
         JSON.stringify(themeState));
+
+    // «Красная» — фирменный цвет из логотипа (#c8102e). Проверяем и переменную
+    // схемы, и то, что она доехала до кнопок: раньше схема называлась «Индиго»,
+    // и при переименовании цвета могли остаться прежними.
+    await evaluate('window.chooseTheme("red")');
+    await sleep(500);
+    const redState = await evaluate('(() => {' +
+        'const btn = document.getElementById("create-cash-request-btn");' +
+        'return { attr: document.documentElement.getAttribute("data-theme"),' +
+        ' brand: getComputedStyle(document.documentElement).getPropertyValue("--brand").trim(),' +
+        ' button: getComputedStyle(btn).backgroundColor }; })()');
+    ok('тема «Красная» (фирменный красный логотипа) применена и перекрасила кнопки',
+        redState.attr === 'red' && redState.brand === '#c8102e' &&
+        redState.button === 'rgb(200, 16, 46)',
+        JSON.stringify(redState));
 
     // Реестр открыт у директора — после смены языка он перерисуется сам
     await evaluate('window.switchTab("registry")');

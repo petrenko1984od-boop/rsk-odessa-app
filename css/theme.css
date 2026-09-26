@@ -56,23 +56,27 @@ html[data-theme='blue'] {
     --brand-600-rgb: 37, 99, 235;
 }
 
-html[data-theme='indigo'] {
-    --brand: #6d28d9;
-    --brand-dark: #5b21b6;
-    --brand-darker: #4c1d95;
-    --brand-light: #7c3aed;
-    --brand-badge: #8b5cf6;
-    --brand-50: #f5f3ff;
-    --brand-100: #ede9fe;
-    --brand-200: #ddd6fe;
-    --brand-600: #7c3aed;
-    --brand-700: #6d28d9;
-    --brand-800: #5b21b6;
-    --brand-900: #4c1d95;
-    --brand-rgb: 109, 40, 217;
-    --brand-light-rgb: 124, 58, 237;
-    --brand-50-rgb: 245, 243, 255;
-    --brand-600-rgb: 124, 58, 237;
+/* Красная схема — фирменный красный из логотипа (#c8102e); остальные оттенки
+   взяты из шкалы red Tailwind, поэтому «светлее/темнее» работает так же, как в
+   других темах. Схема намеренно близка к смысловому красному (ошибки,
+   удаление): это фирменный цвет, а не замена сигналов интерфейса. */
+html[data-theme='red'] {
+    --brand: #c8102e;
+    --brand-dark: #991b1b;
+    --brand-darker: #7f1d1d;
+    --brand-light: #dc2626;
+    --brand-badge: #ef4444;
+    --brand-50: #fef2f2;
+    --brand-100: #fee2e2;
+    --brand-200: #fecaca;
+    --brand-600: #dc2626;
+    --brand-700: #b91c1c;
+    --brand-800: #991b1b;
+    --brand-900: #7f1d1d;
+    --brand-rgb: 200, 16, 46;
+    --brand-light-rgb: 220, 38, 38;
+    --brand-50-rgb: 254, 242, 242;
+    --brand-600-rgb: 220, 38, 38;
 }
 
 html[data-theme='teal'] {

@@ -12,16 +12,23 @@
 // Модуль ничего не импортирует (его подключают и utils.js, и main.js).
 // =====================================================================
 
+// «Красная» — фирменный красный логотипа (#c8102e); остальные схемы как раньше.
+// Сами оттенки каждой схемы лежат в css/theme.css (блоки html[data-theme="…"]).
 export const THEMES = [
     { id: 'green',    label: 'Зелёная',   labelUk: 'Зелена',     swatch: '#15803d' },
     { id: 'blue',     label: 'Синяя',     labelUk: 'Синя',       swatch: '#1d4ed8' },
-    { id: 'indigo',   label: 'Индиго',    labelUk: 'Індиго',     swatch: '#6d28d9' },
+    { id: 'red',      label: 'Красная',   labelUk: 'Червона',    swatch: '#c8102e' },
     { id: 'teal',     label: 'Бирюзовая', labelUk: 'Бірюзова',   swatch: '#0f766e' },
     { id: 'amber',    label: 'Янтарная',  labelUk: 'Бурштинова', swatch: '#b45309' },
     { id: 'graphite', label: 'Графит',    labelUk: 'Графіт',     swatch: '#374151' }
 ];
 
 export const DEFAULT_THEME = 'green';
+
+// Схема «Индиго» заменена на «Красную». У сотрудников, которые её выбрали, в
+// localStorage устройства осталось прежнее имя: переводим его на новую схему,
+// чтобы оформление не «сбрасывалось» на зелёное.
+const LEGACY_THEME_IDS = { indigo: 'red' };
 
 const STORAGE_KEY = 'rsk.theme';
 
@@ -46,7 +53,8 @@ export function isDefaultTheme() {
  * выбранный цвет — иначе на телефоне останется зелёная полоса.
  */
 export function applyTheme(id) {
-    const theme = THEMES.find(item => item.id === id) || THEMES[0];
+    const wanted = LEGACY_THEME_IDS[id] || id;
+    const theme = THEMES.find(item => item.id === wanted) || THEMES[0];
     currentTheme = theme.id;
 
     const root = document.documentElement;
@@ -89,7 +97,9 @@ export function initTheme() {
         // Хранилище недоступно — тема по умолчанию
     }
 
-    applyTheme(THEMES.some(item => item.id === saved) ? saved : DEFAULT_THEME);
+    // applyTheme сам снимает устаревшие имена (LEGACY_THEME_IDS) и подставляет
+    // тему по умолчанию, если сохранённого имени нет в списке.
+    applyTheme(saved);
 
     return currentTheme;
 }

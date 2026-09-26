@@ -239,6 +239,20 @@ async function main() {
     ok('офлайн-оболочка знает про новые файлы (sw.js → APP_SHELL)',
         sw.includes("'./css/tailwind.css'") && sw.includes("'./js/actions.js'"));
 
+    // Цветовые схемы: имена схем живут в js/theme.js, а их палитры — в блоках
+    // html[data-theme="…"] файла css/theme.css. Схему, переименованную в одном
+    // файле и забытую в другом, ничто не ловит: сотрудник выбирает цвет, а
+    // интерфейс остаётся прежним.
+    const themeJs = read(path.join(ROOT, 'js', 'theme.js'));
+    const themeCss = read(path.join(ROOT, 'css', 'theme.css'));
+    const themeIds = [...themeJs.matchAll(/\{\s*id:\s*'([a-z]+)'/g)].map((match) => match[1]);
+    const themesWithoutPalette = themeIds.filter((id) => !themeCss.includes(`html[data-theme='${id}']`));
+    ok(`каждая схема из js/theme.js раскрашена в css/theme.css (проверено: ${themeIds.length})`,
+        themeIds.length > 0 && themesWithoutPalette.length === 0,
+        themesWithoutPalette.length
+            ? 'нет блока переменных: ' + themesWithoutPalette.join(', ')
+            : themeIds.join(', '));
+
     // --- 2. Отпечаток сборки ---------------------------------------------
     log('=== 2. Отпечаток сборки соответствует исходникам ===');
     const stamp = css.match(new RegExp('\\/\\* ' + STAMP_PREFIX + ' v([0-9.]+) ([0-9a-f]{16}) \\*\\/'));
