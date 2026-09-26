@@ -270,10 +270,59 @@ onLangChange(() => {
 // ПРОФИЛЬ В ШАПКЕ
 // =====================================================================
 
+// Меню кабинета на ПК раскрывается ВБОК от колонки меню и вниз от своей кнопки.
+// Абсолютным позиционированием этого не сделать: у сайдбара `lg:overflow-y-auto`
+// (на коротком экране он прокручивается), а прокрутка обрезает всё, что выходит
+// за её границы — от меню с `left: 100%` оставалась бы полоска в 4 пикселя.
+// Поэтому на ПК меню позиционируется `fixed` (css/style.css), а координаты
+// считает placeProfileMenu() по кнопке и по краю колонки.
+const MENU_SIDE_GAP = 12;   // зазор между колонкой меню и меню кабинета, px
+const MENU_EDGE_GAP = 12;   // минимальный отступ меню от краёв окна, px
+
+/** Широкая раскладка: меню — вертикальная колонка слева (css/style.css, ≥1024px). */
+function isWideNav() {
+    return window.matchMedia('(min-width: 1024px)').matches;
+}
+
+/**
+ * Ставит меню кабинета вбок от колонки меню и вниз от своей кнопки (ПК).
+ * В остальных раскладках убирает координаты: на телефоне меню открывается
+ * карточкой по центру экрана, на планшете — под кнопкой (css/style.css).
+ */
+function placeProfileMenu() {
+    const menu = document.getElementById('profile-menu');
+    const btn = document.getElementById('profile-btn');
+    if (!menu || !btn) return;
+
+    if (!isWideNav() || menu.classList.contains('hidden')) {
+        menu.style.removeProperty('top');
+        menu.style.removeProperty('left');
+        return;
+    }
+
+    const sidebar = btn.closest('header');
+    const buttonBox = btn.getBoundingClientRect();
+    const sidebarBox = (sidebar || btn).getBoundingClientRect();
+
+    // Вбок: сразу за колонкой меню — вместе с её цветной полосой.
+    const left = sidebarBox.right + MENU_SIDE_GAP;
+    // Вниз: верх меню на уровне кнопки. Если до низа окна места не хватает,
+    // меню поднимается: иначе нижние пункты («🚪 Выйти») уехали бы за край.
+    const lowest = document.documentElement.clientHeight
+        - menu.getBoundingClientRect().height - MENU_EDGE_GAP;
+    const top = Math.max(MENU_EDGE_GAP, Math.min(buttonBox.top, lowest));
+
+    menu.style.top = Math.round(top) + 'px';
+    menu.style.left = Math.round(left) + 'px';
+}
+
 export function toggleProfileMenu() {
     const menu = document.getElementById('profile-menu');
     if (!menu) return;
     menu.classList.toggle('hidden');
+    // Место считаем ПОСЛЕ показа: у скрытого меню нет размеров. Происходит это
+    // в том же кадре, что и показ, поэтому «прыжка» из угла экрана не видно.
+    placeProfileMenu();
 }
 
 window.toggleProfileMenu = toggleProfileMenu;
@@ -553,6 +602,13 @@ document.addEventListener('click', (e) => {
         menu.classList.add('hidden');
     }
 });
+
+// Меню кабинета на ПК позиционировано `fixed` (вбок от колонки, см. выше), а
+// `fixed` не следует за прокруткой — поэтому место пересчитывается при
+// изменении окна и при прокрутке. Прокрутка ловится на фазе перехвата: событие
+// `scroll` не всплывает, но при перехвате доходит и от самой колонки меню.
+window.addEventListener('resize', placeProfileMenu);
+document.addEventListener('scroll', placeProfileMenu, true);
 
 // =====================================================================
 // СТАРТ / СТОП

@@ -7,7 +7,11 @@
 //   5. оформление: язык uk/ru, цветовая схема (data-theme + перекраска),
 //      название приложения в заголовке вкладки и меню разделов (поверхность
 //      белая, разделы — белые кнопки с рамкой в цвете схемы, активный раздел —
-//      подложка схемы и акцентная полоса слева, действия — заливка схемы).
+//      подложка схемы и акцентная полоса слева, действия — заливка схемы),
+//      логотип меню (logo2.png: знак, название и подпись одним файлом) и меню
+//      кабинета: на ПК оно раскрывается ВБОК от колонки и вниз (координаты
+//      считает placeProfileMenu(), js/main.js), а после сужения окна до
+//      телефона (390×844) снова становится карточкой по центру экрана.
 //
 // С v2.9.0 строки «📊 Реестра» отдаёт ВИД БАЗЫ public.registry_rows, страница
 // списка приходит через db.selectPage (limit/offset), а «Записей» и «Итого»
@@ -1343,6 +1347,98 @@ async function main() {
         navState.activeShadow.includes('inset') &&
         navState.ctaBg === 'rgb(200, 16, 46)',
         JSON.stringify(navState));
+
+    // Логотип меню: в шапке стоит широкая картинка logo2.png — знак FD, название и
+    // подпись одним файлом. Проверяем и сам адрес, и то, что файл действительно
+    // загрузился: опечатка в имени или забытый в офлайн-оболочке файл дают пустую
+    // рамку, а глазом это заметно не сразу.
+    const logoState = await evaluate('(() => {' +
+        'const img = document.querySelector("#app-container > header img");' +
+        'if (!img) return null;' +
+        'const box = img.getBoundingClientRect();' +
+        'return { src: img.getAttribute("src"), natural: img.naturalWidth,' +
+        ' w: Math.round(box.width), h: Math.round(box.height) }; })()');
+    ok('в шапке — логотип logo2.png: файл загрузился и картинка шире, чем выше',
+        !!logoState && logoState.src === './logo2.png' && logoState.natural > 100 &&
+        logoState.w > logoState.h,
+        JSON.stringify(logoState));
+
+    // Стрелка на кнопке кабинета: на ПК видна вторая — повёрнутая на 135°, то есть
+    // смотрит вправо-вниз (меню раскрывается вбок), а «телефонная» (вниз) скрыта.
+    const chevronState = await evaluate('(() => {' +
+        'const svgs = document.querySelectorAll("#profile-btn svg");' +
+        'if (svgs.length < 2) return null;' +
+        'return { mobile: getComputedStyle(svgs[0]).display,' +
+        ' desktop: getComputedStyle(svgs[1]).display,' +
+        ' transform: getComputedStyle(svgs[1]).transform }; })()');
+    ok('на ПК стрелка кабинета повёрнута на 135° (вправо-вниз), «телефонная» скрыта',
+        !!chevronState && chevronState.mobile === 'none' &&
+        chevronState.desktop !== 'none' && /-?0\.70/.test(chevronState.transform),
+        JSON.stringify(chevronState));
+
+    // Меню кабинета на ПК: раскрывается ВБОК от колонки меню и вниз. Проверяем
+    // геометрию и `fixed`: `absolute` внутри сайдбара с `lg:overflow-y-auto`
+    // обрезалось бы прокруткой, и от меню осталась бы полоска в 4 пикселя — снаружи
+    // это выглядит как «кнопка не работает». Место считает placeProfileMenu()
+    // (js/main.js), поэтому проверка идёт через настоящий toggleProfileMenu().
+    await evaluate('window.toggleProfileMenu()');
+    await sleep(400);
+    const menuState = await evaluate('(() => {' +
+        'const menu = document.getElementById("profile-menu");' +
+        'const btn = document.getElementById("profile-btn");' +
+        'const sidebar = document.querySelector("#app-container > header");' +
+        'const m = menu.getBoundingClientRect();' +
+        'const b = btn.getBoundingClientRect();' +
+        'const s = sidebar.getBoundingClientRect();' +
+        'return { visible: !menu.classList.contains("hidden"),' +
+        ' position: getComputedStyle(menu).position,' +
+        ' sidebarRight: Math.round(s.right), left: Math.round(m.left),' +
+        ' top: Math.round(m.top), bottom: Math.round(m.bottom),' +
+        ' buttonTop: Math.round(b.top), viewport: document.documentElement.clientHeight }; })()');
+    ok('меню кабинета на ПК раскрывается вбок от колонки и вниз, целиком в окне',
+        menuState.visible && menuState.position === 'fixed' &&
+        menuState.left >= menuState.sidebarRight &&
+        menuState.top <= menuState.buttonTop + 1 &&
+        menuState.bottom <= menuState.viewport,
+        JSON.stringify(menuState));
+
+    // Меню оставляем ОТКРЫТЫМ и сужаем окно до телефона (390×844, тот же прогон
+    // работает в headless Chrome, поэтому размер задаётся через CDP). Так
+    // проверяется не только мобильная раскладка (карточка по центру экрана), но и
+    // уборка координат ПК: если inline-стили остались, карточка уехала бы за край
+    // — именно это увидит сотрудник, повернувший телефон из альбома в книжку.
+    // `mobile` у CDP обязательное поле (без него Chrome отвечает «Invalid
+    // parameters»); `false` — эмулируем именно ширину окна, а не телефон как
+    // устройство: раскладку приложения задают медиа-запросы по ширине.
+    await send('Emulation.setDeviceMetricsOverride', {
+        width: 390, height: 844, deviceScaleFactor: 1, mobile: false
+    });
+    await sleep(600);
+    const mobileState = await evaluate('(() => {' +
+        'const menu = document.getElementById("profile-menu");' +
+        'const m = menu.getBoundingClientRect();' +
+        'const style = getComputedStyle(menu);' +
+        'return { visible: !menu.classList.contains("hidden"),' +
+        ' inlineTop: menu.style.top, inlineLeft: menu.style.left,' +
+        ' position: style.position, transform: style.transform,' +
+        ' left: Math.round(m.left), right: Math.round(m.right),' +
+        ' centerX: Math.round(m.left + m.width / 2),' +
+        ' top: Math.round(m.top), bottom: Math.round(m.bottom),' +
+        ' vw: document.documentElement.clientWidth,' +
+        ' vh: document.documentElement.clientHeight }; })()');
+    ok('на телефоне (390×844) меню кабинета — карточка по центру, координаты ПК сброшены',
+        mobileState.visible && mobileState.inlineTop === '' && mobileState.inlineLeft === '' &&
+        Math.abs(mobileState.centerX - mobileState.vw / 2) <= 2 &&
+        mobileState.left > 0 && mobileState.right < mobileState.vw &&
+        mobileState.top >= 0 && mobileState.bottom <= mobileState.vh,
+        JSON.stringify(mobileState));
+
+    // Закрываем меню и возвращаем ширину ПК: дальше прогон проверяет разделы,
+    // язык и реестр, и они должны считаться при обычном окне.
+    await evaluate('window.toggleProfileMenu()');
+    await sleep(300);
+    await send('Emulation.clearDeviceMetricsOverride');
+    await sleep(500);
 
     // Реестр открыт у директора — после смены языка он перерисуется сам
     await evaluate('window.switchTab("registry")');

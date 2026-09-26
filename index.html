@@ -183,7 +183,13 @@
             <div class="max-w-6xl w-full mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3 min-w-0 lg:flex-col lg:items-stretch lg:justify-start lg:mx-0 lg:max-w-none lg:min-h-full lg:px-3 lg:py-4">
                 <div class="flex items-center gap-3 shrink-0">
                     <div class="rounded-lg border border-[#15803d] bg-white p-1.5 shadow-sm flex items-center justify-center">
-                        <img src="./logo.png" alt="FreeDOM" class="h-8 w-auto object-contain"
+                        <!-- Логотип меню — logo2.png: знак FD, название и подпись одним
+                             файлом (широкая картинка). Стоит ТОЛЬКО здесь: значок ярлыка,
+                             вкладка браузера и обложки инструкций по-прежнему собираются из
+                             квадратного logo.png (tools/make-icons.ps1). В колонке 15rem
+                             картинка выше (lg:h-12) намеренно: на 32px подпись под
+                             названием не читается. -->
+                        <img src="./logo2.png" alt="FreeDOM" class="h-8 w-auto object-contain lg:h-12"
                              data-fallback-show="header-logo-fallback">
                         <!-- Запасная надпись вместо логотипа: показывает js/actions.js,
                              если картинка не загрузилась. -->
@@ -227,10 +233,18 @@
                             <span id="profile-avatar" class="w-7 h-7 rounded-full bg-[#15803d] text-white flex items-center justify-center font-bold text-xs">?</span>
                             <span id="profile-name-short" class="hidden sm:inline max-w-[80px] lg:max-w-[9.5rem] truncate">Кабинет</span>
                             <svg class="w-3 h-3 lg:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                            <!-- На ПК меню кабинета раскрывается вверх по колонке (вбок его обрезал бы прокручиваемый сайдбар), поэтому стрелка смотрит вверх и уезжает к правому краю плашки. -->
-                            <svg class="hidden lg:ml-auto lg:block w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                            <!-- На ПК меню кабинета раскрывается ВБОК от колонки и вниз
+                                 (координаты считает placeProfileMenu(), js/main.js),
+                                 поэтому стрелка уезжает к правому краю плашки и смотрит
+                                 вправо-вниз: это шеврон «вверх», повёрнутый на 135°. -->
+                            <svg class="hidden lg:ml-auto lg:block w-3 h-3 lg:rotate-[135deg]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
                         </button>
 
+                        <!-- Меню кабинета. На телефоне это карточка по центру экрана, на
+                             планшете — выпадающая панель под кнопкой, на ПК — панель ВБОК от
+                             колонки и вниз: место считает placeProfileMenu() (js/main.js),
+                             потому что `fixed`-меню не обрезается прокруткой сайдбара
+                             (`lg:overflow-y-auto`), но и не следует за ней само. -->
                         <div id="profile-menu" class="hidden absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden">
                             <div class="bg-emerald-50 p-3 border-b space-y-1">
                                 <p class="font-bold text-[#166534] text-sm" id="profile-name">—</p>

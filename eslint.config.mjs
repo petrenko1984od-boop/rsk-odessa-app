@@ -33,11 +33,16 @@ const INLINE_HANDLER_PATTERN = String.raw`on(click|change|input|submit|keydown|k
 
 export default [
     {
-        // Собранный CSS, зависимости и чужие мини-проекты не проверяем.
+        // Собранный CSS, зависимости и чужие мини-проекты не проверяем:
+        // у них своя сборка и свои правила (pres-check — старый прогон
+        // презентации, Смета — React+Vite и Prisma/Node на CommonJS), а наш
+        // конфиг настроен на браузерные модули и только добавил бы им ложных
+        // ошибок вида «require is not defined».
         ignores: [
             'node_modules/**',
             'tools/checks/node_modules/**',
             'pres-check/**',
+            'Смета/**',
             'Документация/**',
             'css/tailwind.css'
         ]
