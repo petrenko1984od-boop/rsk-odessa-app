@@ -703,6 +703,46 @@ export async function refreshDashboardIfVisible() {
     }
 }
 
+// =====================================================================
+// СНИМОК ДЛЯ PDF (html2canvas)
+// =====================================================================
+
+/**
+ * html2canvas(element, options) с обходом его ошибки в измерении шрифта.
+ *
+ * КАК ЛОМАЛОСЬ. html2canvas 1.4.1 считает положение базовой линии шрифта
+ * временным пробником, который сам же добавляет в конец документа
+ * (`FontMetrics.parseMetrics`: div → span с текстом + картинка 1×1 с
+ * `vertical-align: baseline`). Preflight Tailwind делает КАРТИНКИ блочными:
+ * `img,svg,video,… { display: block; vertical-align: middle }`. Инлайновое
+ * `vertical-align: baseline` не отменяет `display: block`, поэтому пробник
+ * встаёт на собственную строку, и «базовая линия» измеряется на строку ниже
+ * настоящей. В PDF каждый текст печатался на строку ниже своего места — в
+ * таблице сметы подпись прижималась к НИЖНЕЙ рамке ячейки («текст пишется
+ * прямо по линии таблицы, а должен по средине ячейки»), в ведомостях объекта
+ * и в графике Ганта — так же уезжала.
+ *
+ * ОБХОД. На время снимка возвращаем картинке пробника инлайновое поведение:
+ * селектор `body > div > img` — ровно тот контейнер, который создаёт
+ * библиотека (html2canvas зафиксирован версией и хешем в index.html, шапка
+ * «Библиотеки с CDN» в README). Тогда текст рисуется там, где его поставил
+ * браузер — с учётом `vertical-align` ячеек.
+ *
+ * Проверяется прогоном tools/checks/migration-check.mjs (имя функции и
+ * селектор обязаны быть в js/utils.js) и вручную — по PDF документа сметы.
+ */
+export async function renderPdfCanvas(element, options) {
+    const fix = document.createElement('style');
+    fix.textContent = 'body > div > img { display: inline-block !important; }';
+    document.head.appendChild(fix);
+
+    try {
+        return await html2canvas(element, options);
+    } finally {
+        fix.remove();
+    }
+}
+
 // Следим за состоянием сети (можно использовать для показа баннера "Нет связи")
 window.addEventListener('online',  () => log.info('Соединение восстановлено'));
 window.addEventListener('offline', () => log.warn('Соединение потеряно'));

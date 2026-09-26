@@ -16,7 +16,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate
+    formatDate, renderPdfCanvas
 } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 import { CONFIG } from '../config.js';
@@ -141,7 +141,9 @@ export async function downloadEstimatePDF() {
         await new Promise(resolve => setTimeout(resolve, 400));
 
         // 4. Рендерим в PDF через html2canvas + jsPDF
-        const canvas = await html2canvas(wrapper, {
+        //    (renderPdfCanvas — тот же снимок с обходом ошибки измерения шрифта,
+        //    иначе весь текст уезжал на строку ниже: см. js/utils.js)
+        const canvas = await renderPdfCanvas(wrapper, {
             scale: 2,
             useCORS: true,
             backgroundColor: '#ffffff',

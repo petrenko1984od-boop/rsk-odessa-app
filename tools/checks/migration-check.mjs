@@ -1123,6 +1123,7 @@ function main() {
         const catalogJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'estimate-catalog.js'), 'utf8');
         const estimateDocJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'estimate-doc.js'), 'utf8');
         const mainJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'main.js'), 'utf8');
+        const utilsJsV211 = fs.readFileSync(path.join(ROOT, 'js', 'utils.js'), 'utf8');
 
         // 1. Меню кнопки «Сметы»: пять пунктов и их действия существуют.
         const menuActions = ['openNewEstimate', 'showEstimatesList', 'openEstimateCatalog',
@@ -1182,6 +1183,33 @@ function main() {
             /xlsx-js-style/.test(indexHtmlV29) &&
             /patternType: 'solid'/.test(estimateDocJsV211) &&
             /cellStyles: true/.test(estimateDocJsV211));
+
+        // 6. Язык файла (r3): подписи документа берутся на языке из «Настроек», а
+        //    не всегда украинские. Проверяем, что таблица подписей есть, что язык
+        //    в неё приходит из js/i18n.js, и что обе колонки действительно
+        //    заполнены (русское СМЕТА и украинское КОШТОРИС).
+        ok('v2.11.0: подписи файла печатаются на выбранном языке (DOC_TEXT)',
+            /const DOC_TEXT = \{/.test(estimateDocJsV211) &&
+            /\n {4}ru: \{/.test(estimateDocJsV211) && /\n {4}uk: \{/.test(estimateDocJsV211) &&
+            /import \{ getLang \} from '\.\.\/i18n\.js'/.test(estimateDocJsV211) &&
+            /function docText\(\)/.test(estimateDocJsV211) &&
+            estimateDocJsV211.includes("'СМЕТА'") &&
+            estimateDocJsV211.includes("'КОШТОРИС'") &&
+            /sheetName/.test(estimateDocJsV211));
+
+        // 7. Посадка текста в PDF (r3): html2canvas считает «базовую линию»
+        //    пробником div → img, которому preflight Tailwind ломает поведение —
+        //    без обхода весь текст печатался на строку ниже. Поэтому все снимки
+        //    PDF идут через js/utils.js → renderPdfCanvas(), а прямого вызова
+        //    библиотеки в модулях не остаётся.
+        const pdfSources = ['estimate-doc.js', 'files.js', 'gantt.js']
+            .map((file) => fs.readFileSync(path.join(ROOT, 'js', 'modules', file), 'utf8'));
+        ok('v2.11.0: снимок PDF идёт через renderPdfCanvas (текст по центру ячейки)',
+            /export async function renderPdfCanvas/.test(utilsJsV211) &&
+            /body > div > img/.test(utilsJsV211) &&
+            /display: inline-block !important/.test(utilsJsV211) &&
+            pdfSources.every((src) => src.includes('renderPdfCanvas(') && !src.includes('await html2canvas(')),
+            pdfSources.map((src) => (src.includes('await html2canvas(') ? 'прямой html2canvas' : 'ok')).join(', '));
     }
 
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---

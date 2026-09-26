@@ -29,7 +29,8 @@
 // =====================================================================
 
 import { CONFIG } from '../config.js';
-import { log, toast, escapeHtml, roundMoney } from '../utils.js';
+import { log, toast, escapeHtml, roundMoney, renderPdfCanvas } from '../utils.js';
+import { getLang } from '../i18n.js';
 
 // =====================================================================
 // ЧИСЛА
@@ -66,6 +67,15 @@ export function calcLimitAmount(percent, base, workSum, matSum) {
 export function limitBaseLabel(base) {
     const found = (CONFIG.ESTIMATE?.LIMIT_BASES || []).find(item => item.value === base);
     return found ? found.label : '';
+}
+
+/**
+ * База лимита/ПДВ для ДОКУМЕНТА: CONFIG хранит один (русский) набор подписей,
+ * а печатать нужно на языке документа — «от работ» или «від робіт».
+ */
+function baseLabelOf(base) {
+    const text = docText().base;
+    return text[base] || text.both;
 }
 
 // =====================================================================
@@ -211,6 +221,11 @@ export function calcEstimate(estimate) {
 // Списки вариантов лежат в CONFIG.ESTIMATE (DOC_KINDS / DOC_VIEWS / DOC_COLORS)
 // — там же их видит разметка, дублировать их здесь нельзя.
 //
+// ЯЗЫК ФАЙЛА. Подписи документа берутся из DOC_TEXT по языку из «Настроек»
+// (getLang()): русский интерфейс — русский файл, украинский — украинский.
+// Переводятся только подписи модуля; названия работ, материалов, разделов,
+// заказчика и примечания — данные сотрудника, их печатаем как ввели.
+//
 // ДЕВЯТЬ ГРАФ — ЭТО РАЗБИВКА ЦЕНЫ И ВАРТОСТИ НА РОБОТИ/МАТЕРІАЛИ:
 //   № | Найменування | Од. вим. | К-сть | Ціна одиниці (Роботи|Матеріали) |
 //   Вартість (Роботи|Матеріали|Всього). Шесть граф — то же самое одной строкой:
@@ -230,9 +245,118 @@ const DOC_KINDS = CONFIG.ESTIMATE?.DOC_KINDS || [];
 const DOC_VIEWS = CONFIG.ESTIMATE?.DOC_VIEWS || [];
 const DOC_COLORS = CONFIG.ESTIMATE?.DOC_COLORS || [];
 
+// =====================================================================
+// ЯЗЫК ДОКУМЕНТА (RU / UK)
+// =====================================================================
+// Документ печатается НЕ как экран: у него нет DOM, по которому ходит словарь
+// js/i18n.js, поэтому подписи берутся сразу на языке из «Настроек»
+// (getLang()). Русский — исходный (им же подписаны остальные модули), вторая
+// колонка — печатная украинская версия. Подписи ВВОДИТ сотрудник — названия
+// работ, материалов, разделов, заказчик и примечания — не переводятся: это его
+// данные. Списки вариантов окна экспорта (CONFIG.ESTIMATE.DOC_*) остаются
+// украинскими: это экран приложения, а не файл.
+//
+// Обе колонки лежат рядом строка за строкой, поэтому «забыть перевести»
+// подпись трудно, а прогон tools/checks/migration-check.mjs проверяет, что
+// таблица есть и что язык в неё приходит из i18n.js.
+const DOC_TEXT = {
+    ru: {
+        locale: 'ru-RU',
+        title: { koshtorys: 'СМЕТА', naryad: 'НАРЯД НА РАБОТЫ', materials: 'ВЕДОМОСТЬ МАТЕРИАЛОВ' },
+        // Имя листа Excel: подписи окна экспорта тут не годятся — они украинские.
+        sheet: { koshtorys: 'Смета', naryad: 'Наряд на работы', materials: 'Ведомость материалов' },
+        view: { '6': '6-ти графка (книжная)', '9': '9-ти графка (альбомная)' },
+        subtitle: { koshtorys: 'Работы и материалы', naryad: 'Работы', materials: 'Перечень материалов' },
+        date: 'Дата',
+        name: 'Название',
+        object: 'Объект',
+        customer: 'Заказчик',
+        phone: 'тел.',
+        columns9: {
+            number: '№',
+            name: 'Наименование работ, материалов, затрат',
+            unit: 'Ед. изм.',
+            quantity: 'Кол-во',
+            price: 'Цена единицы, грн.',
+            cost: 'Стоимость, грн.',
+            works: 'Работы',
+            materials: 'Материалы',
+            total: 'Всего'
+        },
+        columns6: {
+            koshtorys: ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Сумма'],
+            naryad: ['№', 'Наименование работ', 'Ед.', 'Кол-во', 'Цена (наряд)', 'Сумма'],
+            materials: ['№', 'Наименование материала', 'Ед.', 'Кол-во', 'Цена', 'Сумма']
+        },
+        sectionTotal: 'Всего по разделу:',
+        workTotal: 'Итого по работам:',
+        materialTotal: 'Итого по материалам:',
+        naryadWorkTotal: 'Итого за работы:',
+        naryadMaterials: 'Материалы (закупка):',
+        purchaseTotal: 'ИТОГО К ЗАКУПКЕ:',
+        intermediate: 'Промежуточный итог:',
+        vat: 'ПДВ',
+        base: { works: 'от работ', materials: 'от материалов', both: 'от работ и материалов' },
+        grand: 'ВСЕГО:',
+        grandNaryad: 'ВСЕГО ПО НАРЯДУ:',
+        notes: 'Примечания:',
+        contractor: 'Исполнитель',
+        foreman: 'Бригадир / рабочий',
+        noMaterials: 'Материалов в смете нет'
+    },
+    uk: {
+        locale: 'uk-UA',
+        title: { koshtorys: 'КОШТОРИС', naryad: 'НАРЯД НА РОБОТИ', materials: 'ВІДОМІСТЬ МАТЕРІАЛІВ' },
+        sheet: { koshtorys: 'Кошторис', naryad: 'Наряд на роботи', materials: 'Відомість матеріалів' },
+        view: { '6': '6-ти графка (книжна)', '9': '9-ти графка (альбомна)' },
+        subtitle: { koshtorys: 'Роботи та матеріали', naryad: 'Роботи', materials: 'Перелік матеріалів' },
+        date: 'Дата',
+        name: 'Назва',
+        object: 'Об\'єкт',
+        customer: 'Замовник',
+        phone: 'тел.',
+        columns9: {
+            number: '№',
+            name: 'Найменування робіт, матеріалів, витрат',
+            unit: 'Од. вим.',
+            quantity: 'К-сть',
+            price: 'Ціна одиниці, грн.',
+            cost: 'Вартість, грн.',
+            works: 'Роботи',
+            materials: 'Матеріали',
+            total: 'Всього'
+        },
+        columns6: {
+            koshtorys: ['№', 'Найменування', 'Од.', 'К-сть', 'Ціна', 'Сума'],
+            naryad: ['№', 'Найменування робіт', 'Од.', 'К-сть', 'Ціна (наряд)', 'Сума'],
+            materials: ['№', 'Найменування матеріалу', 'Од.', 'К-сть', 'Ціна', 'Сума']
+        },
+        sectionTotal: 'Всього по розділу:',
+        workTotal: 'Разом по роботах:',
+        materialTotal: 'Разом по матеріалах:',
+        naryadWorkTotal: 'Разом за роботами:',
+        naryadMaterials: 'Матеріали (закупівля):',
+        purchaseTotal: 'ВСЬОГО ДО ЗАКУПІВЛІ:',
+        intermediate: 'Проміжний підсумок:',
+        vat: 'ПДВ',
+        base: { works: 'від робіт', materials: 'від матеріалів', both: 'від робіт і матеріалів' },
+        grand: 'ВСЬОГО:',
+        grandNaryad: 'ВСЬОГО ЗА НАРЯДОМ:',
+        notes: 'Примітки:',
+        contractor: 'Виконавець',
+        foreman: 'Бригадир / робітник',
+        noMaterials: 'Матеріалів у сметі немає'
+    }
+};
+
+/** Подписи документа на языке, выбранном в «Настройках» этого устройства. */
+function docText() {
+    return DOC_TEXT[getLang()] || DOC_TEXT.ru;
+}
+
 /** Деньги в документе: всегда два знака после запятой («1 500,00»). */
 function moneyText(value) {
-    return (Number(value) || 0).toLocaleString('ru-RU', {
+    return (Number(value) || 0).toLocaleString(docText().locale, {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
     });
@@ -372,6 +496,10 @@ export function normalizeDocOptions(options) {
         columns: wide ? 9 : 6,
         label: kindInfo.label,
         viewLabel: viewInfo ? viewInfo.label : '',
+        // Имя листа Excel — на языке ДОКУМЕНТА: подписи из CONFIG.ESTIMATE
+        // описывают окно экспорта (экран приложения), а лист видно в самом файле.
+        sheetName: [docText().sheet[kind] || kindInfo.label,
+            kindInfo.view ? docText().view[view] : ''].filter(Boolean).join(' '),
         // Подпись для файла: «Koshtorys-9graph_00001_2026_Покрівля.xlsx».
         fileBase: kind === 'koshtorys'
             ? `Koshtorys-${view}graph`
@@ -385,15 +513,13 @@ function clientNameOf(estimate) {
 }
 
 function subtitleOf(doc) {
-    if (doc.kind === 'naryad') return 'Роботи';
-    if (doc.kind === 'materials') return 'Перелік матеріалів';
-    return 'Роботи та матеріали';
+    const text = docText().subtitle;
+    return text[doc.kind] || text.koshtorys;
 }
 
 function titleOf(doc) {
-    if (doc.kind === 'naryad') return 'НАРЯД НА РОБОТИ';
-    if (doc.kind === 'materials') return 'ВІДОМІСТЬ МАТЕРІАЛІВ';
-    return 'КОШТОРИС';
+    const text = docText().title;
+    return text[doc.kind] || text.koshtorys;
 }
 
 /**
@@ -401,11 +527,12 @@ function titleOf(doc) {
  * подзаголовок. Одна и та же шапка у кошториса, наряда и ведомости.
  */
 function titleRows(estimate, company, doc) {
+    const text = docText();
     const totals = calcEstimate(estimate);
     const source = company || {};
     const contacts = [
         source.address,
-        source.phone ? `тел. ${source.phone}` : '',
+        source.phone ? `${text.phone} ${source.phone}` : '',
         source.email,
         source.website
     ].filter(Boolean).join(' · ');
@@ -423,15 +550,15 @@ function titleRows(estimate, company, doc) {
     const titleWidth = Math.max(1, Math.ceil(total / 2));
     rows.push(row('title', [
         cell(titleOf(doc), { colspan: titleWidth, style: 'title' }),
-        cell(`Дата: ${new Date().toLocaleDateString('uk-UA')}`,
+        cell(`${text.date}: ${new Date().toLocaleDateString(text.locale)}`,
             { colspan: Math.max(1, total - titleWidth), align: 'right', style: 'meta' })
     ]));
 
     rows.push(row('number', [cell(`№ ${estimate?.number || '—'}`, { colspan: total, style: 'meta' })]));
     rows.push(row('gap', [cell('', { colspan: total, style: 'gap' })]));
-    rows.push(row('name', [cell(`Назва: ${estimate?.title || '—'}`, { colspan: total, style: 'meta' })]));
-    rows.push(row('object', [cell(`Об'єкт: ${estimate?.object_name || '—'}`, { colspan: total, style: 'meta' })]));
-    rows.push(row('client', [cell(`Замовник: ${clientNameOf(estimate) || '—'}`, { colspan: total, style: 'meta' })]));
+    rows.push(row('name', [cell(`${text.name}: ${estimate?.title || '—'}`, { colspan: total, style: 'meta' })]));
+    rows.push(row('object', [cell(`${text.object}: ${estimate?.object_name || '—'}`, { colspan: total, style: 'meta' })]));
+    rows.push(row('client', [cell(`${text.customer}: ${clientNameOf(estimate) || '—'}`, { colspan: total, style: 'meta' })]));
     rows.push(row('subtitle', [cell(subtitleOf(doc), { colspan: total, style: 'subtitle' })]));
 
     return { rows, totals };
@@ -444,22 +571,24 @@ function titleRows(estimate, company, doc) {
  */
 export function buildKoshtorys9Rows(estimate, totals) {
     const rows = [];
+    const text = docText();
+    const columns = text.columns9;
 
     const headerBlock = () => [
         row('header', [
-            cell('№', { rowspan: 2, align: 'center', style: 'header' }),
-            cell('Найменування робіт, матеріалів, витрат', { rowspan: 2, style: 'header' }),
-            cell('Од. вим.', { rowspan: 2, align: 'center', style: 'header' }),
-            cell('К-сть', { rowspan: 2, align: 'center', style: 'header' }),
-            cell('Ціна одиниці, грн.', { colspan: 2, align: 'center', style: 'header' }),
-            cell('Вартість, грн.', { colspan: 3, align: 'center', style: 'header' })
+            cell(columns.number, { rowspan: 2, align: 'center', style: 'header' }),
+            cell(columns.name, { rowspan: 2, style: 'header' }),
+            cell(columns.unit, { rowspan: 2, align: 'center', style: 'header' }),
+            cell(columns.quantity, { rowspan: 2, align: 'center', style: 'header' }),
+            cell(columns.price, { colspan: 2, align: 'center', style: 'header' }),
+            cell(columns.cost, { colspan: 3, align: 'center', style: 'header' })
         ]),
         row('header', [
-            cell('Роботи', { align: 'center', style: 'header' }),
-            cell('Матеріали', { align: 'center', style: 'header' }),
-            cell('Роботи', { align: 'center', style: 'header' }),
-            cell('Матеріали', { align: 'center', style: 'header' }),
-            cell('Всього', { align: 'center', style: 'header' })
+            cell(columns.works, { align: 'center', style: 'header' }),
+            cell(columns.materials, { align: 'center', style: 'header' }),
+            cell(columns.works, { align: 'center', style: 'header' }),
+            cell(columns.materials, { align: 'center', style: 'header' }),
+            cell(columns.total, { align: 'center', style: 'header' })
         ])
     ];
 
@@ -494,7 +623,7 @@ export function buildKoshtorys9Rows(estimate, totals) {
                     cell(calc.qty, { align: 'center', int: true }),
                     cell('', { align: 'right' }),
                     calc.skipped
-                        ? cell('Замовник', { align: 'center', style: 'material' })
+                        ? cell(text.customer, { align: 'center', style: 'material' })
                         : cell(Number(material.price_client) || 0, { align: 'right', money: true }),
                     cell('', { align: 'right' }),
                     calc.skipped ? cell('—', { align: 'center' }) : cell(calc.client, { align: 'right', money: true }),
@@ -504,7 +633,7 @@ export function buildKoshtorys9Rows(estimate, totals) {
         });
 
         rows.push(row('sectionTotal', [
-            cell('Всього по розділу:', { colspan: 5, align: 'right', style: 'total' }),
+            cell(text.sectionTotal, { colspan: 5, align: 'right', style: 'total' }),
             cell('', { align: 'right', style: 'total' }),
             cell(section.workClient, { align: 'right', style: 'total', money: true }),
             cell(section.matClient, { align: 'right', style: 'total', money: true }),
@@ -521,6 +650,7 @@ export function buildKoshtorys9Rows(estimate, totals) {
  */
 export function buildNaryadRows(estimate, totals) {
     const rows = [];
+    const text = docText();
 
     totals.sections.forEach((section, index) => {
         rows.push(row('section', [cell(`${index + 1}. ${section.section.name || '—'}`, { colspan: 6, style: 'section' })]));
@@ -549,7 +679,7 @@ export function buildNaryadRows(estimate, totals) {
                     cell(material.unit || '', { align: 'center' }),
                     cell(calc.qty, { align: 'center', int: true }),
                     calc.skipped
-                        ? cell('Замовник', { align: 'center', style: 'material' })
+                        ? cell(text.customer, { align: 'center', style: 'material' })
                         : cell(Number(material.price_purchase) || 0, { align: 'right', money: true }),
                     calc.skipped ? cell('—', { align: 'center' }) : cell(calc.worker, { align: 'right', money: true })
                 ]));
@@ -557,7 +687,7 @@ export function buildNaryadRows(estimate, totals) {
         });
 
         rows.push(row('sectionTotal', [
-            cell('Всього по розділу:', { colspan: 4, align: 'right', style: 'total' }),
+            cell(text.sectionTotal, { colspan: 4, align: 'right', style: 'total' }),
             cell('', { align: 'right', style: 'total' }),
             cell(roundMoney(section.workerTotal), { align: 'right', style: 'total', money: true })
         ]));
@@ -573,6 +703,7 @@ export function buildNaryadRows(estimate, totals) {
  */
 export function buildMaterialsRows(estimate) {
     const rows = [headerRow6('materials')];
+    const text = docText();
     let number = 0;
 
     aggregateMaterials(estimate).forEach(material => {
@@ -584,7 +715,7 @@ export function buildMaterialsRows(estimate) {
             cell(material.unit || '', { align: 'center' }),
             cell(material.qty, { align: 'center', int: true }),
             material.isCustomerSupplied
-                ? cell('Замовник', { align: 'center', style: 'material' })
+                ? cell(text.customer, { align: 'center', style: 'material' })
                 : cell(material.pricePurchase, { align: 'right', money: true }),
             material.isCustomerSupplied
                 ? cell('—', { align: 'center' })
@@ -593,7 +724,7 @@ export function buildMaterialsRows(estimate) {
     });
 
     if (number === 0) {
-        rows.push(row('item', [cell('Матеріалів у сметі немає', { colspan: 6, align: 'center', style: 'material' })]));
+        rows.push(row('item', [cell(text.noMaterials, { colspan: 6, align: 'center', style: 'material' })]));
     }
 
     return rows;
@@ -605,23 +736,25 @@ export function buildMaterialsRows(estimate) {
 
 /**
  * Строки итогов документа: работы, материалы, лимиты, подытог, ПДВ.
- * Подписи — украинские: это печатный документ, а не экран приложения.
+ * Подписи — на языке документа (docText()): это печатный файл, а не экран
+ * приложения, поэтому словарь i18n сюда не достаёт.
  */
 function summaryRows(estimate, totals, doc) {
+    const text = docText();
     const total = doc.columns;
     const labelSpan = total - 1;
     const rows = [];
 
     const pairs = doc.kind === 'naryad'
         ? [
-            ['Разом за роботами:', roundMoney(totals.workWorker), true],
-            ['Матеріали (закупівля):', roundMoney(totals.matWorker), false]
+            [text.naryadWorkTotal, roundMoney(totals.workWorker), true],
+            [text.naryadMaterials, roundMoney(totals.matWorker), false]
         ]
         : (doc.kind === 'materials'
-            ? [['ВСЬОГО ДО ЗАКУПІВЛІ:', roundMoney(totals.matWorker), true]]
+            ? [[text.purchaseTotal, roundMoney(totals.matWorker), true]]
             : [
-                ['Разом по роботах:', roundMoney(totals.workClient), true],
-                ['Разом по матеріалах:', roundMoney(totals.matClient), false]
+                [text.workTotal, roundMoney(totals.workClient), true],
+                [text.materialTotal, roundMoney(totals.matClient), false]
             ]);
 
     pairs.forEach(([label, value, suffix]) => {
@@ -635,7 +768,7 @@ function summaryRows(estimate, totals, doc) {
         (totals.limits || []).forEach(({ limit, amount }) => {
             if (!(amount > 0)) return;
             rows.push(row('summary', [
-                cell(`${limit.name} (${limit.percent}% ${limitBaseLabel(limit.base)}):`,
+                cell(`${limit.name} (${limit.percent}% ${baseLabelOf(limit.base)}):`,
                     { colspan: labelSpan, align: 'right', style: 'summary' }),
                 cell(amount, { align: 'right', style: 'summary', money: true, suffix: ' грн' })
             ]));
@@ -643,14 +776,14 @@ function summaryRows(estimate, totals, doc) {
 
         if (totals.limitsTotal > 0) {
             rows.push(row('summary', [
-                cell('Проміжний підсумок:', { colspan: labelSpan, align: 'right', style: 'summary' }),
+                cell(text.intermediate, { colspan: labelSpan, align: 'right', style: 'summary' }),
                 cell(totals.subTotal, { align: 'right', style: 'summary', money: true, suffix: ' грн' })
             ]));
         }
 
         if (totals.vatAmount > 0) {
             rows.push(row('summary', [
-                cell(`ПДВ ${totals.vatPercent}% (${limitBaseLabel(estimate?.vat_base || 'both')}):`,
+                cell(`${text.vat} ${totals.vatPercent}% (${baseLabelOf(estimate?.vat_base || 'both')}):`,
                     { colspan: labelSpan, align: 'right', style: 'summary' }),
                 cell(totals.vatAmount, { align: 'right', style: 'summary', money: true, suffix: ' грн' })
             ]));
@@ -659,8 +792,7 @@ function summaryRows(estimate, totals, doc) {
 
     rows.push(row('gap', [cell('', { colspan: total, style: 'gap' })]));
 
-    const grandLabel = doc.kind === 'naryad' ? 'ВСЬОГО ЗА НАРЯДОМ:'
-        : (doc.kind === 'materials' ? 'ВСЬОГО:' : 'ВСЬОГО:');
+    const grandLabel = doc.kind === 'naryad' ? text.grandNaryad : text.grand;
     const grandValue = doc.kind === 'naryad' ? totals.naryadTotal
         : (doc.kind === 'materials' ? totals.matWorker : totals.grandTotal);
 
@@ -681,7 +813,7 @@ function notesRows(estimate, doc) {
     const lines = notes.split('\n').map(line => line.trim()).filter(Boolean);
 
     return [
-        row('notesTitle', [cell('Примітки:', { colspan: total, style: 'notesTitle' })]),
+        row('notesTitle', [cell(docText().notes, { colspan: total, style: 'notesTitle' })]),
         ...lines.map((line, index) => row('note', [
             cell(`${index + 1}. ${line}`, { colspan: total, style: 'note' })
         ]))
@@ -690,15 +822,16 @@ function notesRows(estimate, doc) {
 
 /** Подписи: исполнитель и заказчик (у наряда — бригадир). */
 function signatureRows(doc) {
+    const text = docText();
     const total = doc.columns;
     const half = Math.ceil(total / 2);
 
-    const right = doc.kind === 'naryad' ? 'Бригадир / робітник' : 'Замовник';
+    const right = doc.kind === 'naryad' ? text.foreman : text.customer;
 
     return [
         row('gap', [cell('', { colspan: total, style: 'gap' })]),
         row('signature', [
-            cell('Виконавець', { colspan: half, style: 'signature' }),
+            cell(text.contractor, { colspan: half, style: 'signature' }),
             cell(right, { colspan: total - half, style: 'signature' })
         ]),
         row('line', [
@@ -819,6 +952,9 @@ function htmlCellStyle(entry, palette) {
     // vertical-align:middle — текст стоит по центру рамки. Без него высокая
     // ячейка (объединённая шапка 9-ти графки, строка «Всього по розділу»)
     // прижимала подпись к верхней грани и на печати это выглядело криво.
+    // В PDF правило работает только вместе с renderPdfCanvas (js/utils.js):
+    // html2canvas рисует текст по разметке браузера, но свою «базовую линию»
+    // считает пробником, которому preflight Tailwind ломает поведение.
     const box = `border:${DOC_BORDER};padding:3px 6px;text-align:${align};vertical-align:middle`;
 
     switch (entry.style) {
@@ -970,7 +1106,9 @@ function excelWidths(doc) {
 
 /** Имя листа Excel: 31 символ без запрещённых знаков. */
 function excelSheetName(doc) {
-    const label = doc.viewLabel ? `${doc.label} ${doc.viewLabel}` : doc.label;
+    // sheetName собирается на языке документа (см. normalizeDocOptions): подписи
+    // CONFIG.ESTIMATE описывают окно экспорта и всегда украинские.
+    const label = doc.sheetName || doc.label;
     return String(label || 'Документ').replace(/[\\/?*[\]:]/g, '').slice(0, 31);
 }
 
@@ -1088,7 +1226,10 @@ export async function exportEstimatePdf(estimate, company, options) {
         // Ждём кадр отрисовки: html2canvas снимает уже готовый DOM.
         await new Promise(resolve => setTimeout(resolve, 400));
 
-        const canvas = await html2canvas(wrapper, {
+        // renderPdfCanvas — html2canvas с обходом ошибки измерения шрифта: без
+        // него текст печатался на строку ниже (подпись «прилипала» к нижней
+        // рамке ячейки) — см. js/utils.js.
+        const canvas = await renderPdfCanvas(wrapper, {
             scale: 2,
             useCORS: true,
             backgroundColor: '#ffffff',
@@ -1149,15 +1290,10 @@ function row(kind, cells) {
     return { kind, cells };
 }
 
-/** Заголовки 6 граф — как в бумажной смете. */
+/** Заголовки 6 граф — как в бумажной смете (подписи — на языке документа). */
 function header6(kind) {
-    if (kind === 'naryad') {
-        return ['№', 'Найменування робіт', 'Од.', 'К-сть', 'Ціна (наряд)', 'Сума'];
-    }
-    if (kind === 'materials') {
-        return ['№', 'Найменування матеріалу', 'Од.', 'К-сть', 'Ціна', 'Сума'];
-    }
-    return ['№', 'Найменування', 'Од.', 'К-сть', 'Ціна', 'Сума'];
+    const columns = docText().columns6;
+    return columns[kind] || columns.koshtorys;
 }
 
 function headerRow6(kind) {
@@ -1173,6 +1309,7 @@ function headerRow6(kind) {
  */
 export function buildKoshtorys6Rows(estimate, totals) {
     const rows = [];
+    const text = docText();
 
     totals.sections.forEach((section, index) => {
         rows.push(row('section', [cell(`${index + 1}. ${section.section.name || '—'}`, { colspan: 6, style: 'section' })]));
@@ -1206,7 +1343,7 @@ export function buildKoshtorys6Rows(estimate, totals) {
                     cell(material.unit || '', { align: 'center' }),
                     cell(calc.qty, { align: 'center', int: true }),
                     calc.skipped
-                        ? cell('Замовник', { align: 'center', style: 'material' })
+                        ? cell(text.customer, { align: 'center', style: 'material' })
                         : cell(Number(material.price_client) || 0, { align: 'right', money: true }),
                     calc.skipped ? cell('—', { align: 'center' }) : cell(calc.client, { align: 'right', money: true })
                 ]));
@@ -1214,7 +1351,7 @@ export function buildKoshtorys6Rows(estimate, totals) {
         });
 
         rows.push(row('sectionTotal', [
-            cell('Всього по розділу:', { colspan: 5, align: 'right', style: 'total' }),
+            cell(text.sectionTotal, { colspan: 5, align: 'right', style: 'total' }),
             cell(sectionTotal, { align: 'right', style: 'total', money: true })
         ]));
     });

@@ -18,7 +18,7 @@
 import { db } from '../database.js';
 import {
     log, toast, escapeHtml, showModal, hideModal,
-    formatDate, isExtraSectionName
+    formatDate, isExtraSectionName, renderPdfCanvas
 } from '../utils.js';
 import { can, getEmployee } from '../permissions.js';
 
@@ -512,7 +512,9 @@ export async function downloadGanttPDF() {
         await new Promise(resolve => setTimeout(resolve, 400));
 
         // ----- 3. Рендерим через html2canvas -----
-        const canvas = await html2canvas(wrapper, {
+        // renderPdfCanvas — снимок с обходом ошибки измерения шрифта (текст
+        // диаграммы печатался на строку ниже): см. js/utils.js.
+        const canvas = await renderPdfCanvas(wrapper, {
             scale: 2,
             useCORS: true,
             backgroundColor: '#ffffff',
