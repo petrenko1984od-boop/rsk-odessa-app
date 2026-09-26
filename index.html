@@ -176,13 +176,13 @@
          `@media (min-width: 1024px)` в css/style.css.
          Отдельного <aside> нет намеренно: кнопки-разделы расставляет
          applyNavOrder() (js/main.js), а плашки раскрашивает css/theme.css по
-         классам .nav-chip / .nav-cta — общая разметка оставляет и порядок кнопок,
-         и цвета ролей такими же, какими они были в верхней шапке. -->
+         классам .nav-chip / .nav-cta / .nav-surface — общая разметка оставляет
+         и порядок кнопок, и цвета ролей одинаковыми на телефоне и на ПК. -->
     <div id="app-container" class="hidden lg:flex lg:items-start">
-        <header class="bg-[#15803d] text-white shadow-md border-b-4 border-[#16a34a] lg:w-60 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto lg:border-b-0 lg:border-r-4">
+        <header class="nav-surface shadow-sm border-b-[3px] lg:w-60 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto lg:border-b-0 lg:border-r-[3px]">
             <div class="max-w-6xl w-full mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3 min-w-0 lg:flex-col lg:items-stretch lg:justify-start lg:mx-0 lg:max-w-none lg:min-h-full lg:px-3 lg:py-4">
                 <div class="flex items-center gap-3 shrink-0">
-                    <div class="bg-white p-1.5 rounded-lg shadow-sm flex items-center justify-center">
+                    <div class="rounded-lg border border-[#15803d] bg-white p-1.5 shadow-sm flex items-center justify-center">
                         <img src="./logo.png" alt="FreeDOM" class="h-8 w-auto object-contain"
                              data-fallback-show="header-logo-fallback">
                         <!-- Запасная надпись вместо логотипа: показывает js/actions.js,
@@ -192,14 +192,14 @@
                 </div>
                 <div class="flex flex-wrap gap-2 items-center justify-end min-w-0 lg:flex-col lg:flex-nowrap lg:items-stretch lg:justify-start lg:gap-1.5">
                     <!-- Кнопки меню (на ПК — сайдбар слева, на телефоне — верхняя шапка).
-                         Классы nav-chip (раздел) и nav-cta (действие)
-                         рисует css/theme.css: обычный раздел — полупрозрачная белая
-                         плашка на фирменном фоне, активный раздел — БЕЛАЯ плашка с
-                         фирменным текстом (класс is-active ставит switchTab() в
-                         js/main.js), действия — тёмная плашка в белой рамке. Так
-                         активная кнопка видна на любой схеме; раньше её цвет
-                         собирался из тех же фирменных утилит, что и фон шапки,
-                         поэтому на насыщенной схеме (красной) она сливалась. -->
+                         Классы nav-chip (раздел) и nav-cta (действие) рисует
+                         css/theme.css: поверхность меню белая, обычный раздел — белая
+                         кнопка с рамкой в цвете схемы, активный раздел — светлая
+                         подложка схемы и акцентная полоса слева (класс is-active ставит
+                         switchTab() в js/main.js), действия — заливка цветом схемы.
+                         Цвет схемы остался только в рамке, разделителе и акценте:
+                         полностью залитая шапка на насыщенной (красной) схеме
+                         выглядела слишком тяжёлой. -->
                     <button data-action="switchTab" data-arg="tasks" id="btn-tasks" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📋 Рабочий экран</button>
                     <button data-action="switchTab" data-arg="projects" id="btn-projects" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">🏗 Объекты</button>
                     <button data-action="switchTab" data-arg="employees" id="btn-employees" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">👥 Сотрудники</button>
@@ -217,14 +217,14 @@
                          а для applyNavOrder() (js/main.js) он — первый элемент контейнера,
                          который разделом не является: кнопки-разделы вставляются перед ним
                          и остаются выше кнопок-действий. -->
-                    <div id="nav-sections-split" class="hidden lg:mt-auto lg:block lg:border-t lg:border-white/25 lg:pt-3"></div>
+                    <div id="nav-sections-split" class="hidden nav-divider lg:mt-auto lg:block lg:pt-3"></div>
                     <button data-action="openNewOrderForm" id="btn-new-order" class="nav-cta px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">📦 Заказ материалов</button>
                     <button data-action="openNewCashRequestForm" id="btn-new-cash-request" class="nav-cta px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow">💰 Финансовые запросы</button>
 
                     <div class="relative">
                         <button data-action="toggleProfileMenu" id="profile-btn"
                                 class="nav-chip flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition shadow">
-                            <span id="profile-avatar" class="w-7 h-7 rounded-full bg-white text-[#15803d] flex items-center justify-center font-bold text-xs">?</span>
+                            <span id="profile-avatar" class="w-7 h-7 rounded-full bg-[#15803d] text-white flex items-center justify-center font-bold text-xs">?</span>
                             <span id="profile-name-short" class="hidden sm:inline max-w-[80px] lg:max-w-[9.5rem] truncate">Кабинет</span>
                             <svg class="w-3 h-3 lg:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                             <!-- На ПК меню кабинета раскрывается вверх по колонке (вбок его обрезал бы прокручиваемый сайдбар), поэтому стрелка смотрит вверх и уезжает к правому краю плашки. -->

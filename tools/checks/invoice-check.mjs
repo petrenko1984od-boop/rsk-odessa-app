@@ -5,8 +5,9 @@
 //   3. финансист видит счёт в блоке «Счета на материалы» и жмёт «Оплачено»;
 //   4. директор пополняет подотчёт → «Ведомость пополнений»;
 //   5. оформление: язык uk/ru, цветовая схема (data-theme + перекраска),
-//      название приложения в заголовке вкладки и меню разделов (активный
-//      раздел — белая плашка nav-chip.is-active, остальные — полупрозрачные).
+//      название приложения в заголовке вкладки и меню разделов (поверхность
+//      белая, разделы — белые кнопки с рамкой в цвете схемы, активный раздел —
+//      подложка схемы и акцентная полоса слева, действия — заливка схемы).
 //
 // С v2.9.0 строки «📊 Реестра» отдаёт ВИД БАЗЫ public.registry_rows, страница
 // списка приходит через db.selectPage (limit/offset), а «Записей» и «Итого»
@@ -1310,9 +1311,11 @@ async function main() {
         pageTitle.includes('Единый центр управления строительством'),
         pageTitle);
 
-    // Меню разделов: активный раздел — белая плашка с фирменным текстом,
-    // остальные кнопки — полупрозрачные. Раньше активная кнопка отличалась от
-    // неактивных только оттенком и на насыщенной схеме сливалась с фоном меню.
+    // Меню разделов: поверхность белая, разделы — белые кнопки с рамкой в цвете
+    // схемы, активный раздел — подложка схемы и акцентная полоса слева, кнопки
+    // действий — заливка цветом схемы. Раньше меню было залито фирменным цветом
+    // целиком: на насыщенной красной схеме такой блок забивал экран, а плашки
+    // кнопок сливались с фоном.
     await evaluate('window.switchTab("registry")');
     await sleep(1500);
     const navState = await evaluate('(() => {' +
@@ -1320,15 +1323,25 @@ async function main() {
         'const other = Array.prototype.find.call(' +
         'document.querySelectorAll(".nav-chip"), (b) => b !== active);' +
         'const cta = document.getElementById("btn-new-order");' +
+        'const header = document.querySelector("#app-container > header");' +
         'return { id: active ? active.id : "",' +
+        ' headerBg: getComputedStyle(header).backgroundColor,' +
+        ' headerLine: getComputedStyle(header).borderBottomColor,' +
         ' activeBg: active ? getComputedStyle(active).backgroundColor : "",' +
         ' activeColor: active ? getComputedStyle(active).color : "",' +
+        ' activeShadow: active ? getComputedStyle(active).boxShadow : "",' +
         ' otherBg: other ? getComputedStyle(other).backgroundColor : "",' +
+        ' otherBorder: other ? getComputedStyle(other).borderTopColor : "",' +
         ' ctaBg: cta ? getComputedStyle(cta).backgroundColor : "" }; })()');
-    ok('активный раздел меню выделен белой плашкой, остальные — полупрозрачные',
-        navState.id === 'btn-registry' && navState.activeBg === 'rgb(255, 255, 255)' &&
-        navState.otherBg === 'rgba(255, 255, 255, 0.14)' &&
-        /^rgba\(15, 23, 42/.test(navState.ctaBg),
+    ok('меню белое: шапка без заливки, разделы — белые кнопки с рамкой схемы, активный — с полосой',
+        navState.id === 'btn-registry' && navState.headerBg === 'rgb(255, 255, 255)' &&
+        navState.headerLine === 'rgb(200, 16, 46)' &&
+        navState.otherBg === 'rgb(255, 255, 255)' &&
+        navState.otherBorder === 'rgb(200, 16, 46)' &&
+        navState.activeBg === 'rgb(254, 226, 226)' &&
+        navState.activeColor === 'rgb(127, 29, 29)' &&
+        navState.activeShadow.includes('inset') &&
+        navState.ctaBg === 'rgb(200, 16, 46)',
         JSON.stringify(navState));
 
     // Реестр открыт у директора — после смены языка он перерисуется сам

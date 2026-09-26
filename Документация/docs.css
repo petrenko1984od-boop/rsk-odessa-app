@@ -132,28 +132,40 @@ tbody tr:nth-child(even) td { background: #fcfcfd; }
 /* ---------- макет меню приложения ----------
    Показывает, как выглядит меню: строка кнопок (телефон и планшет) или
    вертикальная колонка (ПК — класс .nav-demo--side, ширина от 1024px).
-   Активный раздел — белая плашка, обычные — полупрозрачные, действия
-   («Заказ материалов», «Финансовые запросы») — тёмные. Классы те же, что в
-   css/theme.css. */
+   Поверхность белая, разделы — белые кнопки с рамкой в цвете схемы,
+   активный раздел — светлая подложка схемы и полоса слева, действия
+   («Заказ материалов», «Финансовые запросы») — заливка цветом схемы.
+   Те же правила, что в css/theme.css. Разделительная полоса в цвете схемы
+   идёт снизу (строка, как на телефоне) или слева (колонка, как на ПК). */
 .nav-demo {
     display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-    background: var(--brand); border-radius: 10px; padding: 9px 10px; margin: 0 0 10px;
+    background: #fff; border: 1px solid var(--brand-line);
+    border-bottom: 3px solid var(--brand); border-radius: 10px;
+    padding: 9px 10px; margin: 0 0 10px;
 }
 .nav-demo .chip {
-    font-size: 8.5pt; font-weight: 600; color: #fff; padding: 5px 10px; border-radius: 8px;
-    background: rgba(255, 255, 255, .14); border: 1px solid rgba(255, 255, 255, .26);
+    font-size: 8.5pt; font-weight: 600; color: var(--brand-dark); padding: 5px 10px;
+    border-radius: 8px; background: #fff; border: 1px solid var(--brand);
 }
-.nav-demo .chip.active { background: #fff; border-color: #fff; color: var(--brand-deep); }
-.nav-demo .chip.cta { background: rgba(17, 24, 39, .34); border-color: rgba(255, 255, 255, .45); }
+.nav-demo .chip.active {
+    background: var(--brand-soft); color: var(--brand-deep); font-weight: 700;
+    box-shadow: inset 3px 0 0 0 var(--brand);
+}
+.nav-demo .chip.cta { background: var(--brand); border-color: var(--brand); color: #fff; }
 
-/* Колонка — как меню на ПК: плашки во всю ширину, кнопки действий отбиты
-   вниз, текст по левому краю (в приложении так же). */
+/* Колонка — как меню на ПК: кнопки во всю ширину, разделительная полоса
+   слева, кнопки действий отбиты вниз, текст по левому краю (в приложении так же). */
 .nav-demo--side {
     flex-direction: column; align-items: stretch; gap: 4px;
     width: 180px; max-width: 100%; padding: 10px;
+    border-bottom-width: 1px; border-left: 3px solid var(--brand);
 }
 .nav-demo--side .chip { text-align: left; }
-.nav-demo--side .chip.cta { margin-top: 10px; }
+.nav-demo--side .chip.cta:first-of-type { position: relative; margin-top: 13px; }
+.nav-demo--side .chip.cta:first-of-type::before {
+    content: ''; position: absolute; left: 0; right: 0; top: -8px;
+    border-top: 1px solid var(--brand-line);
+}
 .caption { margin: -4px 0 10px; font-size: 8.5pt; color: var(--muted); }
 
 /* ---------- врезки ---------- */

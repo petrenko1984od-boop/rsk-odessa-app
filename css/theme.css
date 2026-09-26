@@ -190,47 +190,77 @@ html[data-theme='graphite'] {
 [class~="focus:ring-emerald-500/50"]:focus { --tw-ring-color: rgba(var(--brand-600-rgb), 0.5) !important; }
 
 /* ---------------------------------------------------------------------
-   ВЕРХНЕЕ МЕНЮ (разделы, действия, кабинет)
+   МЕНЮ ПРИЛОЖЕНИЯ (разделы, действия, кабинет)
    ---------------------------------------------------------------------
-   Кнопки шапки больше не собираются из фирменных утилит: на насыщенной
-   схеме (красной) активный раздел отличался от остальных на пару
-   процентов яркости, а сами кнопки сливались с фоном шапки. Теперь три
-   роли читаются одинаково в любой схеме:
+   Раньше меню было «залито» фирменным цветом целиком: на насыщенной схеме
+   (красной) такой блок забивал экран, а плашки кнопок на нём сливались с
+   фоном. Теперь цвет схемы работает только как РАМКА, РАЗДЕЛИТЕЛЬ и
+   АКЦЕНТ, а все поверхности — белые:
 
-     * .nav-chip — обычный раздел: полупрозрачная белая плашка;
-     * .nav-chip.is-active — активный раздел: сплошная БЕЛАЯ плашка с
-       фирменным текстом (класс ставит switchTab() в js/main.js);
+     * .nav-surface — сама шапка (на ПК — колонка слева): белый фон, а от
+       страницы её отделяет полоса в цвете схемы — снизу на телефоне и
+       справа на ПК (ширину задают классы border-b-[3px] / lg:border-r-[3px]
+       в index.html);
+     * .nav-divider — тонкая линия внутри колонки: отбивает кнопки-действия
+       и кабинет вниз на ПК;
+     * .nav-chip — раздел: белая кнопка с рамкой в цвете схемы; при
+       наведении подложка чуть подкрашивается схемой;
+     * .nav-chip.is-active — активный раздел: подложка схемы и акцентная
+       полоса слева (класс ставит switchTab() в js/main.js);
      * .nav-cta — действие («Заказ материалов», «Финансовые запросы»):
-       тёмная плашка в белой рамке, её не спутать с разделом.
+       заливка цветом схемы — единственное цветное пятно меню, поэтому
+       действие не спутать с разделом.
 
    Классы проставлены в разметке (index.html), цвета — только здесь,
    чтобы схема по-прежнему жила в одном файле.
    --------------------------------------------------------------------- */
+.nav-surface {
+    background-color: #fff !important;
+    border-color: var(--brand);
+    color: var(--app-ink);
+}
+
+.nav-divider {
+    border-top: 1px solid rgba(var(--brand-rgb), 0.28);
+}
+
 .nav-chip {
-    background-color: rgba(255, 255, 255, 0.14) !important;
-    border: 1px solid rgba(255, 255, 255, 0.26);
-    color: #fff !important;
+    background-color: #fff !important;
+    border: 1px solid var(--brand) !important;
+    color: var(--brand-dark) !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
 }
 .nav-chip:hover {
-    background-color: rgba(255, 255, 255, 0.28) !important;
-    border-color: rgba(255, 255, 255, 0.6);
-}
-.nav-chip.is-active {
-    background-color: #fff !important;
-    border-color: #fff;
+    background-color: var(--brand-50) !important;
     color: var(--brand-darker) !important;
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.28) !important;
 }
-.nav-chip.is-active:hover { background-color: #fff !important; }
+.nav-chip:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+/* Активный раздел: подложка схемы + акцентная полоса слева. Полосу рисует
+   inset-тень, а не border-left: ширина рамки при переключении разделов не
+   меняется (кнопка не «дёргается»), а полоса идёт по скруглению кнопки. */
+.nav-chip.is-active,
+.nav-chip.is-active:hover {
+    background-color: var(--brand-100) !important;
+    color: var(--brand-darker) !important;
+    font-weight: 700;
+    box-shadow: inset 4px 0 0 0 var(--brand), 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+}
 
 .nav-cta {
-    background-color: rgba(15, 23, 42, 0.34) !important;
-    border: 1px solid rgba(255, 255, 255, 0.45);
+    background-color: var(--brand) !important;
+    border: 1px solid var(--brand) !important;
     color: #fff !important;
 }
 .nav-cta:hover {
-    background-color: rgba(15, 23, 42, 0.52) !important;
-    border-color: #fff;
+    background-color: var(--brand-dark) !important;
+    border-color: var(--brand-dark) !important;
+}
+.nav-cta:focus-visible {
+    outline: 2px solid var(--brand-dark);
+    outline-offset: 2px;
 }
 
 /* ---------------------------------------------------------------------

@@ -194,20 +194,22 @@ table.matrix td b{color:var(--graphite)}
 }
 .icon-lg{font-size:1.35em;line-height:1.1}
 
-/* ----- Макет шапки приложения: показывает новое оформление меню -----
-   Активный раздел — белая плашка, обычные — полупрозрачные, кнопки
-   действий — тёмная плашка. Те же правила, что в css/theme.css. */
+/* ----- Макет меню приложения: показывает оформление меню -----
+   Поверхность белая, разделы — белые кнопки с рамкой в цвете схемы,
+   активный раздел — светлая подложка схемы и полоса слева, кнопки
+   действий — заливка схемы. Те же правила, что в css/theme.css. */
 .appnav{
     display:flex;flex-wrap:wrap;gap:.35em;align-items:center;
-    background:var(--brand);border-radius:.45em;padding:.5em .6em;
+    background:#fff;border-radius:.45em;padding:.5em .6em;
+    border-bottom:.12em solid var(--brand);
 }
 .appnav .chip{
-    font-size:.5em;font-weight:600;color:#fff;padding:.45em .7em;border-radius:.35em;
-    background:rgba(255,255,255,.14);border:.045em solid rgba(255,255,255,.28);
+    font-size:.5em;font-weight:600;color:var(--brand-deep);padding:.45em .7em;border-radius:.35em;
+    background:#fff;border:.045em solid var(--brand);
 }
-.appnav .chip.active{background:#fff;border-color:#fff;color:var(--brand-deep)}
-.appnav .chip.cta{background:rgba(17,24,39,.34);border-color:rgba(255,255,255,.45)}
-.appnav .who{margin-left:auto;font-size:.5em;font-weight:700;color:#fff;opacity:.92}
+.appnav .chip.active{background:var(--brand-soft);font-weight:700;box-shadow:inset .12em 0 0 0 var(--brand)}
+.appnav .chip.cta{background:var(--brand);border-color:var(--brand);color:#fff}
+.appnav .who{margin-left:auto;font-size:.5em;font-weight:700;color:var(--brand-deep);opacity:.92}
 /* =====================================================================
    ИНТЕРФЕЙС ПРЕЗЕНТАЦИИ (прогресс, кнопки, оглавление) — в печать не идёт
    ===================================================================== */
@@ -375,8 +377,9 @@ table.matrix td b{color:var(--graphite)}
         <div class="head">
             <span class="kicker">Карта приложения</span>
             <h2 data-title="Семь разделов приложения">Семь разделов — весь объект как на ладони</h2>
-            <p>Каждый сотрудник видит только те разделы и кнопки, которые нужны его роли. Активный раздел
-                в шапке — белая плашка, действия («Заказ материалов», «Финансовые запросы») — тёмные.</p>
+            <p>Каждый сотрудник видит только те разделы и кнопки, которые нужны его роли. Меню белое:
+                активный раздел выделен цветом схемы и полосой слева, действия («Заказ материалов»,
+                «Финансовые запросы») залиты цветом схемы.</p>
         </div>
         <div class="body">
             <div class="appnav">
