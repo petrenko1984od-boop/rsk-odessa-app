@@ -365,6 +365,25 @@ async function main() {
             ? auditLog.info
             : `журнала нет — примените database/migrate-v2.8-finance-rpc-audit.sql :: ${auditLog.info}`);
 
+    // Таблица матрицы прав (v2.12.0) — не колонка, а отдельная таблица, поэтому
+    // спрашиваем её напрямую. Ключ в приложении анонимный, а таблица закрыта от
+    // anon (revoke + RLS): ответ 42501 «permission denied» здесь — признак того,
+    // что таблица ЕСТЬ и защита на месте, а не пропажа (как у cash_operations).
+    let rolePermissions;
+    try {
+        rolePermissions = await askColumn(conn, 'role_permissions', 'role');
+    } catch (error) {
+        rolePermissions = { exists: false, closed: false, info: 'запрос не прошёл: ' + error.message };
+    }
+
+    const rolePermissionsOk = rolePermissions.exists || rolePermissions.closed;
+
+    ok('v2.12.0: таблица public.role_permissions создана (иначе в «🔐 Доступах» нечего сохранять)',
+        rolePermissionsOk,
+        rolePermissionsOk
+            ? (rolePermissions.closed ? 'таблица есть, ключ anon к ней закрыт (revoke + RLS)' : 'таблица читается')
+            : `таблицы нет — примените database/migrate-v2.12-role-permissions.sql :: ${rolePermissions.info}`);
+
     if (missing.length) instructions(conn, missing);
 
     // Код возврата считаем по счётчику проверок, а не по числу колонок: прогон

@@ -299,6 +299,47 @@ async function main() {
     ok('ops/README.md описывает экран «Диагностика» (а не «следующий шаг»)',
         opsDoc.includes('Диагностика') && !/следующий шаг/.test(opsDoc));
 
+    // --- 6в. Экран «🔐 Доступы»: права ролей меняются из приложения ----------
+    // Раздел — вторая половина матрицы прав: до v2.12.0, чтобы убрать у роли
+    // раздел или кнопку, правили код и выпускали версию. Ломается он так же
+    // тихо: модуль не в кэше оболочки (после обновления раздела нет), таблицы
+    // нет (кнопка «Сохранить» не работает), политика без проверки роли (матрицу
+    // правит любой вошедший) или право экрана выдано не той роли, которой это
+    // разрешила база.
+    log('=== 6в. Экран «🔐 Доступы»: матрица прав в приложении ===');
+
+    const accessJs = exists('js', 'modules', 'access.js') ? read('js', 'modules', 'access.js') : '';
+    const permissionSql = exists('database', 'migrate-v2.12-role-permissions.sql')
+        ? read('database', 'migrate-v2.12-role-permissions.sql') : '';
+
+    ok('экран подключён к точке входа (js/main.js → loadAccess в switchTab)',
+        mainJs.includes('loadAccess()') && mainJs.includes("'access'"));
+    ok('раздел есть в разметке: кнопка в шапке и вкладка',
+        html.includes('id="btn-access"') && html.includes('id="tab-access"'));
+    ok('экран попадает в офлайн-оболочку (sw.js → APP_SHELL)',
+        swText.includes("'./js/modules/access.js'"));
+    ok('код читает и пишет ту же таблицу, что создаёт миграция',
+        permissions.includes("db.select('role_permissions'") &&
+        permissions.includes("db.insert('role_permissions'") &&
+        permissionSql.includes('public.role_permissions'));
+
+    // Право входа на экран и политика записи в базу должны совпадать: иначе
+    // либо экран видят лишние роли, либо администратор не может сохранить.
+    const policyAdmin = (permissionSql.match(
+        /rsk_role_permissions_write_admin[\s\S]*?rsk_current_employee_role\(\) = '([^']+)'/) || [])[1] || '';
+    const screenRoles = [...permissions.matchAll(/'([^']+)':\s*\[([^\]]*)\]/g)]
+        .filter((match) => match[2].includes("'manage_access'"))
+        .map((match) => match[1]).sort().join(', ');
+
+    ok('право manage_access выдано ровно той роли, которую пускает политика RLS',
+        !!policyAdmin && screenRoles === policyAdmin, `RLS: ${policyAdmin || '—'}, права: ${screenRoles || '—'}`);
+    ok('вкладка закрыта этим правом (TAB_REQUIREMENTS)',
+        /'access':\s*'manage_access'/.test(permissions));
+    ok('служебное право экрана не отзывается (иначе админ закрыл бы себе вход)',
+        /LOCKED_PERMISSIONS = \['manage_access'\]/.test(permissions) && /isPermissionLocked/.test(accessJs));
+    ok('экран называет файл миграции, если таблицы ещё нет',
+        dictionary.includes('migrate-v2.12-role-permissions.sql'));
+
     // --- 7. Ревизия оболочки и документы ----------------------------------
     log('=== 7. Имя кэша оболочки совпадает с документами ===');
     const name = cacheName();

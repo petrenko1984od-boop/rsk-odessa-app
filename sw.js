@@ -34,7 +34,7 @@
 // так было в r2 (подробности в README → «Политика Content-Security-Policy»).
 // =====================================================================
 
-const APP_VERSION = '2.11.0';
+const APP_VERSION = '2.12.0';
 const CACHE_PREFIX = 'freedom';
 // Прежний префикс кэша: приложение называлось иначе, и у сотрудников, которые
 // уже установили его, кэш с этим префиксом ещё лежит на устройстве. Без этого
@@ -339,7 +339,19 @@ const LEGACY_CACHE_PREFIXES = ['rsk-odessa'];
 //        Оболочка обновилась потому, что изменились js/utils.js,
 //        js/modules/estimate-doc.js, js/modules/files.js и js/modules/gantt.js
 //        (строка-отпечаток в конце файла).
-const SHELL_REVISION = 'r3';
+//   v2.12.0 начинается с r1 — по той же причине (имя кэша меняется вместе
+//        с APP_VERSION).
+//   r1 — выпуск v2.12.0: раздел «🔐 Доступы» — администратор настраивает права
+//        ролей прямо в приложении (матрица «право × роль»), а не правкой кода.
+//        Снятые галочки хранит таблица public.role_permissions
+//        (database/migrate-v2.12-role-permissions.sql), читает их
+//        js/permissions.js → can(), поэтому у роли сразу пропадают раздел,
+//        кнопка и действие. Выдача прав сверх кода осталась за кодом вместе с
+//        политиками RLS — это описано прямо на экране. Оболочка обновилась
+//        потому, что добавился js/modules/access.js, изменились index.html,
+//        js/main.js, js/permissions.js, js/i18n.js и css/tailwind.css
+//        (строка-отпечаток в конце файла).
+const SHELL_REVISION = 'r1';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
@@ -384,6 +396,7 @@ const APP_SHELL = [
     './js/modules/files.js',
     './js/modules/extra-costs.js',
     './js/modules/diagnostics.js',
+    './js/modules/access.js',
     './icons/icon-192.png',
     './icons/icon-512.png',
     './icons/maskable-192.png',

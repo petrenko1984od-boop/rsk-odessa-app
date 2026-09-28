@@ -255,6 +255,14 @@
                          пускает к журналу RLS; остальным кнопку прячет applyPermissionsToUI()
                          (право view_diagnostics, js/permissions.js). -->
                     <button data-action="switchTab" data-arg="diagnostics" id="btn-diagnostics" data-i18n="diag.title" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">🩺 Диагностика</button>
+                    <!-- Доступы: матрица прав по ролям (js/modules/access.js, v2.12.0).
+                         Виден только Администратору — право manage_access
+                         (js/permissions.js → TAB_REQUIREMENTS.access), и оно же
+                         не отзывается на этом экране (LOCKED_PERMISSIONS), чтобы
+                         администратор не закрыл себе вход сюда. Та же пара правил
+                         в базе: политика RLS на таблицу role_permissions
+                         (database/migrate-v2.12-role-permissions.sql). -->
+                    <button data-action="switchTab" data-arg="access" id="btn-access" data-i18n="access.nav" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">🔐 Доступы</button>
                     <!-- Низ сайдбара: на телефоне этого элемента нет (hidden), поэтому
                          верхняя шапка собирается ровно как раньше. На ПК разделитель
                          прижимает действия и кабинет к нижнему краю колонки (lg:mt-auto),
@@ -696,6 +704,39 @@
                 <div id="diag-groups-block"></div>
                 <div id="diag-recent-block"></div>
                 <div id="diag-people-block"></div>
+            </section>
+
+            <!-- ДОСТУПЫ (матрица прав по ролям, v2.12.0) -->
+            <!-- Раздел Администратора: таблица «право × роль» и сохранение снятых
+                 галочек в public.role_permissions (js/modules/access.js,
+                 database/migrate-v2.12-role-permissions.sql). Заводские права и
+                 каталог групп — в js/permissions.js; подписи — в самом модуле
+                 (LABELS, RU/UK). Разметка здесь только каркас: таблицы рисует
+                 модуль (в блоки ниже он пишет содержимое целиком). -->
+            <section id="tab-access" class="hidden space-y-4">
+                <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#15803d] flex-wrap gap-2">
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-800" data-i18n="access.title">🔐 Доступы</h2>
+                        <p class="text-xs text-gray-500" data-i18n="access.subtitle">Права должностей: что роль может в приложении. Матрицу меняет только Администратор.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button data-action="loadAccess" data-i18n="common.refresh" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition">🔄 Обновить</button>
+                        <button data-action="revertAccessDraft" id="access-revert-btn" data-i18n="access.revert" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition">↩ Отменить</button>
+                        <button data-action="saveAccessMatrix" id="access-save-btn" data-i18n="access.save" class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">💾 Сохранить</button>
+                    </div>
+                </div>
+
+                <p class="text-[11px] text-gray-500 bg-white p-3 rounded-xl shadow-sm border" data-i18n="access.hint">Снятая галочка закрывает у роли раздел, кнопку и действие — решение хранится в базе и действует на всех устройствах. Выдать право, которого у роли нет, экран не может: данные защищают политики RLS в Postgres, они знают роли по именам. Клетка «—» значит, что права у роли нет, 🔒 — служебное право (вход на этот экран): его не отзывают.</p>
+
+                <div id="access-warning" class="hidden space-y-2"></div>
+
+                <div class="bg-white p-4 rounded-xl shadow-sm space-y-2">
+                    <div id="access-changes"></div>
+                </div>
+
+                <div id="access-summary"></div>
+
+                <div id="access-matrix" class="space-y-4"></div>
             </section>
 
             <!-- СМЕТЫ (конструктор смет для ПТО) -->

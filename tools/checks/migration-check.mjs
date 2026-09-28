@@ -117,7 +117,7 @@ function copyIssues(text) {
 }
 
 function main() {
-    log('Проверка миграций базы (v2.4.0 … v2.10.0): ' + path.relative(ROOT, MIGRATION));
+    log('Проверка миграций базы (v2.4.0 … v2.12.0): ' + path.relative(ROOT, MIGRATION));
 
     if (!fs.existsSync(MIGRATION)) {
         ok('файл миграции существует', false, MIGRATION);
@@ -836,7 +836,7 @@ function main() {
         //    закреплена НАМЕРЕННО: поднимая её, нужно осознанно пройти процедуру
         //    выпуска (README → «Выпуск новой версии»: SHELL_REVISION = r1, новое
         //    имя кэша в README и пересборка Tailwind под новую версию).
-        const CURRENT_VERSION = '2.11.0';
+        const CURRENT_VERSION = '2.12.0';
         const configVersion = (configJs.match(/VERSION:\s*'([0-9.]+)'/) || [])[1];
         const swVersion = (swJs.match(/const APP_VERSION = '([0-9.]+)'/) || [])[1];
         ok('v2.10.0: версия приложения совпадает в js/config.js и sw.js и поднята осознанно',
@@ -1212,6 +1212,136 @@ function main() {
             pdfSources.map((src) => (src.includes('await html2canvas(') ? 'прямой html2canvas' : 'ok')).join(', '));
     }
 
+    // --- 3н. Миграция v2.12.0: экран «🔐 Доступы» -------------------------
+    // Повод: впервые права ролей можно менять ИЗ приложения. Ломается это тихо
+    // и опасно: таблица без RLS (матрицу правит кто угодно), политика без
+    // проверки роли (доступы меняет любой вошедший), экран без кэша оболочки
+    // (после обновления раздела нет), право manage_access, которое можно
+    // отозвать (администратор закрывает себе вход в управление доступами),
+    // каталог прав, разошедшийся с заводской матрицей (право есть в коде, но
+    // его не видно на экране и нельзя снять), и словарь без имени файла
+    // миграции (админу нечего применить, когда таблицы ещё нет).
+    const PERMISSION_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.12-role-permissions.sql');
+
+    if (!fs.existsSync(PERMISSION_MIGRATION)) {
+        ok('есть файл database/migrate-v2.12-role-permissions.sql', false, PERMISSION_MIGRATION);
+    } else {
+        const v212 = fs.readFileSync(PERMISSION_MIGRATION, 'utf8');
+        const accessJs = fs.readFileSync(path.join(ROOT, 'js', 'modules', 'access.js'), 'utf8');
+        const permsJs = fs.readFileSync(path.join(ROOT, 'js', 'permissions.js'), 'utf8');
+        const mainJsV212 = fs.readFileSync(path.join(ROOT, 'js', 'main.js'), 'utf8');
+        const i18nV212 = fs.readFileSync(path.join(ROOT, 'js', 'i18n.js'), 'utf8');
+        const swV212 = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+        const htmlV212 = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+        const schemaV212 = fs.readFileSync(path.join(ROOT, 'database', 'schema.sql'), 'utf8');
+
+        // 1. Таблица одна и создаётся через if not exists: файл запускают повторно.
+        ok('v2.12.0: таблица role_permissions создаётся через if not exists',
+            /create table if not exists public\.role_permissions/.test(v212) &&
+            !/create table(?! if not exists)/.test(v212));
+
+        // 2. RLS включён, политики снимаются перед созданием, anon не допущен.
+        ok('v2.12.0: RLS включён, политики снимаются перед созданием, anon закрыт',
+            /alter table public\.role_permissions enable row level security;/.test(v212) &&
+            /drop policy if exists rsk_role_permissions_select_all on public\.role_permissions;/.test(v212) &&
+            /drop policy if exists rsk_role_permissions_write_admin on public\.role_permissions;/.test(v212) &&
+            /revoke all on table public\.role_permissions from anon;/.test(v212) &&
+            !/to anon/.test(v212));
+
+        // 3. Меняет матрицу ТОЛЬКО Администратор, и роль база берёт из сессии:
+        //    подменить её в браузере нельзя (та же логика, что в политиках v2.7.0).
+        ok('v2.12.0: политика записи пускает только Администратора и роль берёт из базы',
+            /rsk_role_permissions_write_admin[\s\S]{0,400}?public\.rsk_current_employee_role\(\) = 'Администратор'/.test(v212) &&
+            /with check/.test(v212) &&
+            /using \(/.test(v212));
+
+        // 4. Историю («кто и когда снял») заполняет база, а не браузер.
+        ok('v2.12.0: время и сотрудника в историю ставит триггер базы',
+            /create trigger rsk_role_permissions_stamp/.test(v212) &&
+            /new\.changed_by := public\.rsk_current_employee_id\(\)/.test(v212) &&
+            /new\.changed_at := now\(\)/.test(v212));
+
+        // 5. Самопроверка с MISSING и notify pgrst — ПОСЛЕДНЯЯ команда файла.
+        ok('v2.12.0: есть самопроверка с MISSING, reload schema — последним',
+            v212.includes('САМОПРОВЕРКА') &&
+            /MISSING - примените файл целиком/.test(v212) &&
+            /MISSING - таблица открыта/.test(v212) &&
+            /MISSING - anon имеет права/.test(v212) &&
+            v212.trimEnd().endsWith("notify pgrst, 'reload schema';"));
+
+        const v212Copy = copyIssues(v212);
+        ok('migrate-v2.12-role-permissions.sql чистый для копирования (кавычки, пробелы, скобки, $$)',
+            v212Copy.clean, v212Copy.detail);
+
+        // 6. Колонки таблицы и то, что читает приложение, — одно и то же.
+        const permColumns = ['role', 'permission', 'revoked', 'changed_at', 'changed_by'];
+        ok('v2.12.0: колонки таблицы совпадают с тем, что читает приложение',
+            permColumns.every((col) => v212.includes(col)) &&
+            /db\.select\('role_permissions'/.test(permsJs) &&
+            permColumns.every((col) => new RegExp(`role, permission|${col}`).test(permsJs)) &&
+            /db\.insert\('role_permissions'/.test(permsJs) &&
+            /db\.update\('role_permissions'/.test(permsJs),
+            permColumns.join(', '));
+
+        // 7. Каталог прав экрана покрывает ВСЮ заводскую матрицу: иначе часть
+        //    прав нельзя ни увидеть, ни снять — экран молчал бы о них.
+        const matrixBlock = (permsJs.match(/const ROLE_PERMISSIONS = \{([\s\S]*?)\n\};/) || [])[1] || '';
+        const catalogBlock = (permsJs.match(/const PERMISSION_CATALOG = \[([\s\S]*?)\n\];/) || [])[1] || '';
+        const matrixRights = new Set([...matrixBlock.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]));
+        const catalogRights = new Set([...catalogBlock.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]));
+        const missingInCatalog = [...matrixRights].filter((right) => !catalogRights.has(right));
+
+        ok('v2.12.0: каталог прав покрывает всю заводскую матрицу',
+            matrixRights.size >= 30 && missingInCatalog.length === 0,
+            missingInCatalog.join(', ') || `прав в матрице: ${matrixRights.size}, в каталоге: ${catalogRights.size}`);
+
+        // 8. Право входа на экран: только Администратор, вкладка закрыта им же,
+        //    и отозвать его нельзя — иначе администратор закрыл бы себе доступ
+        //    к управлению доступами, и вернуть его можно было бы лишь SQL-запросом.
+        const accessRoles = [...permsJs.matchAll(/'([^']+)':\s*\[([^\]]*)\]/g)]
+            .filter((match) => match[2].includes("'manage_access'"))
+            .map((match) => match[1]);
+
+        ok('v2.12.0: право manage_access выдано только Администратору и закрывает вкладку',
+            accessRoles.length === 1 && accessRoles[0] === 'Администратор' &&
+            /'access':\s*'manage_access'/.test(permsJs),
+            accessRoles.join(', '));
+
+        ok('v2.12.0: служебное право не отзывается (LOCKED_PERMISSIONS + замок на экране)',
+            /export const LOCKED_PERMISSIONS = \['manage_access'\]/.test(permsJs) &&
+            /isPermissionLocked/.test(permsJs) && /isPermissionLocked\(right\)/.test(accessJs));
+
+        // 9. Проверка прав ВЫЧИТАЕТ отзыв: право есть в коде, но снято — роль его
+        //    теряет; читаются отзывы при входе, пишутся — только кнопкой экрана.
+        ok('v2.12.0: can() вычитает отзыв из заводской матрицы',
+            /export function can\(action\)[\s\S]{0,500}?isPermissionRevoked\(currentRole, action\)/.test(permsJs) &&
+            /export async function loadPermissionRevocations/.test(permsJs) &&
+            /export async function savePermissionRevocations/.test(permsJs) &&
+            /loadPermissionRevocations\(\)/.test(permsJs));
+
+        // 10. Разметка, точка входа и оболочка: без любого из трёх раздел либо
+        //     не открывается, либо не появляется у сотрудников после обновления.
+        ok('v2.12.0: раздел есть в разметке, вкладка — в js/main.js, модуль — в кэше оболочки',
+            /id="btn-access"/.test(htmlV212) && /id="tab-access"/.test(htmlV212) &&
+            /id="access-matrix"/.test(htmlV212) && /id="access-warning"/.test(htmlV212) &&
+            /id="access-changes"/.test(htmlV212) &&
+            /loadAccess\(\)/.test(mainJsV212) && /'access'/.test(mainJsV212) &&
+            /'\.\/js\/modules\/access\.js'/.test(swV212));
+
+        // 11. Когда таблицы ещё нет, администратору нужно знать, что применить:
+        //     подсказка с именем файла миграции — в словаре обоих языков.
+        ok('v2.12.0: экран называет файл миграции, если таблицы ещё нет',
+            /migrate-v2\.12-role-permissions\.sql/.test(i18nV212) &&
+            /access\.migrationNeeded/.test(accessJs) &&
+            /'access\.migrationNeeded'/.test(i18nV212));
+
+        // 12. database/schema.sql описывает таблицу, её правила и файл миграции.
+        ok('v2.12.0: database/schema.sql описывает таблицу и политики',
+            /role_permissions/.test(schemaV212) &&
+            /migrate-v2\.12-role-permissions\.sql/.test(schemaV212) &&
+            /rsk_role_permissions_write_admin/.test(schemaV212));
+    }
+
     // --- 4. Разделители в порядке (иначе команда вообще не выполнится) ---
     // Считаем скобки по «голому» SQL: комментарии и строковые литералы
     // выбрасываем, иначе скобка из подсказки или из текста 'ИТОГО (грн)'
@@ -1245,7 +1375,7 @@ function main() {
 
     log('--- ИТОГ ---');
     log(failed === 0
-        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.11.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
+        ? '  ВСЁ ВЕРНО: миграции v2.4.0 … v2.12.0 и schema.sql согласованы, SQL защищён от обрыва наполовину'
         : '  не прошло проверок: ' + failed);
 }
 

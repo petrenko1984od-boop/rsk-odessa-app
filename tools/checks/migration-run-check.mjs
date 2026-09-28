@@ -948,6 +948,116 @@ if (!fs.existsSync(ESTIMATE_MIGRATION)) {
     await db6.close();
 }
 
+// ---------------------------------------------------------------------
+// v2.12.0 — матрица прав в базе (database/migrate-v2.12-role-permissions.sql)
+// ---------------------------------------------------------------------
+// Здесь проверяется не текст файла, а ПОВЕДЕНИЕ политик в настоящем Postgres:
+// «права меняет только Администратор» — утверждение о базе, и проверить его
+// можно лишь от имени разных ролей. Без этого экран «🔐 Доступы» был бы
+// удобством, а не защитой: любой вошедший снял бы право соседней роли запросом
+// из консоли браузера.
+const PERMISSION_MIGRATION = path.join(ROOT, 'database', 'migrate-v2.12-role-permissions.sql');
+
+if (!fs.existsSync(PERMISSION_MIGRATION)) {
+    ok('есть файл database/migrate-v2.12-role-permissions.sql', false, PERMISSION_MIGRATION);
+} else {
+    const permissionSql = fs.readFileSync(PERMISSION_MIGRATION, 'utf8');
+    const db7 = new PGlite();
+
+    // Пустая база плюс то, от чего зависит миграция: роли Supabase и функции
+    // контекста сотрудника из v2.7.0. Их значение тест и переключает вместо
+    // сессии сотрудника.
+    await db7.exec(`
+        create role authenticated;
+        create role anon;
+
+        create table public.employees (id bigint primary key, name text);
+        insert into public.employees (id, name) values (1, 'Тест Администратор'), (2, 'Тест ПТО');
+
+        create or replace function public.rsk_current_employee_role()
+        returns text language sql stable as $$ select 'Администратор'::text $$;
+
+        create or replace function public.rsk_current_employee_id()
+        returns bigint language sql stable as $$ select 1::bigint $$;
+    `);
+
+    let permissionError = null;
+    try { await db7.exec(permissionSql); }
+    catch (error) { permissionError = error; }
+
+    ok('migrate-v2.12-role-permissions.sql: выполняется на настоящем Postgres без ошибок',
+        permissionError === null, permissionError ? String(permissionError.message || permissionError) : '');
+
+    if (permissionError === null) {
+        const tableInfo = (await db7.query(`
+            select coalesce(c.relrowsecurity, false) as rls,
+                   has_table_privilege('anon', c.oid, 'select') as anon_reads,
+                   has_table_privilege('anon', c.oid, 'insert') as anon_writes,
+                   has_table_privilege('authenticated', c.oid, 'insert') as auth_writes
+              from pg_class c
+             where c.oid = to_regclass('public.role_permissions')
+        `)).rows[0];
+
+        ok('матрица прав: RLS включён, anon не читает и не пишет, вошедший пишет',
+            tableInfo?.rls === true && tableInfo?.anon_reads === false &&
+            tableInfo?.anon_writes === false && tableInfo?.auth_writes === true,
+            JSON.stringify(tableInfo || {}));
+
+        // Администратор снимает право у Снабженца. Штамп «кто и когда» ставит
+        // триггер: в запросе клиента этих полей нет, а появиться они обязаны.
+        // `set role authenticated` нужен потому, что владелец базы RLS обходит.
+        await db7.exec('set role authenticated');
+
+        const adminInsert = (await db7.query(`
+            insert into public.role_permissions (role, permission, revoked)
+            values ('Снабженец', 'view_registry', true)
+            returning changed_by, changed_at is not null as stamped
+        `)).rows[0];
+
+        await db7.exec('reset role');
+
+        ok('матрица прав: Администратор снимает право, штамп ставит база',
+            Number(adminInsert?.changed_by) === 1 && adminInsert?.stamped === true,
+            JSON.stringify(adminInsert || {}));
+
+        // Другая роль: ту же запись обязана отклонить политика.
+        await db7.exec(`create or replace function public.rsk_current_employee_role()
+            returns text language sql stable as $$ select 'Инженер ПТО'::text $$`);
+        await db7.exec('set role authenticated');
+
+        let outsiderError = null;
+        try {
+            await db7.query(`insert into public.role_permissions (role, permission, revoked)
+                values ('Прораб', 'close_section', true)`);
+        } catch (error) { outsiderError = error; }
+
+        await db7.exec('reset role');
+        await db7.exec(`create or replace function public.rsk_current_employee_role()
+            returns text language sql stable as $$ select 'Администратор'::text $$`);
+
+        ok('матрица прав: роль вне Администратора не может менять права (RLS)',
+            outsiderError !== null && /row-level security policy/i.test(String(outsiderError.message || '')),
+            outsiderError ? String(outsiderError.message || outsiderError) : 'Инженер ПТО снял право');
+
+        // Повторный запуск файла: администратор запускает его ещё раз (например,
+        // после правки политики) — таблица, строки и права должны уцелеть.
+        let rerunError = null;
+        try { await db7.exec(permissionSql); } catch (error) { rerunError = error; }
+
+        const afterRerun = (await db7.query(`
+            select count(*)::int as rows,
+                   coalesce((select relrowsecurity from pg_class
+                              where oid = to_regclass('public.role_permissions')), false) as rls
+        `)).rows[0];
+
+        ok('матрица прав: повторный запуск безопасен (строки и RLS на месте)',
+            rerunError === null && afterRerun?.rows === 1 && afterRerun?.rls === true,
+            rerunError ? String(rerunError.message || rerunError) : JSON.stringify(afterRerun || {}));
+    }
+
+    await db7.close();
+}
+
 
 log('--- ИТОГ ---');
 log(failed === 0

@@ -92,6 +92,10 @@ import {
 import { loadEstimateCatalog } from './modules/estimate-catalog.js';
 import { loadEstimates } from './modules/estimates.js';
 
+// Управление доступами: матрица прав по ролям (только Администратор,
+// право manage_access — см. TAB_REQUIREMENTS).
+import { loadAccess } from './modules/access.js';
+
 // =====================================================================
 // СОСТОЯНИЕ
 // =====================================================================
@@ -107,8 +111,8 @@ export const AppState = {
 // НАВИГАЦИЯ
 // =====================================================================
 
-const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'estimates', 'diagnostics'];
-const TAB_BUTTONS = ['projects', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'estimates', 'diagnostics'];
+const ALL_TABS = ['welcome', 'projects', 'project-detail', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'estimates', 'diagnostics', 'access'];
+const TAB_BUTTONS = ['projects', 'employees', 'tasks', 'orders', 'cash-requests', 'registry', 'estimates', 'diagnostics', 'access'];
 
 export function switchTab(tabId) {
     if (!canSeeTab(tabId) && tabId !== 'welcome' && tabId !== 'project-detail') {
@@ -162,6 +166,7 @@ export function switchTab(tabId) {
         loadEstimateCatalog().then(loadEstimates);
     }
     if (tabId === 'diagnostics') loadDiagnostics();
+    if (tabId === 'access') loadAccess();
 }
 
 window.switchTab = switchTab;
@@ -182,7 +187,8 @@ const TAB_BUTTONS_MAP = [
     ['btn-cash-requests', 'cash-requests'],
     ['btn-registry',      'registry'],
     ['btn-estimates',     'estimates'],
-    ['btn-diagnostics',   'diagnostics']
+    ['btn-diagnostics',   'diagnostics'],
+    ['btn-access',        'access']
 ];
 
 // Кнопка «📐 Сметы» стоит внутри обёртки своего меню: элементы с этими id
@@ -276,6 +282,11 @@ function applyPermissionsToUI() {
     // скрытые у роли просто не видны.
     applyNavOrder(getNavOrder());
 }
+
+// Экран «🔐 Доступы» после сохранения матрицы переставляет меню по новым правам
+// сразу, не дожидаясь перезагрузки страницы (js/modules/access.js →
+// saveAccessMatrix вызывает это через window).
+window.applyPermissionsToUI = applyPermissionsToUI;
 
 // =====================================================================
 // СМЕНА ЯЗЫКА НА ЛЕТУ
