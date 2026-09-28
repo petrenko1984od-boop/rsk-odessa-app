@@ -2334,14 +2334,16 @@
          смету»: иначе о них узнают только по готовой смете. Дерево рисует
          renderEstimateWorkPickerTree() (js/modules/estimates.js), список разделов
          берётся из справочника (getEstimateWorkSectionTree) — окно и прайс не
-         расходятся. -->
+         расходятся. Папки сворачиваются кликом по заголовку
+         (toggleEstimateWorkPickerSection), поэтому работы нужного раздела
+         открывают, не листая прайс целиком. -->
     <div id="estimate-work-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
         <div class="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[92vh] flex flex-col">
             <div class="flex justify-between items-start gap-3 p-4 border-b">
                 <div>
                     <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.pickWorkTitle">➕ Работа из справочника</h3>
                     <p class="text-[11px] text-gray-500" data-i18n="estimates.pickWorkHint">
-                        Разделы и подразделы справочника слева, работа и её материалы — справа.
+                        Разделы и подразделы справочника слева (клик — свернуть или раскрыть), работа и её материалы — справа.
                     </p>
                 </div>
                 <button data-action="hideModal" data-arg="estimate-work-picker-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>

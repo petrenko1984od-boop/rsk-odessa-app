@@ -1641,6 +1641,7 @@ window.setEstimateField = setEstimateField;
 window.openEstimateWorkPicker = openEstimateWorkPicker;
 window.setEstimateWorkPickerSearch = setEstimateWorkPickerSearch;
 window.selectEstimateWork = selectEstimateWork;
+window.toggleEstimateWorkPickerSection = toggleEstimateWorkPickerSection;
 window.chooseEstimateWork = chooseEstimateWork;
 window.openEstimateMaterialPicker = openEstimateMaterialPicker;
 window.setEstimateMaterialPickerSearch = setEstimateMaterialPickerSearch;
@@ -1689,7 +1690,9 @@ export function openEstimateWorkPicker(sectionKey) {
     if (!state.editor) return;
     if (!findSectionByKey(sectionKey)) return;
 
-    state.picker = { kind: 'work', sectionKey, workId: null };
+    // collapsed — свёрнутые папки (id разделов; 0 — группа «Без раздела»):
+    // прайс большой, и работы нужного раздела открывают, не листая остальные.
+    state.picker = { kind: 'work', sectionKey, workId: null, collapsed: new Set() };
     setValue('estimate-work-picker-search', '');
 
     renderEstimateWorkPicker();
@@ -1716,11 +1719,37 @@ export function selectEstimateWork(workId) {
     renderEstimateWorkPicker();
 }
 
+/** Свёрнутые папки дерева (id разделов; 0 — группа «Без раздела»). */
+function pickerCollapsed() {
+    if (!state.picker) return new Set();
+    if (!(state.picker.collapsed instanceof Set)) state.picker.collapsed = new Set();
+
+    return state.picker.collapsed;
+}
+
+/** Клик по папке: свернуть или раскрыть её работы вместе с подпапками. */
+export function toggleEstimateWorkPickerSection(sectionId) {
+    if (!state.editor || state.picker?.kind !== 'work') return;
+
+    const id = Number(sectionId) || 0;
+    const collapsed = pickerCollapsed();
+
+    if (collapsed.has(id)) collapsed.delete(id);
+    else collapsed.add(id);
+
+    renderEstimateWorkPickerTree();
+}
+
 /**
  * Дерево окна: раздел → подраздел → работы. Показываем ВСЕ созданные разделы и
- * подразделы (сотрудник видит ту же структуру, что в справочнике), а поиск
- * сужает только работы: папки без подходящих работ во время поиска скрываются,
- * иначе список из одних заголовков папок прячет найденное.
+ * подразделы (сотрудник видит ту же структуру, что в справочнике), а папки
+ * сворачиваются кликом по заголовку — открыть работы нужного раздела, не
+ * листая прайс целиком. У заголовка видно количество работ ВСЕЙ ветки (вместе
+ * с подпапками): по нему понятно, есть ли в свёрнутой папке что раскрывать.
+ *
+ * Поиск сужает только работы и раскрывает папки принудительно: иначе найденное
+ * спряталось бы в свёрнутой папке. Папки без найденных работ во время поиска не
+ * показываются — иначе список был бы из одних заголовков.
  */
 function renderEstimateWorkPickerTree() {
     const container = el('estimate-work-picker-list');
@@ -1738,30 +1767,83 @@ function renderEstimateWorkPickerTree() {
         return;
     }
 
+    const sections = getEstimateWorkSectionTree();
+
+    // Родитель каждого раздела: по нему считаются работы ветки и прячутся
+    // подпапки свёрнутой папки.
+    const parentOf = new Map(sections.map(({ section }) =>
+        [Number(section.id), section.parent_id ? Number(section.parent_id) : 0]));
+
     const bySection = new Map();
+    const branchCount = new Map();
+
     works
         .filter(work => !search || work.name.toLowerCase().includes(search))
         .forEach(work => {
             const id = work.section_id ? Number(work.section_id) : 0;
             if (!bySection.has(id)) bySection.set(id, []);
             bySection.get(id).push(work);
+
+            // Считаем ветку: у папки с подпапками своих работ может и не быть.
+            const seen = new Set();
+            let current = id;
+            while (current && !seen.has(current)) {
+                seen.add(current);
+                branchCount.set(current, (branchCount.get(current) || 0) + 1);
+                current = parentOf.get(current) || 0;
+            }
         });
+
+    // Свёрнутая папка прячет и свои работы, и подпапки целиком. Во время поиска
+    // вложенность раскрываем принудительно: иначе найденное осталось бы
+    // невидимым в свёрнутой папке.
+    const collapsed = search ? new Set() : pickerCollapsed();
+    const hidden = new Set();
+
+    const inCollapsedFolder = (id) => {
+        if (hidden.has(id)) return true;
+
+        const seen = new Set([id]);
+        let current = parentOf.get(id) || 0;
+
+        // Предок идёт раньше потомка (дерево обходится сверху вниз), поэтому
+        // состояние родителя к этому моменту уже известно — см. hidden.add ниже.
+        while (current && !seen.has(current)) {
+            seen.add(current);
+            if (collapsed.has(current) || hidden.has(current)) {
+                hidden.add(id);
+                return true;
+            }
+            current = parentOf.get(current) || 0;
+        }
+
+        return false;
+    };
 
     const rows = [];
 
-    getEstimateWorkSectionTree().forEach(({ section, level }) => {
-        const own = bySection.get(Number(section.id)) || [];
-        if (search && own.length === 0) return;
+    sections.forEach(({ section, level }) => {
+        const id = Number(section.id);
+        if (inCollapsedFolder(id)) return;
 
-        rows.push(pickerSectionTitle(section, level));
-        own.forEach(work => rows.push(pickerWorkRow(work, level + 1)));
+        const own = bySection.get(id) || [];
+        const total = branchCount.get(id) || 0;
+
+        if (search && total === 0) return;
+
+        const folded = collapsed.has(id);
+
+        rows.push(pickerSectionTitle(section, level, total, folded));
+        if (!folded) own.forEach(work => rows.push(pickerWorkRow(work, level + 1)));
     });
 
     // Работы без раздела — отдельной группой внизу: потерять такую слишком легко.
     const orphans = bySection.get(0) || [];
     if (orphans.length > 0) {
-        rows.push(pickerSectionTitle(null, 0));
-        orphans.forEach(work => rows.push(pickerWorkRow(work, 1)));
+        const folded = collapsed.has(0);
+
+        rows.push(pickerSectionTitle(null, 0, orphans.length, folded));
+        if (!folded) orphans.forEach(work => rows.push(pickerWorkRow(work, 1)));
     }
 
     container.innerHTML = rows.length === 0 ? workPickerEmpty() : rows.join('');
@@ -1777,15 +1859,27 @@ function workPickerEmpty() {
     `;
 }
 
-/** Заголовок папки в дереве: те же отступы, что у разделов справочника. */
-function pickerSectionTitle(section, level) {
+/**
+ * Заголовок папки в дереве: отступы как у разделов справочника, но это КНОПКА —
+ * клик сворачивает и раскрывает папку (toggleEstimateWorkPickerSection).
+ * Стрелка и счётчик работ ветки показывают состояние, поэтому у свёрнутой папки
+ * видно, есть ли что раскрывать.
+ */
+function pickerSectionTitle(section, level, count, folded) {
+    const id = section ? Number(section.id) : 0;
     const icon = section ? '📁' : '📄';
     const name = section ? section.name : 'Без раздела';
     const arrow = section && level > 0 ? '↳ ' : '';
 
     return `
-        <p class="text-[11px] font-bold text-gray-500 pt-2 pb-1"
-           style="padding-left:${8 + level * 14}px">${arrow}${icon} ${escapeHtml(name)}</p>
+        <button data-action="toggleEstimateWorkPickerSection" data-arg="${id}"
+                class="w-full flex items-center gap-1 py-1.5 pr-2 rounded-lg hover:bg-gray-100 transition text-left"
+                style="padding-left:${8 + level * 14}px"
+                title="${folded ? 'Раскрыть раздел' : 'Свернуть раздел'}">
+            <span class="text-[10px] text-gray-400 w-3 shrink-0">${folded ? '▸' : '▾'}</span>
+            <span class="text-[11px] font-bold text-gray-600 truncate">${arrow}${icon} ${escapeHtml(name)}</span>
+            <span class="text-[10px] text-gray-400 shrink-0">· ${count} поз.</span>
+        </button>
     `;
 }
 
