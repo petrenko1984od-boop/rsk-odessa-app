@@ -446,6 +446,15 @@ ok('без таблицы в базе экран называет файл ми�
     perms.can(REVOKED) === true && perms.can(CLOSED) === false,
     `причина: ${perms.getPermissionStore().reason}; can(${REVOKED}) = ${perms.can(REVOKED)}; can(${CLOSED}) = ${perms.can(CLOSED)}`);
 
+// Плашка обязана показать и ответ базы: по нему администратор понимает, чего
+// не хватает (нет таблицы, нет колонки или база держит копию схемы PostgREST),
+// а не гадает по одному предложению «примените файл». В разметке ответ базы
+// экранирован (js/utils.js → escapeHtml), поэтому кавычки в проверке не ищем.
+ok('плашка печатает ответ базы, а не только название файла миграции',
+    warningNow().includes('Could not find the table') &&
+    warningNow().includes('in the schema cache'),
+    `ответ базы: ${perms.getPermissionStore().message}`);
+
 access.toggleAccessRight({ target: { dataset: { arg: `${ROLE}|${PLAIN}` }, checked: false } });
 
 ok('без таблицы «💾 Сохранить» гаснет: сохранять правки некуда',
@@ -464,6 +473,13 @@ ok('таблица без колонки granted: экран называет п
     perms.getPermissionStore().reason === 'no_column' &&
     warningNow().includes('granted') && saveButton().disabled === true,
     `причина: ${perms.getPermissionStore().reason}, кнопка выключена: ${saveButton().disabled}`);
+
+// «Колонки нет» (42703) и «PostgREST её не видит» (PGRST204) — разные беды с
+// разным лечением: первая лечится повторным запуском файла, вторая — перечиткой
+// схемы. Различить их можно только по ответу базы, поэтому он и печатается.
+ok('в режиме «нет колонки granted» плашка показывает ответ базы',
+    warningNow().includes('column role_permissions.granted does not exist'),
+    `ответ базы: ${perms.getPermissionStore().message}`);
 
 fake.fail = null;
 

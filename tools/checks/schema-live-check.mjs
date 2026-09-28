@@ -25,9 +25,20 @@
 //    колонки прогон помечает как непроверенные (`note`) и не считает их
 //    пропажей — колонки RLS-таблиц смотрите запросом в SQL Editor. Заодно
 //    прогон отдельно проверяет по живой базе: `cash_requests` и
-//    `cash_operations` закрыты для anon (v2.7.0), а таблица журнала
+//    `cash_operations` закрыты для anon (v2.7.0), таблица журнала
 //    `audit_log` существует (v2.8.0) — до её применения PostgREST отвечает
-//    404 / PGRST205.
+//    404 / PGRST205, — и что у таблицы прав `role_permissions` есть колонка
+//    `granted` (v2.12.0): без неё раздел «🔐 Доступы» пишет «база обновлена
+//    не до конца» и не даёт сохранить галочки. Так выглядит миграция,
+//    применённая прежней версией файла — только с отзывом прав.
+//
+//    ⚠️ Колонку ЗАКРЫТОЙ таблицы проверить можно, и это не случайность: у
+//       anon права на `role_permissions` отозваны (`revoke` + RLS), но
+//       Postgres разбирает запрос РАНЬШЕ, чем проверяет права. Поэтому
+//       отсутствующая колонка отвечает 42703 («column
+//       role_permissions.granted does not exist»), а существующая — 42501
+//       («permission denied»). Так «колонки нет» отличается от «таблица
+//       закрыта» (проверено на настоящем Postgres — PGlite, tools/checks).
 //
 // Запуск (из папки tools/checks):  node schema-live-check.mjs
 // Адрес и ключ берутся из js/config.js — те же, что у приложения. Другой
@@ -210,7 +221,8 @@ function finish(code, unchecked = 0) {
     log('');
     log('--- ИТОГ ---');
     log(code === 0
-        ? '  ВСЁ ВЕРНО: база обновлена — колонки v2.4.0 и v2.5.0 на месте'
+        ? '  ВСЁ ВЕРНО: база обновлена — колонки v2.4.0 и v2.5.0 на месте,' +
+          ' таблица и колонка прав v2.12.0 тоже'
         : '  не прошло проверок: ' + failed);
     if (unchecked) {
         log('  Ключом anon не проверить колонок: ' + unchecked +
@@ -383,6 +395,31 @@ async function main() {
         rolePermissionsOk
             ? (rolePermissions.closed ? 'таблица есть, ключ anon к ней закрыт (revoke + RLS)' : 'таблица читается')
             : `таблицы нет — примените database/migrate-v2.12-role-permissions.sql :: ${rolePermissions.info}`);
+
+    // Колонка granted (v2.12.0-r2) — та самая, из-за которой экран «🔐 Доступы»
+    // говорит «база обновлена не до конца» и выключает «💾 Сохранить»: файл
+    // применяли первой версией, когда экран умел только снимать права.
+    // Спросить её анонимным ключом МОЖНО, хотя права на таблицу отозваны —
+    // см. «⚠️ Колонку ЗАКРЫТОЙ таблицы» в шапке файла: 42703 — колонки нет,
+    // 42501 — колонка есть (это и есть нормальное состояние).
+    let granted;
+    try {
+        granted = await askColumn(conn, 'role_permissions', 'granted');
+    } catch (error) {
+        granted = { exists: false, closed: false, known: false, info: 'запрос не прошёл: ' + error.message };
+    }
+
+    const grantedOk = granted.exists || granted.closed;
+
+    ok('v2.12.0-r2: у public.role_permissions есть колонка granted (без неё выдача прав не сохранится)',
+        grantedOk,
+        grantedOk
+            ? (granted.closed ? 'колонка есть, ключ anon к таблице закрыт (revoke + RLS)' : 'колонка читается')
+            : (granted.known
+                ? 'колонки нет — примените database/migrate-v2.12-role-permissions.sql ещё раз, файл ЦЕЛИКОМ :: ' +
+                  granted.info
+                : 'база ответила не так, как ждём: посмотрите колонку в SQL Editor, а если она там есть — ' +
+                  `PostgREST держит копию схемы (notify pgrst, 'reload schema') :: ${granted.info}`));
 
     if (missing.length) instructions(conn, missing);
 

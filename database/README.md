@@ -584,9 +584,41 @@ select indexname from pg_indexes where schemaname = 'public' order by indexname;
   строки заявок, редактор смет пускает роль с выданным `manage_estimate`, а повторный запуск
   файла не теряет ни строк, ни политик;
 * **если миграцию не применить** (или применить прежней версией без колонки `granted`),
-  раздел «🔐 Доступы» скажет об этом прямо: жёлтая плашка назовёт этот файл, кнопка
-  «💾 Сохранить» будет выключена, а права продолжат работать по заводской матрице
-  `js/permissions.js`.
+  раздел «🔐 Доступы» скажет об этом прямо: жёлтая плашка назовёт этот файл, покажет ответ
+  базы, из-за которого плашка появилась, кнопка «💾 Сохранить» будет выключена, а права
+  продолжат работать по заводской матрице `js/permissions.js`.
+
+### Если после `Run` экран говорит, что нет колонки `granted`
+
+Значит правки прав сохранять некуда: файл `database/migrate-v2.12-role-permissions.sql`
+доехал до создания таблицы, но не до `alter table … add column granted` — так выглядит
+**неполный** запуск файла (вставили часть текста, выполнили выделение вместо всего скрипта).
+В конце файла идёт самопроверка из **13 строк** `ok` — если её в результате не видно, скрипт
+не доехал до конца.
+
+Проверить причину можно двумя способами (оба ничего не меняют):
+
+1. **в приложении**: `F12` → **Console** → `Permissions.getPermissionStore()` — в поле
+   `message` лежит ответ базы, который приложение получило:
+
+   | Ответ | Что делать |
+   | --- | --- |
+   | `column role_permissions.granted does not exist` (42703) | колонки действительно нет — вернитесь к шагу 2 и вставьте файл **целиком** в **новый** запрос; в конце обязана напечататься таблица 13 проверок `ok` |
+   | `Could not find the 'granted' column of 'role_permissions' in the schema cache` (PGRST204) | колонка есть, но API её ещё не перечитал: выполните `notify pgrst, 'reload schema';` и обновите страницу (`Ctrl+F5`) |
+
+2. **в SQL Editor** — одна команда показывает состав таблицы:
+
+   ```sql
+   select column_name, data_type, column_default
+     from information_schema.columns
+    where table_schema = 'public' and table_name = 'role_permissions'
+    order by ordinal_position;
+   ```
+
+   В списке должны быть `role`, `permission`, `revoked`, `granted`, `changed_at`,
+   `changed_by`. Тот же ответ даёт прогон **`npm run check:db`**: строка
+   «v2.12.0-r2: у public.role_permissions есть колонка granted» — `ok` или `FAIL` с
+   названием файла.
 
 ### Если заявка не закрывается: `violates check constraint "orders_status_check"`
 
@@ -817,6 +849,8 @@ PostgREST отвечает по-английски, поэтому такие о
 | `Could not find the table 'public.registry_rows' in the schema cache` (PGRST205) | чтение вида — раздел «📊 Реестр» на базе без `database/migrate-v2.9-registry-view.sql`: приложение пишет «база не знает вид public.registry_rows» и называет файл |
 | `Could not find the function public.registry_totals` (PGRST202) | «Записей» и «Итого» в реестре: не применена `database/migrate-v2.9-registry-view.sql` — командой итогов считает база |
 | `Could not find the table 'public.role_permissions' in the schema cache` (PGRST205) | чтение отзывов прав — раздел «🔐 Доступы» и вход сотрудника на базе без `database/migrate-v2.12-role-permissions.sql`: приложение работает по заводской матрице, а экран называет файл миграции |
+| `column role_permissions.granted does not exist` (42703) | чтение правок прав — раздел «🔐 Доступы» на базе, где `database/migrate-v2.12-role-permissions.sql` применили **прежней** версией файла (тогда экран умел только снимать права): плашка говорит «база обновлена не до конца», «💾 Сохранить» выключена. Лечится повторным запуском файла **целиком** — он добавит колонку `granted`, функцию `rsk_permission_granted()` и политики-выдачи |
+| `Could not find the 'granted' column of 'role_permissions' in the schema cache` (PGRST204) | то же самое, но колонка в SQL Editor уже есть: PostgREST держит копию схемы — выполните `notify pgrst, 'reload schema';` и обновите страницу (`Ctrl+F5`) |
 | `new row for relation "orders" violates check constraint "orders_status_check"` (23514) | запись `orders` — «🚚 Доставлено на объект»: устаревшее ограничение статусов без `delivered` (см. «Если заявка не закрывается») |
 | `new row for relation "cash_requests" violates check constraint "cash_requests_status_check"` (23514) | запись `cash_requests` — «📥 В архив» или «✏️ На доработку»: устаревшее ограничение статусов без `archived` и `revision` (см. «Если заявка на финансы не уходит на доработку или в архив») |
 

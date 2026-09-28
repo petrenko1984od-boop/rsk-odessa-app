@@ -1301,7 +1301,7 @@ function main() {
         ];
 
         ok('v2.12.0: выдача — колонка granted с запретом «снято и выдано сразу»',
-            /granted     boolean     not null default false/.test(v212) &&
+            /granted {5}boolean {5}not null default false/.test(v212) &&
             /add column if not exists granted boolean not null default false/.test(v212) &&
             /role_permissions_override_check[\s\S]{0,200}?check \(not \(revoked and granted\)\)/.test(v212));
 

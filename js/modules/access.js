@@ -265,6 +265,23 @@ function renderAccess() {
     updateButtons();
 }
 
+/**
+ * Ответ базы мелким шрифтом — им плашка заканчивается всегда, когда база
+ * ответила ошибкой.
+ *
+ * Печатается не только при 'error': по этой строке администратор различает
+ * «колонки нет» (`42703 column role_permissions.granted does not exist` —
+ * файл миграции применили не целиком) и «PostgREST её не видит»
+ * (`PGRST204 … in the schema cache` — база держит копию схемы). Без неё
+ * плашка «база обновлена не до конца» не говорит, чего именно не хватает,
+ * и лечится наугад.
+ */
+function storeMessageHtml(text, message) {
+    return `<p>${escapeHtml(text)}</p>` + (message
+        ? `<p class="text-[11px] text-gray-500 break-words">${escapeHtml(message)}</p>`
+        : '');
+}
+
 /** Плашки-предупреждения: нет миграции, ошибка чтения, неизвестные строки. */
 function renderWarnings() {
     const box = document.getElementById('access-warning');
@@ -277,14 +294,13 @@ function renderWarnings() {
     // говорит прямо и называет файл (тот же приём, что у неприменённых
     // колонок в js/database.js → explainError).
     if (store.reason === 'no_table') {
-        blocks.push(`<p>${escapeHtml(t('access.migrationNeeded'))}</p>`);
+        blocks.push(storeMessageHtml(t('access.migrationNeeded'), store.message));
     } else if (store.reason === 'no_column') {
         // Таблица есть, но без колонки granted: файл v2.12.0 применяли раньше,
         // когда экран умел только отзывать права. Выдача в такую базу не пишется.
-        blocks.push(`<p>${escapeHtml(t('access.migrationOutdated'))}</p>`);
+        blocks.push(storeMessageHtml(t('access.migrationOutdated'), store.message));
     } else if (store.reason === 'error') {
-        blocks.push(`<p>${escapeHtml(t('access.readError'))}</p>`
-            + `<p class="text-[11px] text-gray-500 break-words">${escapeHtml(store.message)}</p>`);
+        blocks.push(storeMessageHtml(t('access.readError'), store.message));
     }
 
     if (store.unknown.length > 0) {

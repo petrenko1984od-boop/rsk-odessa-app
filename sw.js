@@ -356,7 +356,18 @@ const LEGACY_CACHE_PREFIXES = ['rsk-odessa'];
 //        изменились js/permissions.js, js/modules/access.js, js/i18n.js,
 //        index.html, database/schema.sql и миграция (файл кэша тот же набор —
 //        см. APP_SHELL ниже).
-const SHELL_REVISION = 'r2';
+//   r3 — там же: экран «🔐 Доступы» и прогон `npm run check:db` называют ОТВЕТ
+//        БАЗЫ, из-за которого правки прав не сохраняются. Повод: плашка «база
+//        обновлена не до конца: нет колонки granted» выглядит одинаково и когда
+//        колонки правда нет (42703 — файл миграции применили не целиком), и
+//        когда её не видит кэш схемы PostgREST (PGRST204). Теперь плашка
+//        печатает строку базы (js/modules/access.js → storeMessageHtml), а
+//        tools/checks/schema-live-check.mjs спрашивает колонку granted у ЖИВОЙ
+//        базы тем же анонимным ключом: у закрытой таблицы 42703 значит
+//        «колонки нет», 42501 — «есть, доступ отозван» (Postgres разбирает
+//        запрос раньше, чем проверяет права). Оболочка обновилась потому, что
+//        изменился js/modules/access.js.
+const SHELL_REVISION = 'r3';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен
