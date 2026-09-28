@@ -2,39 +2,46 @@
 // МОДУЛЬ: УПРАВЛЕНИЕ ДОСТУПАМИ (раздел «🔐 Доступы» для Администратора)
 // =====================================================================
 // ЗАЧЕМ. Матрица прав жила одним файлом кода (js/permissions.js →
-// ROLE_PERMISSIONS), и чтобы убрать у роли раздел или кнопку, нужно было
-// править код, пересобирать фронтенд и выпускать версию. Этот экран даёт
-// администратору то же самое в приложении: таблица «право × роль» с галочками,
-// сохранение — в таблицу public.role_permissions
+// ROLE_PERMISSIONS), и чтобы выдать или забрать у роли раздел или кнопку,
+// нужно было править код, пересобирать фронтенд и выпускать версию. Этот экран
+// даёт администратору то же самое в приложении: таблица «право × роль», где
+// клетка — пустой квадратик (права нет) или галочка (право есть). Сохранение —
+// в таблицу public.role_permissions
 // (database/migrate-v2.12-role-permissions.sql).
 //
-// ЧТО ЗДЕСЬ МОЖНО, А ЧТО НЕЛЬЗЯ.
+// ЧТО ДЕЛАЕТ ГАЛОЧКА.
 //   * Снять право у роли (галочка выключается) — можно: раздел, кнопка и само
 //     действие исчезают у этой роли сразу после сохранения. Данные при этом
 //     остаются закрытыми: UI — это удобство, а не защита.
-//   * Вернуть снятое право к заводскому — можно (кнопка «↩» у роли или
-//     включённая галочка): строка в базе остаётся ради истории.
-//   * ВЫДАТЬ право, которого у роли нет в коде, — НЕЛЬЗЯ. Настоящая защита —
-//     политики RLS в Postgres, а они перечисляют роли по именам: выданное
-//     право база всё равно отклонила бы при записи («new row violates
-//     row-level security policy»), и админ увидел бы кнопку, которая не
-//     работает. Такие клетки на экране пустые («—»), а новые права ролям
-//     добавляются правкой ROLE_PERMISSIONS вместе с политиками.
+//   * ВЫДАТЬ право, которого у роли нет в коде (галочка ставится в пустом
+//     квадратике) — можно: у роли появляется раздел или кнопка, которых у неё
+//     раньше не было. Чтобы это не осталось картинкой, ту же выдачу принимает и
+//     база: миграция v2.12.0 добавила в политики RLS, в редактор смет и в
+//     финансовые RPC проверку public.rsk_permission_granted(). Что именно
+//     открывается — по заводским правилам роли: политика «только своя заявка»
+//     остаётся в силе и для выданного права.
+//   * Вернуть заводское — можно (кнопка «↩» у роли или возврат галочки
+//     в исходное положение): строка в базе остаётся ради истории.
 //
 // ⚠️ ГДЕ ЧТО ЛЕЖИТ. Заводские права — js/permissions.js; каталог групп и прав
-//    для этого экрана — там же (PERMISSION_CATALOG); снятые галочки — таблица
-//    public.role_permissions; служебные права (замок 🔒) отзывать нельзя
-//    (LOCKED_PERMISSIONS) — иначе администратор закрыл бы себе вход сюда.
+//    для этого экрана — там же (PERMISSION_CATALOG); решения администратора —
+//    таблица public.role_permissions (revoked / granted); служебные права
+//    (замок 🔒) не меняются вовсе (LOCKED_PERMISSIONS) — иначе администратор
+//    закрыл бы себе вход сюда, а выдав их другой роли, показал бы экран, где
+//    «💾 Сохранить» отклоняет база.
 //
-// ⚠️ ЧЬИ ПРАВА МЕНЯЮТСЯ. Только интерфейс приложения: экран не трогает ни
-//    RLS, ни данные. Роль «Снабженец» и «Финансист» вдобавок работают на
-//    урезанном рабочем месте (ROLE_UI в js/permissions.js) — часть разделов
-//    им не показывается и без отзыва прав; это решение остаётся за кодом.
+// ⚠️ ЧЬИ ПРАВА МЕНЯЮТСЯ. Только интерфейс приложения и проверки прав в базе —
+//    экран не трогает сами данные. Роль «Снабженец» и «Финансист» вдобавок
+//    работают на урезанном рабочем месте (ROLE_UI в js/permissions.js): часть
+//    разделов им не показывается вовсе. Выдача права в матрице сильнее этого
+//    списка — раздел открывается (canSeeTab), но кнопки-дубли, у которых нет
+//    своего права (hiddenButtons), остаются скрытыми: это не запрет, а способ
+//    не повторять одно и то же действие в двух местах.
 // =====================================================================
 
-import { can, getRoles, getPermissionCatalog, getRevocationStore, getRevocationRow,
-    isPermissionDefault, isPermissionRevoked, isPermissionLocked,
-    loadPermissionRevocations, savePermissionRevocations } from '../permissions.js';
+import { can, getRoles, getPermissionCatalog, getPermissionStore, getPermissionOverrideRow,
+    hasPermission, isPermissionDefault, isPermissionLocked,
+    loadPermissionOverrides, savePermissionOverrides } from '../permissions.js';
 import { t, getLang } from '../i18n.js';
 import {
     log, toast, escapeHtml, emptyState, formatDateTime
@@ -173,32 +180,40 @@ function rightLabel(right) {
 // СОСТОЯНИЕ ЭКРАНА
 // =====================================================================
 
-// Черновик решений администратора: роль → Map<право, снято?>. Пустой черновик
-// значит «как в базе». Галочки живут здесь до нажатия «💾 Сохранить»: иначе
-// каждое движение мыши писало бы в базу, а отменить пачку правок было бы нельзя.
+// Черновик решений администратора: роль → Map<право, стоит ли галочка>. Пустой
+// черновик значит «как в базе». Галочки живут здесь до нажатия «💾 Сохранить»:
+// иначе каждое движение мыши писало бы в базу, а отменить пачку правок было бы
+// нельзя. Что именно уйдёт в базу (отзыв или выдача) — решает
+// js/permissions.js → savePermissionOverrides: экран отвечает только за галочку.
 const draft = new Map();
 
-/** Что стоит в клетке: черновик, а если правки нет — состояние из базы. */
-function cellRevoked(role, right) {
+/** Стоит ли галочка в клетке: черновик, а если правки нет — как в базе. */
+function cellChecked(role, right) {
     const forRole = draft.get(role);
     if (forRole && forRole.has(right)) return forRole.get(right);
-    return isPermissionRevoked(role, right);
+    return hasPermission(role, right);
 }
 
 /** Запомнить решение администратора в черновике. */
-function setDraft(role, right, revoked) {
+function setDraft(role, right, checked) {
     if (!draft.has(role)) draft.set(role, new Map());
-    draft.get(role).set(right, revoked);
+    draft.get(role).set(right, checked);
 }
 
-/** Правки, которые ещё не в базе: [{ role, permission, revoked }]. */
+/**
+ * Правки, которые ещё не в базе: [{ role, permission, allowed }].
+ *
+ * Галочка сравнивается с тем, что действует сейчас: если её поставили там, где
+ * право и так работало (или сняли там, где его и не было), сохранять нечего —
+ * такая клетка просто исчезает из списка правок.
+ */
 function pendingChanges() {
     const out = [];
 
     draft.forEach((rights, role) => {
-        rights.forEach((revoked, right) => {
-            if (isPermissionRevoked(role, right) !== revoked) {
-                out.push({ role, permission: right, revoked });
+        rights.forEach((checked, right) => {
+            if (hasPermission(role, right) !== checked) {
+                out.push({ role, permission: right, allowed: checked });
             }
         });
     });
@@ -211,7 +226,7 @@ function pendingChanges() {
 // =====================================================================
 
 /**
- * Открывает раздел: перечитывает отзывы из базы и рисует матрицу.
+ * Открывает раздел: перечитывает правки из базы и рисует матрицу.
  * Вызывается при открытии вкладки (js/main.js → switchTab), кнопкой
  * «🔄 Обновить» и после сохранения.
  */
@@ -220,8 +235,9 @@ export async function loadAccess() {
     if (!matrix) return;
 
     // Экран — администраторский: право manage_access выдано только ему и не
-    // отзывается (LOCKED_PERMISSIONS). Проверка нужна для случая, когда вкладку
-    // открыли из консоли или право когда-то выдадут в коде другой роли.
+    // меняется ни в одну сторону (LOCKED_PERMISSIONS). Проверка нужна для
+    // случая, когда вкладку открыли из консоли или право когда-то выдадут в
+    // коде другой роли.
     if (!can('manage_access')) {
         matrix.innerHTML = emptyState(t('access.adminOnly'), 1);
         return;
@@ -230,9 +246,9 @@ export async function loadAccess() {
     draft.clear();
     matrix.innerHTML = `<div class="app-loading text-sm"><span class="app-spinner" aria-hidden="true"></span><span>${escapeHtml(t('access.loading'))}</span></div>`;
 
-    const result = await loadPermissionRevocations();
+    const result = await loadPermissionOverrides();
 
-    log.info(`Доступы: матрица прав (${result.ok ? 'отзывы прочитаны' : 'отзывы не прочитаны: ' + result.reason})`);
+    log.info(`Доступы: матрица прав (${result.ok ? 'правки прочитаны' : 'правки не прочитаны: ' + result.reason})`);
 
     renderAccess();
 }
@@ -254,7 +270,7 @@ function renderWarnings() {
     const box = document.getElementById('access-warning');
     if (!box) return;
 
-    const store = getRevocationStore();
+    const store = getPermissionStore();
     const blocks = [];
 
     // Таблицы нет — значит не применена миграция v2.12.0. Экран об этом
@@ -262,6 +278,10 @@ function renderWarnings() {
     // колонок в js/database.js → explainError).
     if (store.reason === 'no_table') {
         blocks.push(`<p>${escapeHtml(t('access.migrationNeeded'))}</p>`);
+    } else if (store.reason === 'no_column') {
+        // Таблица есть, но без колонки granted: файл v2.12.0 применяли раньше,
+        // когда экран умел только отзывать права. Выдача в такую базу не пишется.
+        blocks.push(`<p>${escapeHtml(t('access.migrationOutdated'))}</p>`);
     } else if (store.reason === 'error') {
         blocks.push(`<p>${escapeHtml(t('access.readError'))}</p>`
             + `<p class="text-[11px] text-gray-500 break-words">${escapeHtml(store.message)}</p>`);
@@ -278,7 +298,7 @@ function renderWarnings() {
     box.classList.toggle('hidden', blocks.length === 0);
 }
 
-/** Сводка по ролям: сколько прав работает сейчас и сколько было в коде. */
+/** Сводка по ролям: сколько прав работает сейчас и сколько их всего в приложении. */
 function renderSummary(roles) {
     const box = document.getElementById('access-summary');
     if (!box) return;
@@ -286,12 +306,13 @@ function renderSummary(roles) {
     box.innerHTML = `
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             ${roles.map((role) => {
-                const all = getAllRoleCount(role);
+                const counts = getRoleCounts(role);
                 return `
                     <div class="bg-white border rounded-xl p-3 shadow-sm text-xs">
                         <span class="font-bold text-gray-800">${escapeHtml(role)}</span>
-                        <span class="block text-gray-500 mt-0.5">${escapeHtml(t('access.roleSummary', { count: all.current, total: all.total }))}</span>
-                        ${all.revoked > 0 ? `<span class="block text-red-600 font-semibold mt-0.5">${escapeHtml(t('access.roleRevoked', { count: all.revoked }))}</span>` : ''}
+                        <span class="block text-gray-500 mt-0.5">${escapeHtml(t('access.roleSummary', { count: counts.current, total: counts.total }))}</span>
+                        ${counts.granted > 0 ? `<span class="block text-[#15803d] font-semibold mt-0.5">${escapeHtml(t('access.roleGranted', { count: counts.granted }))}</span>` : ''}
+                        ${counts.revoked > 0 ? `<span class="block text-red-600 font-semibold mt-0.5">${escapeHtml(t('access.roleRevoked', { count: counts.revoked }))}</span>` : ''}
                     </div>
                 `;
             }).join('')}
@@ -299,14 +320,29 @@ function renderSummary(roles) {
     `;
 }
 
-/** Сколько прав у роли: всего в коде, работает сейчас и снято (с учётом черновика). */
-function getAllRoleCount(role) {
-    const total = (getPermissionCatalog().flatMap((group) => group.rights))
-        .filter((right) => isPermissionDefault(role, right)).length;
-    const revoked = getPermissionCatalog().flatMap((group) => group.rights)
-        .filter((right) => isPermissionDefault(role, right) && cellRevoked(role, right)).length;
+/**
+ * Сколько прав у роли: всего в приложении, работает сейчас, выдано и снято
+ * (с учётом черновика, поэтому цифры меняются прямо во время правки).
+ *
+ * Служебное право (🔒 — вход на этот экран) в счёт не входит: его нельзя ни
+ * снять, ни выдать, и в сводке оно только путало бы.
+ */
+function getRoleCounts(role) {
+    const rights = getPermissionCatalog()
+        .flatMap((group) => group.rights)
+        .filter((right) => !isPermissionLocked(right));
 
-    return { total, current: total - revoked, revoked };
+    const current = rights.filter((right) => cellChecked(role, right)).length;
+    const granted = rights.filter((right) => cellChecked(role, right) && !isPermissionDefault(role, right)).length;
+    const revoked = rights.filter((right) => !cellChecked(role, right) && isPermissionDefault(role, right)).length;
+
+    return { total: rights.length, current, granted, revoked };
+}
+
+/** Подпись одной правки: «выдано», «снято» или «возвращено». */
+function changeMark(change) {
+    if (!change.allowed) return t('access.markRevoked');
+    return isPermissionDefault(change.role, change.permission) ? t('access.markRestored') : t('access.markGranted');
 }
 
 /** Плашка «что ещё не сохранено»: список правок черновика. */
@@ -325,7 +361,7 @@ function renderChanges() {
         <p class="text-xs font-semibold text-amber-800">${escapeHtml(t('access.changes', { count: changes.length }))}</p>
         <ul class="text-[11px] text-gray-600 space-y-0.5 mt-1">
             ${changes.map((change) => `<li>${escapeHtml(change.role)} — ${escapeHtml(rightLabel(change.permission))}: `
-                + `${escapeHtml(change.revoked ? t('access.markRevoked') : t('access.markRestored'))}</li>`).join('')}
+                + `${escapeHtml(changeMark(change))}</li>`).join('')}
         </ul>
     `;
 }
@@ -335,7 +371,8 @@ function renderChanges() {
  *
  * Колонки — роли из справочника должностей (js/permissions.js → getRoles),
  * строки — права из каталога, а в шапке каждой колонки стоит кнопка «↩»:
- * вернуть ЭТОЙ роли все снятые права к заводским одним нажатием.
+ * вернуть ЭТОЙ роли заводские права одним нажатием — и снятые вернуть, и
+ * выданные убрать.
  */
 function renderMatrix(roles, groups) {
     const box = document.getElementById('access-matrix');
@@ -379,37 +416,51 @@ function renderMatrix(roles, groups) {
     `).join('');
 }
 
-/** Одна клетка матрицы: галочка, замок или «—» (права у роли нет в коде). */
+/**
+ * Одна клетка матрицы: пустой квадратик или галочка.
+ *
+ * Галочка — право у роли работает; пусто — не работает. Так выглядит и заводское
+ * право, и решение администратора, поэтому «—» на экране больше нет: в любой
+ * клетке можно поставить галочку и выдать право, которого у роли в коде не было.
+ * Живая клетка только одна — служебное право «🔐 Доступы» (замок).
+ */
 function cellHtml(role, right) {
-    // Служебное право (вход на этот самый экран): отзывать нельзя — иначе
-    // администратор закрыл бы себе управление доступами.
+    // Служебное право (вход на этот самый экран): не меняется ни в одну
+    // сторону — иначе администратор закрыл бы себе управление доступами.
     if (isPermissionLocked(right)) {
         return `<td class="p-2 text-center text-gray-400" title="${escapeHtml(t('access.lockedHint'))}">🔒</td>`;
     }
 
-    // Права у роли нет в коде: UI его не выдаёт. Выдача — правка матрицы
-    // вместе с политиками базы, иначе база отклонит запись. Пустая клетка
-    // честнее галочки, которая не работает.
-    if (!isPermissionDefault(role, right)) {
-        return `<td class="p-2 text-center text-gray-300" title="${escapeHtml(t('access.notGranted'))}">—</td>`;
-    }
-
-    const revoked = cellRevoked(role, right);
-    const saved = getRevocationRow(role, right);
-    const changed = saved ? saved.revoked !== revoked : revoked;
+    const checked = cellChecked(role, right);
+    const saved = getPermissionOverrideRow(role, right);
+    const factory = isPermissionDefault(role, right);
+    const changed = hasPermission(role, right) !== checked;
 
     const marks = [];
-    if (revoked) marks.push(`<span class="block text-[10px] font-semibold text-red-600">${escapeHtml(t('access.markRevoked'))}</span>`);
-    if (changed) marks.push(`<span class="block text-[10px] font-semibold text-amber-600">${escapeHtml(t('access.markChanged'))}</span>`);
+    if (checked && !factory) {
+        marks.push(`<span class="block text-[10px] font-semibold text-[#15803d]">${escapeHtml(t('access.markGranted'))}</span>`);
+    }
+    if (!checked && factory) {
+        marks.push(`<span class="block text-[10px] font-semibold text-red-600">${escapeHtml(t('access.markRevoked'))}</span>`);
+    }
+    if (changed) {
+        marks.push(`<span class="block text-[10px] font-semibold text-amber-600">${escapeHtml(t('access.markChanged'))}</span>`);
+    }
     if (saved && saved.changed_at && !changed) {
         marks.push(`<span class="block text-[10px] text-gray-400">${escapeHtml(formatDateTime(saved.changed_at))}</span>`);
     }
 
+    // Подсказка объясняет, что будет с нажатием: закрыть право или выдать его.
+    const title = checked && !factory ? t('access.grantedHint')
+        : checked ? t('access.cellOnHint')
+            : t('access.cellOffHint');
+
     return `<td class="p-2 text-center">
-        <input type="checkbox" ${revoked ? '' : 'checked'}
+        <input type="checkbox" ${checked ? 'checked' : ''}
                data-action="toggleAccessRight" data-on="change" data-pass-event
                data-arg="${escapeHtml(role)}|${right}"
                aria-label="${escapeHtml(role + ': ' + rightLabel(right))}"
+               title="${escapeHtml(title)}"
                class="w-4 h-4 accent-[#15803d] align-middle cursor-pointer">
         ${marks.join('')}
     </td>`;
@@ -419,11 +470,12 @@ function cellHtml(role, right) {
 function updateButtons() {
     const saveBtn = document.getElementById('access-save-btn');
     const revertBtn = document.getElementById('access-revert-btn');
-    const store = getRevocationStore();
+    const store = getPermissionStore();
     const changes = pendingChanges().length;
 
-    // Нет таблицы в базе — сохранять некуда: кнопка гаснет, а плашка сверху
-    // называет файл миграции (иначе админ нажимал бы «Сохранить» в пустоту).
+    // Правки не прочитались (нет таблицы или она без колонки granted) —
+    // сохранять некуда: кнопка гаснет, а плашка сверху называет причину
+    // и файл миграции (иначе админ нажимал бы «Сохранить» в пустоту).
     const enabled = store.read && changes > 0;
 
     [saveBtn, revertBtn].forEach((btn) => {
@@ -443,7 +495,7 @@ function updateButtons() {
 // =====================================================================
 
 /**
- * Галочка в клетке: снять право у роли или вернуть его.
+ * Галочка в клетке: выдать право роли, снять его или вернуть заводское.
  * Решение идёт в черновик — в базу пишет только «💾 Сохранить», поэтому
  * случайное нажатие отменяется кнопкой «↩ Отменить».
  */
@@ -452,18 +504,23 @@ export function toggleAccessRight(event) {
     if (!input || !input.dataset || !input.dataset.arg) return;
 
     const [role, right] = input.dataset.arg.split('|');
-    setDraft(role, right, !input.checked);
+    setDraft(role, right, input.checked === true);
 
     renderAccess();
 }
 
-/** «↩» у роли: вернуть к заводским все снятые у неё права (в черновике). */
+/** «↩» у роли: вернуть этой роли заводские права — и снятые, и выданные. */
 export function resetRoleAccess(role) {
     let touched = 0;
 
     getPermissionCatalog().forEach((group) => group.rights.forEach((right) => {
-        if (isPermissionLocked(right) || !cellRevoked(role, right)) return;
-        setDraft(role, right, false);
+        if (isPermissionLocked(right)) return;
+
+        // Право уже как в коде — и в базе, и в черновике: трогать нечего.
+        const factory = isPermissionDefault(role, right);
+        if (hasPermission(role, right) === factory && cellChecked(role, right) === factory) return;
+
+        setDraft(role, right, factory);
         touched += 1;
     }));
 
@@ -496,7 +553,7 @@ export async function saveAccessMatrix() {
         return;
     }
 
-    const result = await savePermissionRevocations(changes);
+    const result = await savePermissionOverrides(changes);
 
     if (result.ok) {
         toast(t('access.saved', { count: result.saved }), 'success');
@@ -509,7 +566,7 @@ export async function saveAccessMatrix() {
 
     // Перечитываем из базы: у сохранённых строк появились время и сотрудник
     // (их ставит триггер), а часть правок база могла не принять.
-    await loadPermissionRevocations();
+    await loadPermissionOverrides();
 
     // Меню и кнопки — сразу по новым правам, не дожидаясь перезагрузки
     // страницы (window.applyPermissionsToUI выставляет js/main.js).

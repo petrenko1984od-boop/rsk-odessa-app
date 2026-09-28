@@ -5,15 +5,25 @@
 //   1. ЗАВОДСКАЯ матрица прав — что роль может «из коробки» (ROLE_PERMISSIONS);
 //   2. каталог прав — закрытый список для экрана «🔐 Доступы» (PERMISSION_CATALOG):
 //      он же проверяет, что в базе нет строк о несуществующем праве;
-//   3. ОТЗЫВЫ прав, сделанные Администратором в приложении: таблица
+//   3. ПРАВКИ прав, сделанные Администратором в приложении: таблица
 //      public.role_permissions (database/migrate-v2.12-role-permissions.sql).
-//      Строка там означает «право у роли СНЯТО», и `can()` это учитывает.
+//      Строка там означает «право у роли СНЯТО» (revoked) или «ВЫДАНО сверх
+//      кода» (granted), и `can()` учитывает оба решения.
 //
-// ⚠️ ЧЕГО ЗДЕСЬ НЕТ — ВЫДАЧИ ПРАВ. Экран умеет только отзывать: настоящая
-// защита данных — политики RLS в Postgres, а они перечисляют роли ПО ИМЕНАМ.
-// Выданное в приложении право база всё равно отклонит при записи («new row
-// violates row-level security policy»), поэтому новые права ролям добавляются
-// правкой ROLE_PERMISSIONS ВМЕСТЕ с политиками. Это описано и на самом экране.
+// ⚠️ ВЫДАЧА ПРАВА ДЕЙСТВУЕТ НЕ ТОЛЬКО В ИНТЕРФЕЙСЕ. Право, поставленное
+//    галочкой на экране «🔐 Доступы», обязана принять и база: иначе кнопка
+//    открывала бы форму, которую RLS отклоняет при записи. Поэтому выдача
+//    ложится в ту же строку public.role_permissions (granted = true), а
+//    миграция v2.12.0 добавляет в политики RLS, в редактор смет и в
+//    финансовые RPC проверку public.rsk_permission_granted() — она спрашивает
+//    у той же таблицы. Права, которые меняются только кодом, — служебные
+//    (LOCKED_PERMISSIONS): вход на сам экран.
+//
+// ⚠️ ЧЕГО ЭКРАН НЕ ДЕЛАЕТ. Он не меняет саму защиту: отзыв закрывает раздел,
+//    кнопку и действие, но данные на закрытых таблицах всё равно стерегут
+//    политики Postgres (они знают роли по именам). Выдача идёт ПО ЗАВОДСКИМ
+//    правилам роли: политики, которые разрешают строку только автору («только
+//    своя заявка»), остаются в силе и для выданного права.
 // =====================================================================
 
 import { getCurrentEmployee } from './auth.js';
@@ -195,7 +205,7 @@ const TAB_REQUIREMENTS = {
     // (database/migrate-v2.10-estimates.sql → rsk_is_estimate_editor()).
     'estimates':     'manage_estimate',
     // Доступы: матрица прав по ролям (js/modules/access.js). Право выдано
-    // только Администратору и НЕ отзывается (LOCKED_PERMISSIONS): иначе он
+    // только Администратору и НЕ меняется (LOCKED_PERMISSIONS): иначе он
     // закрыл бы себе вход на этот же экран, и вернуть его можно было бы лишь
     // SQL-запросом. В базе то же правило повторено политикой RLS на таблицу
     // role_permissions (database/migrate-v2.12-role-permissions.sql).
@@ -212,6 +222,12 @@ const TAB_REQUIREMENTS = {
 // не меняются — речь только о видимости разделов и кнопок. Если роли нужен
 // раздел, которого у неё нет по правам, право добавляется там же, в матрице
 // (так директору открыли раздел «Снабжение»: `view_orders_tab`).
+//
+// ⚠️ Администратор сильнее этого списка: выдача права в «🔐 Доступах» снимает
+//    скрытие РАЗДЕЛА (см. canSeeTab). Иначе галочка в матрице открывала бы право,
+//    которого сотрудник всё равно не видит. Кнопки-дубли (hiddenButtons) так
+//    снять нельзя: у них нет своего права — это не запрет, а способ не
+//    дублировать действие (заказ материалов создаётся из «Рабочего экрана»).
 const ROLE_UI = {
     'Снабженец': {
         // Остаётся: «Рабочий экран» (Снабжение) + «Реестр» + кнопка «Финансовые запросы»
@@ -342,7 +358,7 @@ export const PERMISSION_CATALOG = [
         ]
     },
     {
-        // Служебные права: у них своя защита, и отзывать их нельзя (см.
+        // Служебные права: у них своя защита, и менять их нельзя (см.
         // LOCKED_PERMISSIONS). На экране они стоят последней группой.
         id: 'system',
         rights: [
@@ -355,47 +371,101 @@ export const PERMISSION_CATALOG = [
 export const ALL_PERMISSIONS = PERMISSION_CATALOG.flatMap((group) => group.rights);
 
 /**
- * Права, которые экран «🔐 Доступы» не отзывает.
+ * Права, которые экран «🔐 Доступы» не меняет ни в одну сторону.
  *
- * `manage_access` — вход на сам экран: сняв его у Администратора, он закрыл бы
- * себе управление доступами, и вернуть право можно было бы только SQL-запросом
- * в Supabase. Такие права показываются на экране с замком.
+ * `manage_access` — вход на сам экран. Сняв его у Администратора, он закрыл бы
+ * себе управление доступами; выдав его другой роли, он показал бы экран, где
+ * «💾 Сохранить» всё равно отклоняет база (таблица role_permissions принимает
+ * записи только от Администратора). И то и другое чинилось бы лишь SQL-запросом
+ * в Supabase, поэтому такие права стоят на экране с замком.
  */
 export const LOCKED_PERMISSIONS = ['manage_access'];
 
 // =====================================================================
-// ОТЗЫВЫ ПРАВ ИЗ БАЗЫ (public.role_permissions)
+// ПРАВКИ ПРАВ ИЗ БАЗЫ (public.role_permissions)
 // =====================================================================
-// Здесь хранится то, что администратор снял в приложении:
-//     роль → Map<право, { revoked, changed_at, changed_by }>
+// Здесь хранится то, что администратор изменил в приложении:
+//     роль → Map<право, { revoked, granted, changed_at, changed_by }>
 // Права, которых в этом хранилище нет, работают как записаны в коде
 // (ROLE_PERMISSIONS) — поэтому таблица в базе почти всегда пустая.
 //
-// ⚠️ Хранилище только УРЕЗАЕТ права. Строку с revoked = false экран пишет,
-// когда администратор возвращает заводское значение: так в таблице остаётся
-// история («это право когда-то снимали»), а поведение становится прежним.
+// Состояний у клетки матрицы три, и записываются они так:
+//     revoked = true                    — право СНЯТО у роли;
+//     granted = true                    — право ВЫДАНО сверх кода (у роли его не
+//                                         было; теперь есть — и в интерфейсе,
+//                                         и в базе: см. шапку файла);
+//     revoked = false, granted = false  — вернули заводское значение. Строка
+//                                         остаётся ради истории («это право
+//                                         когда-то меняли»).
+// Оба флага сразу невозможны: база держит это ограничением
+// role_permissions_override_check.
 // =====================================================================
 
-const revocationStore = new Map();
+const overrideStore = new Map();
 
-let storeRead = false;      // отзывы прочитаны из базы
+let storeRead = false;      // правки прав прочитаны из базы
 let storeReason = '';       // почему не прочитались: '' | 'no_table' | 'error'
 let storeMessage = '';      // техническая причина (для подсказки на экране)
 let storeUnknown = [];      // строки о правах/ролях, которых в коде больше нет
 
-/** Есть ли у роли право по ЗАВОДСКОЙ матрице (без учёта отзывов). */
+/** Строка хранилища для пары «роль + право» (или null, если её нет). */
+function overrideOf(role, right) {
+    const forRole = overrideStore.get(role);
+    const row = forRole ? forRole.get(right) : null;
+
+    // Map.get отдаёт undefined для отсутствующей пары, а вызывающий код
+    // сравнивает результат именно с null: иначе «строки нет» выглядело бы как
+    // «строка есть» и экран обновлял бы несуществующую запись вместо insert.
+    return row || null;
+}
+
+/** Есть ли у роли право по ЗАВОДСКОЙ матрице (без правок администратора). */
 export function isPermissionDefault(role, right) {
     return (ROLE_PERMISSIONS[role] || []).includes(right);
 }
 
 /** Снято ли право у роли администратором (таблица public.role_permissions). */
 export function isPermissionRevoked(role, right) {
-    const forRole = revocationStore.get(role);
-    const row = forRole && forRole.get(right);
+    const row = overrideOf(role, right);
     return !!(row && row.revoked);
 }
 
-/** Служебное право: показывается на экране с замком и не отзывается. */
+/**
+ * Выдано ли право роли администратором сверх заводской матрицы.
+ * Отозванное право выданным не считается, даже если строка когда-то была и
+ * выдачей (оба флага сразу база не принимает — см. ограничение таблицы).
+ */
+export function isPermissionGranted(role, right) {
+    const row = overrideOf(role, right);
+    return !!(row && row.granted && !row.revoked);
+}
+
+/**
+ * Что стоит в клетке матрицы «право × роль»:
+ *     'granted' — право выдано администратором (в коде у роли его не было);
+ *     'revoked' — право снято администратором;
+ *     'factory' — как в коде: строки в базе нет либо она вернула заводское.
+ */
+export function getPermissionState(role, right) {
+    if (isPermissionGranted(role, right)) return 'granted';
+    if (isPermissionRevoked(role, right)) return 'revoked';
+    return 'factory';
+}
+
+/**
+ * Действует ли право у роли ПРЯМО СЕЙЧАС: заводская матрица + выдачи − отзывы.
+ *
+ * Этим вопросом живёт и `can()` текущего сотрудника, и клетки экрана «🔐
+ * Доступы», поэтому интерфейс и права роли всегда отвечают одинаково.
+ */
+export function hasPermission(role, right) {
+    const state = getPermissionState(role, right);
+    if (state === 'granted') return true;
+    if (state === 'revoked') return false;
+    return isPermissionDefault(role, right);
+}
+
+/** Служебное право: показывается на экране с замком и не меняется. */
 export function isPermissionLocked(right) {
     return LOCKED_PERMISSIONS.includes(right);
 }
@@ -423,60 +493,83 @@ export function getRoles() {
     return CONFIG.POSITIONS.filter((role) => Array.isArray(ROLE_PERMISSIONS[role]));
 }
 
-/** Права роли С УЧЁТОМ отзывов — то, чем роль реально пользуется сейчас. */
+/**
+ * Права роли С УЧЁТОМ правок администратора — то, чем роль реально пользуется
+ * сейчас. Порядок — как в каталоге (js/permissions.js → PERMISSION_CATALOG):
+ * выданное право встаёт на своё место в списке, а не в конец.
+ */
 export function getRolePermissions(role) {
-    return (ROLE_PERMISSIONS[role] || []).filter((right) => !isPermissionRevoked(role, right));
+    return ALL_PERMISSIONS.filter((right) => hasPermission(role, right));
 }
 
 /** Что записано в базе про пару «роль + право» (или null). */
-export function getRevocationRow(role, right) {
-    const forRole = revocationStore.get(role);
-    const row = forRole && forRole.get(right);
+export function getPermissionOverrideRow(role, right) {
+    const row = overrideOf(role, right);
     return row ? { ...row } : null;
 }
 
-/** Состояние хранилища: прочитано ли, что не поняли, сколько строк. */
-export function getRevocationStore() {
+/** Сколько прав сейчас отозвано, выдано и сколько строк лежит в базе. */
+export function getPermissionCounts() {
     let rows = 0;
-    revocationStore.forEach((forRole) => { rows += forRole.size; });
+    let revoked = 0;
+    let granted = 0;
 
+    overrideStore.forEach((forRole) => {
+        rows += forRole.size;
+        forRole.forEach((row) => {
+            if (row.revoked) revoked += 1;
+            else if (row.granted) granted += 1;
+        });
+    });
+
+    return { rows, revoked, granted };
+}
+
+/** Состояние хранилища: прочитано ли, что не поняли, сколько строк. */
+export function getPermissionStore() {
     return {
         read: storeRead,
         reason: storeReason,
         message: storeMessage,
-        rows,
+        ...getPermissionCounts(),
         unknown: [...storeUnknown]
     };
 }
 
 /**
- * Читает отзывы прав из базы. Вызывается при входе (loadPermissions) и кнопкой
+ * Читает правки прав из базы. Вызывается при входе (loadPermissions) и кнопкой
  * «🔄 Обновить» на экране «🔐 Доступы».
  *
  * Если таблицы ещё нет (миграция v2.12.0 не применена), приложение работает по
  * заводской матрице, а экран показывает, какой файл применить, — как раздел
- * «🩺 Диагностика» при отсутствии журнала ошибок.
+ * «🩺 Диагностика» при отсутствии журнала ошибок. Неудачное чтение безопасно
+ * только пока таблица умеет ОТЗЫВАТЬ права: потерять отзыв — значит показать
+ * лишнюю кнопку, а вот потерять выдачу — значит спрятать право, которое админ
+ * дал, поэтому при ошибке чтения экран не даёт сохранять (см. js/modules/access.js).
  *
  * @returns {{ ok: boolean, reason: string, message: string, unknown: string[] }}
  */
-export async function loadPermissionRevocations() {
+export async function loadPermissionOverrides() {
     const { data, error } = await db.select('role_permissions', {
-        select: 'role, permission, revoked, changed_at, changed_by'
+        select: 'role, permission, revoked, granted, changed_at, changed_by'
     });
 
     if (error) {
         const text = error.message || String(error);
         // PGRST205 / 42P01 — PostgREST не находит таблицу: это не сбой связи,
         // а неприменённая миграция, и подсказка должна называть файл.
-        storeReason = /PGRST205|42P01|Could not find the table/i.test(text) ? 'no_table' : 'error';
+        // Отдельный случай — таблица есть, а колонки granted нет: файл v2.12.0
+        // применяли до появления выдачи прав (PGRST204 / 42703).
+        storeReason = /PGRST205|42P01|Could not find the table/i.test(text) ? 'no_table'
+            : /PGRST204|42703|granted/i.test(text) ? 'no_column' : 'error';
         storeMessage = text;
         storeRead = false;
 
-        log.warn(`⚠️ Отзывы прав не прочитаны (${storeReason}): ${text}`);
+        log.warn(`⚠️ Правки прав не прочитаны (${storeReason}): ${text}`);
         return { ok: false, reason: storeReason, message: storeMessage, unknown: [] };
     }
 
-    revocationStore.clear();
+    overrideStore.clear();
     storeUnknown = [];
 
     (data || []).forEach((row) => {
@@ -491,9 +584,10 @@ export async function loadPermissionRevocations() {
             return;
         }
 
-        if (!revocationStore.has(role)) revocationStore.set(role, new Map());
-        revocationStore.get(role).set(right, {
-            revoked: row.revoked !== false,
+        if (!overrideStore.has(role)) overrideStore.set(role, new Map());
+        overrideStore.get(role).set(right, {
+            revoked: row.revoked === true,
+            granted: row.granted === true,
             changed_at: row.changed_at || null,
             changed_by: row.changed_by || null
         });
@@ -503,27 +597,35 @@ export async function loadPermissionRevocations() {
     storeReason = '';
     storeMessage = '';
 
-    const state = getRevocationStore();
-    const revokedCount = getRoles().reduce((sum, role) =>
-        sum + (ROLE_PERMISSIONS[role] || []).filter((right) => isPermissionRevoked(role, right)).length, 0);
+    const state = getPermissionStore();
 
-    log.auth(`Отзывы прав прочитаны: строк ${state.rows}, снятых прав ${revokedCount}` +
+    log.auth(`Правки прав прочитаны: строк ${state.rows}, отозвано ${state.revoked}, выдано ${state.granted}` +
         (state.unknown.length ? `, не понято ${state.unknown.length}` : ''));
 
     return { ok: true, reason: 'ok', message: '', unknown: [...state.unknown] };
 }
 
 /**
- * Сохраняет решения администратора: [{ role, permission, revoked }].
+ * Сохраняет решения администратора: [{ role, permission, allowed }].
+ *
+ * `allowed` — то, что стоит в клетке: true — галочка, false — пусто. Флаги
+ * строки (revoked / granted) считаются здесь, а не на экране: решение у
+ * администратора одно («право работает / не работает»), а запись в базу — это
+ * два разных факта, и склеивать их в разметке значило бы разойтись с `can()`.
+ *
+ *     галочка + право есть в коде → заводское (revoked = false, granted = false);
+ *     галочка + права в коде нет  → ВЫДАЧА (granted = true);
+ *     пусто   + право есть в коде → ОТЗЫВ (revoked = true);
+ *     пусто   + права в коде нет  → заводское (и так нет права).
  *
  * Строк, которых в базе ещё нет, — добавляются; уже известные — обновляются
- * (`revoked = false` возвращает право к заводскому, но строка остаётся ради
- * истории). Служебные права (LOCKED_PERMISSIONS) и неизвестные значения
- * отклоняются здесь же: в базу они не уходят и мусора не создают.
+ * (возврат к заводскому строку НЕ удаляет: остаётся история «это право
+ * когда-то меняли»). Служебные права (LOCKED_PERMISSIONS) и неизвестные
+ * значения отклоняются здесь же: в базу они не уходят и мусора не создают.
  *
  * @returns {{ ok: boolean, saved: number, failed: Array<{role: string, permission: string, reason: string, message: string}> }}
  */
-export async function savePermissionRevocations(changes) {
+export async function savePermissionOverrides(changes) {
     const list = Array.isArray(changes) ? changes : [];
     const failed = [];
     let saved = 0;
@@ -531,7 +633,7 @@ export async function savePermissionRevocations(changes) {
     for (const change of list) {
         const role = String(change?.role || '');
         const right = String(change?.permission || '');
-        const revoked = change?.revoked !== false;
+        const allowed = change?.allowed === true;
 
         if (!ROLE_PERMISSIONS[role]) {
             failed.push({ role, permission: right, reason: 'unknown_role', message: `Неизвестная должность: ${role}` });
@@ -542,20 +644,25 @@ export async function savePermissionRevocations(changes) {
             continue;
         }
         if (isPermissionLocked(right)) {
-            failed.push({ role, permission: right, reason: 'locked', message: `Служебное право не отзывается: ${right}` });
+            failed.push({ role, permission: right, reason: 'locked', message: `Служебное право не меняется: ${right}` });
             continue;
         }
 
-        const exists = !!(revocationStore.get(role) && revocationStore.get(role).has(right));
+        const factory = isPermissionDefault(role, right);
+        const revoked = allowed ? false : factory;
+        const granted = allowed && !factory;
+        const exists = overrideOf(role, right) !== null;
         let error = null;
 
-        if (!exists && revoked) {
-            ({ error } = await db.insert('role_permissions', { role, permission: right, revoked: true }));
-        } else if (exists) {
-            ({ error } = await db.update('role_permissions', { revoked }, { role, permission: right }));
-        } else {
-            // Строки нет, и возвращать к заводскому нечего: право и так работает.
+        if (!exists && !revoked && !granted) {
+            // Строки нет и менять нечего: право и так работает по коду.
             continue;
+        }
+
+        if (!exists) {
+            ({ error } = await db.insert('role_permissions', { role, permission: right, revoked, granted }));
+        } else {
+            ({ error } = await db.update('role_permissions', { revoked, granted }, { role, permission: right }));
         }
 
         if (error) {
@@ -563,9 +670,10 @@ export async function savePermissionRevocations(changes) {
             continue;
         }
 
-        if (!revocationStore.has(role)) revocationStore.set(role, new Map());
-        revocationStore.get(role).set(right, {
+        if (!overrideStore.has(role)) overrideStore.set(role, new Map());
+        overrideStore.get(role).set(right, {
             revoked,
+            granted,
             // Время и сотрудника ставит сама база (триггер): локально держим
             // только свежую отметку для экрана, до следующего чтения.
             changed_at: new Date().toISOString(),
@@ -600,12 +708,12 @@ export async function loadPermissions() {
 
     log.auth(`Права загружены. Роль: ${currentRole}`);
 
-    // Отзывы прав, сделанные администратором в приложении (экран «🔐 Доступы»).
-    // Читаются ПОСЛЕ роли: хранилище сверяет строки с матрицей и каталогом.
-    // Неудача чтения (нет миграции v2.12.0) не мешает работать: остаются
-    // заводские права из ROLE_PERMISSIONS, а экран «🔐 Доступы» показывает,
-    // какой файл применить.
-    await loadPermissionRevocations();
+    // Правки прав, сделанные администратором в приложении (экран «🔐 Доступы»):
+    // и отзывы, и выдачи. Читаются ПОСЛЕ роли: хранилище сверяет строки с
+    // матрицей и каталогом. Неудача чтения (нет миграции v2.12.0) не мешает
+    // работать: остаются заводские права из ROLE_PERMISSIONS, а экран
+    // «🔐 Доступы» показывает, какой файл применить.
+    await loadPermissionOverrides();
 }
 
 // =====================================================================
@@ -615,18 +723,17 @@ export async function loadPermissions() {
 /**
  * Может ли роль выполнить действие.
  *
- * Право берётся из заводской матрицы (ROLE_PERMISSIONS) и УРЕЗАЕТСЯ отзывом,
- * который администратор сделал в приложении («🔐 Доступы» → public.role_permissions):
- *     право есть в коде и не снято — true;
- *     право снято администратором — false, даже если оно есть в коде.
- * Выдать право сверх кода экран не может — это делается правкой матрицы
- * вместе с политиками RLS (см. шапку файла).
+ * Право берётся из заводской матрицы (ROLE_PERMISSIONS), к нему применяются
+ * правки администратора из раздела «🔐 Доступы» (public.role_permissions):
+ *     право выдано администратором — true, даже если в коде его у роли не было;
+ *     право снято администратором  — false, даже если оно есть в коде;
+ *     правок нет                   — как записано в коде.
+ * Тот же ответ даёт hasPermission(), которым живут клетки матрицы на экране, —
+ * поэтому галочка и работа приложения не могут разойтись.
  */
 export function can(action) {
     if (!currentRole) return false;
-    if (isPermissionRevoked(currentRole, action)) return false;
-    const permissions = ROLE_PERMISSIONS[currentRole] || [];
-    return permissions.includes(action);
+    return hasPermission(currentRole, action);
 }
 
 export function getRole() {
@@ -648,13 +755,22 @@ export function isLinked() {
 /**
  * Проверяет, может ли текущий пользователь ВИДЕТЬ вкладку.
  * Сначала учитывается урезанный интерфейс роли (ROLE_UI), потом права.
+ *
+ * ⚠️ Явная выдача права в «🔐 Доступах» сильнее урезанного рабочего места:
+ * администратор видел эту строку матрицы и поставил галочку, значит раздел роли
+ * нужен. Без этого правила галочка у «Снабженца» или «Финансиста» открывала бы
+ * право, которого всё равно не видно (например, `view_tab_employees`).
  */
 export function canSeeTab(tabId) {
+    const required = TAB_REQUIREMENTS[tabId];
     const ui = ROLE_UI[currentRole];
     const hiddenTabs = (ui && ui.hiddenTabs) || [];
-    if (hiddenTabs.includes(tabId)) return false;
+    const grantedOnPurpose = !!required && currentRole
+        ? isPermissionGranted(currentRole, required)
+        : false;
 
-    const required = TAB_REQUIREMENTS[tabId];
+    if (hiddenTabs.includes(tabId) && !grantedOnPurpose) return false;
+
     if (!required) return true;
     return can(required);
 }
@@ -740,9 +856,14 @@ window.Permissions = {
     getPermissionCatalog,
     isPermissionDefault,
     isPermissionRevoked,
+    isPermissionGranted,
     isPermissionLocked,
     isPermissionKnown,
-    getRevocationStore,
-    loadPermissionRevocations,
-    savePermissionRevocations
+    getPermissionState,
+    hasPermission,
+    getPermissionCounts,
+    getPermissionOverrideRow,
+    getPermissionStore,
+    loadPermissionOverrides,
+    savePermissionOverrides
 };

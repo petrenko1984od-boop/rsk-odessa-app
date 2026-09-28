@@ -964,21 +964,130 @@ if (!fs.existsSync(PERMISSION_MIGRATION)) {
     const permissionSql = fs.readFileSync(PERMISSION_MIGRATION, 'utf8');
     const db7 = new PGlite();
 
-    // Пустая база плюс то, от чего зависит миграция: роли Supabase и функции
-    // контекста сотрудника из v2.7.0. Их значение тест и переключает вместо
-    // сессии сотрудника.
+    // Пустая база плюс то, от чего зависит миграция: роли Supabase, таблицы
+    // денег и журнала ошибок, функции контекста сотрудника (v2.7.0), редактор
+    // смет (v2.10.0) и четыре финансовых RPC (v2.8.0) — с ТЕМ ЖЕ гейтом
+    // «if employee_role not in (...) then», который миграция дополняет выдачей
+    // права. Роль тест переключает вместо сессии сотрудника.
     await db7.exec(`
         create role authenticated;
         create role anon;
 
+        create schema auth;
+        create or replace function auth.uid() returns uuid language sql stable
+        as $$ select '00000000-0000-0000-0000-000000000001'::uuid $$;
+
         create table public.employees (id bigint primary key, name text);
         insert into public.employees (id, name) values (1, 'Тест Администратор'), (2, 'Тест ПТО');
+
+        create table public.cash_requests (
+            id bigint primary key,
+            employee_id bigint,
+            status text,
+            total_sum numeric
+        );
+        insert into public.cash_requests (id, employee_id, status, total_sum)
+        values (1, 2, 'approved', 100);
+
+        create table public.cash_operations (
+            id bigint primary key,
+            employee_id bigint,
+            operation_type text,
+            source text,
+            amount numeric,
+            created_by uuid
+        );
+
+        create table public.app_errors (id bigint primary key);
 
         create or replace function public.rsk_current_employee_role()
         returns text language sql stable as $$ select 'Администратор'::text $$;
 
         create or replace function public.rsk_current_employee_id()
         returns bigint language sql stable as $$ select 1::bigint $$;
+
+        create or replace function public.rsk_is_estimate_editor()
+        returns boolean language sql stable
+        as $$ select coalesce(public.rsk_current_employee_role(), '') in
+                  ('Администратор', 'Главный инженер', 'Инженер ПТО') $$;
+
+        create or replace function public.create_order_with_items(
+            bigint, bigint, date, text, jsonb, uuid
+        )
+        returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+        as $rpc$
+        declare
+            employee_role text;
+        begin
+            employee_role := public.rsk_current_employee_role();
+
+            if employee_role not in (
+                'Администратор', 'Главный инженер', 'Снабженец', 'Инженер ПТО', 'Прораб'
+            ) then
+                raise exception using errcode = '42501', message = 'Нет права создавать заявку на материалы';
+            end if;
+
+            return jsonb_build_object('ok', true, 'role', employee_role);
+        end;
+        $rpc$;
+
+        create or replace function public.create_cash_request_with_items(
+            bigint, bigint, text, jsonb, uuid
+        )
+        returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+        as $rpc$
+        declare
+            employee_role text;
+        begin
+            employee_role := public.rsk_current_employee_role();
+
+            if employee_role not in (
+                'Администратор', 'Главный инженер', 'Снабженец', 'Инженер ПТО', 'Прораб'
+            ) then
+                raise exception using errcode = '42501', message = 'Нет права создавать финансовую заявку';
+            end if;
+
+            return jsonb_build_object('ok', true, 'role', employee_role);
+        end;
+        $rpc$;
+
+        create or replace function public.issue_cash_request(bigint, uuid)
+        returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+        as $rpc$
+        declare
+            employee_role text;
+        begin
+            employee_role := public.rsk_current_employee_role();
+
+            if employee_role not in ('Администратор', 'Главный инженер', 'Финансист') then
+                raise exception using errcode = '42501', message = 'Нет права выдавать деньги по заявке';
+            end if;
+
+            return jsonb_build_object('ok', true, 'role', employee_role);
+        end;
+        $rpc$;
+
+        create or replace function public.save_own_delivery_expense(
+            bigint, boolean, numeric, text, bigint, numeric, uuid
+        )
+        returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+        as $rpc$
+        declare
+            employee_role text;
+        begin
+            employee_role := public.rsk_current_employee_role();
+
+            if employee_role not in ('Администратор', 'Снабженец') then
+                raise exception using errcode = '42501', message = 'Нет права сохранять расход своей доставки';
+            end if;
+
+            return jsonb_build_object('ok', true, 'role', employee_role);
+        end;
+        $rpc$;
+
+        grant select on table public.cash_requests to authenticated;
+        grant execute on function public.create_order_with_items(bigint,bigint,date,text,jsonb,uuid) to authenticated;
+        grant execute on function public.issue_cash_request(bigint,uuid) to authenticated;
     `);
 
     let permissionError = null;
@@ -1053,6 +1162,115 @@ if (!fs.existsSync(PERMISSION_MIGRATION)) {
         ok('матрица прав: повторный запуск безопасен (строки и RLS на месте)',
             rerunError === null && afterRerun?.rows === 1 && afterRerun?.rls === true,
             rerunError ? String(rerunError.message || rerunError) : JSON.stringify(afterRerun || {}));
+
+        // -----------------------------------------------------------------
+        // ВЫДАЧА ПРАВА (галочка в пустом квадратике)
+        // -----------------------------------------------------------------
+        // Экран умеет не только снимать право, но и выдавать его: «поставьте
+        // галочку — функция станет доступна сотруднику». Проверяем не текст
+        // файла, а поведение базы: до выдачи роль получает отказ, после —
+        // работает, и не только в интерфейсе, но и в самой защите данных.
+        const grantRow = (await db7.query(`
+            insert into public.role_permissions (role, permission, revoked, granted)
+            values ('Прораб', 'create_order', false, true)
+            returning changed_by, changed_at is not null as stamped
+        `)).rows[0];
+
+        ok('матрица прав: Администратор выдаёт право (granted = true), штамп ставит база',
+            Number(grantRow?.changed_by) === 1 && grantRow?.stamped === true,
+            JSON.stringify(grantRow || {}));
+
+        // «Снято» и «выдано» одновременно — противоречие: база его не принимает.
+        let conflictError = null;
+        try {
+            await db7.query(`insert into public.role_permissions (role, permission, revoked, granted)
+                values ('Прораб', 'close_section', true, true)`);
+        } catch (error) { conflictError = error; }
+
+        ok('матрица прав: строка «снято и выдано сразу» отклоняется ограничением таблицы',
+            conflictError !== null && /role_permissions_override_check/.test(String(conflictError.message || '')),
+            conflictError ? String(conflictError.message || conflictError) : 'противоречивая строка прошла');
+
+        // Роль «Прораб»: право create_order выдано, issue_cash_request — нет.
+        await db7.exec(`create or replace function public.rsk_current_employee_role()
+            returns text language sql stable as $$ select 'Прораб'::text $$`);
+        await db7.exec('set role authenticated');
+
+        const grantedAnswer = (await db7.query(
+            `select public.rsk_permission_granted('create_order') as granted`
+        )).rows[0];
+
+        let openGateError = null;
+        let openGate = null;
+        try {
+            openGate = (await db7.query(`select public.create_order_with_items(
+                1::bigint, 1::bigint, current_date, 'тест', '[]'::jsonb, gen_random_uuid()
+            ) as answer`)).rows[0];
+        } catch (error) { openGateError = error; }
+
+        let closedGateError = null;
+        try {
+            await db7.query(`select public.issue_cash_request(1::bigint, gen_random_uuid())`);
+        } catch (error) { closedGateError = error; }
+
+        await db7.exec('reset role');
+
+        ok('матрица прав: выданное право принимает и база (функция + гейт финансового RPC)',
+            grantedAnswer?.granted === true && openGateError === null && openGate?.answer?.ok === true,
+            openGateError ? String(openGateError.message || openGateError) : JSON.stringify(openGate || {}));
+
+        ok('матрица прав: невыданное право финансовый RPC по-прежнему отклоняет',
+            closedGateError !== null && /Нет права выдавать деньги/.test(String(closedGateError.message || '')),
+            closedGateError ? String(closedGateError.message || closedGateError) : 'гейт открылся сам');
+
+        // Дополнены ВСЕ четыре команды, а не только та, что проверена вызовом:
+        // опечатка в списке подписей оставила бы часть денежных путей закрытой
+        // для выданного права — и это заметили бы уже в бою.
+        const gatePatched = (await db7.query(`
+            select signature,
+                   coalesce(position('rsk_permission_granted' in
+                       pg_get_functiondef(to_regprocedure(signature))), 0) > 0 as patched
+              from unnest(array[
+                  'public.create_order_with_items(bigint,bigint,date,text,jsonb,uuid)',
+                  'public.create_cash_request_with_items(bigint,bigint,text,jsonb,uuid)',
+                  'public.issue_cash_request(bigint,uuid)',
+                  'public.save_own_delivery_expense(bigint,boolean,numeric,text,bigint,numeric,uuid)'
+              ]) as signature
+             order by signature
+        `)).rows;
+
+        ok('матрица прав: выдача дописана во все четыре финансовых RPC',
+            gatePatched.length === 4 && gatePatched.every((row) => row.patched === true),
+            gatePatched.map((row) => `${String(row.signature).slice(0, 30)}…=${row.patched}`).join(' | '));
+
+        // Политика-выдача: своего «разрешить всё» в базе нет, поэтому строки
+        // заявок показывает именно политика, добавленная миграцией.
+        await db7.exec(`alter table public.cash_requests enable row level security`);
+        await db7.exec(`drop policy if exists rsk_test_deny_all on public.cash_requests`);
+        await db7.exec(`create policy rsk_test_deny_all
+            on public.cash_requests for select to authenticated using (false)`);
+
+        await db7.exec('set role authenticated');
+        const hiddenRows = (await db7.query(`select count(*)::int as rows from public.cash_requests`)).rows[0];
+        const estimateBefore = (await db7.query(`select public.rsk_is_estimate_editor() as editor`)).rows[0];
+        await db7.exec('reset role');
+
+        await db7.exec(`insert into public.role_permissions (role, permission, revoked, granted)
+            values ('Прораб', 'cash_view_all', false, true),
+                   ('Прораб', 'manage_estimate', false, true)`);
+
+        await db7.exec('set role authenticated');
+        const visibleRows = (await db7.query(`select count(*)::int as rows from public.cash_requests`)).rows[0];
+        const estimateAfter = (await db7.query(`select public.rsk_is_estimate_editor() as editor`)).rows[0];
+        await db7.exec('reset role');
+
+        ok('матрица прав: политика-выдача открывает данные (заявки видны после галочки)',
+            hiddenRows?.rows === 0 && visibleRows?.rows === 1,
+            `без выдачи строк: ${hiddenRows?.rows}, с выдачей: ${visibleRows?.rows}`);
+
+        ok('матрица прав: редактор смет пускает роль с выданным manage_estimate',
+            estimateBefore?.editor === false && estimateAfter?.editor === true,
+            `до выдачи: ${estimateBefore?.editor}, после: ${estimateAfter?.editor}`);
     }
 
     await db7.close();

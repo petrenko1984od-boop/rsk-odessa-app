@@ -1274,14 +1274,60 @@ function main() {
             v212Copy.clean, v212Copy.detail);
 
         // 6. Колонки таблицы и то, что читает приложение, — одно и то же.
-        const permColumns = ['role', 'permission', 'revoked', 'changed_at', 'changed_by'];
+        //    revoked — снять право, granted — выдать; без любого из них экран
+        //    не смог бы сделать свою работу целиком.
+        const permColumns = ['role', 'permission', 'revoked', 'granted', 'changed_at', 'changed_by'];
         ok('v2.12.0: колонки таблицы совпадают с тем, что читает приложение',
             permColumns.every((col) => v212.includes(col)) &&
             /db\.select\('role_permissions'/.test(permsJs) &&
             permColumns.every((col) => new RegExp(`role, permission|${col}`).test(permsJs)) &&
             /db\.insert\('role_permissions'/.test(permsJs) &&
-            /db\.update\('role_permissions'/.test(permsJs),
+            /db\.update\('role_permissions'/.test(permsJs) &&
+            /role, permission: right, revoked, granted/.test(permsJs),
             permColumns.join(', '));
+
+        // 6б. ВЫДАЧА ПРАВА: колонка granted, функция-вопрос и места, которые её
+        //     спрашивают. Без любого из них галочка в пустом квадратике
+        //     открывала бы кнопку, которую база отклоняет, — тот самый обман,
+        //     из-за которого выдача раньше была запрещена.
+        const grantPolicies = [
+            'rsk_cash_requests_select_granted',
+            'rsk_cash_requests_update_decision_granted',
+            'rsk_cash_requests_update_issue_granted',
+            'rsk_cash_operations_select_granted',
+            'rsk_cash_operations_insert_self_granted',
+            'rsk_cash_operations_insert_cashier_granted',
+            'rsk_app_errors_select_granted'
+        ];
+
+        ok('v2.12.0: выдача — колонка granted с запретом «снято и выдано сразу»',
+            /granted     boolean     not null default false/.test(v212) &&
+            /add column if not exists granted boolean not null default false/.test(v212) &&
+            /role_permissions_override_check[\s\S]{0,200}?check \(not \(revoked and granted\)\)/.test(v212));
+
+        ok('v2.12.0: выдача читается функцией rsk_permission_granted(), anon закрыт',
+            /create or replace function public\.rsk_permission_granted\(p_permission text\)/.test(v212) &&
+            /and rp\.granted\s*\n\s*and not rp\.revoked/.test(v212) &&
+            /revoke all on function public\.rsk_permission_granted\(text\) from anon/.test(v212) &&
+            /grant execute on function public\.rsk_permission_granted\(text\) to authenticated/.test(v212));
+
+        ok('v2.12.0: выдача добавлена в политики RLS, редактор смет и финансовые RPC',
+            grantPolicies.every((name) => v212.includes(name)) &&
+            /create policy rsk_app_errors_select_granted[\s\S]{0,200}?rsk_permission_granted\('view_diagnostics'\)/.test(v212) &&
+            /rsk_is_estimate_editor\(\)[\s\S]{0,500}?or public\.rsk_permission_granted\('manage_estimate'\)/.test(v212) &&
+            /pg_get_functiondef\(to_regprocedure\(spec\.signature\)\)/.test(v212) &&
+            /and not public\.rsk_permission_granted\(''' \|\| spec\.permission \|\| '''\) then/.test(v212));
+
+        ok('v2.12.0: миграция требует применённых v2.7.0 … v2.10.0 (иначе нечего дополнять)',
+            /Сначала примените database\/migrate-v2\.7-rls-finance\.sql/.test(v212) &&
+            /Сначала примените database\/migrate-v2\.8-finance-rpc-audit\.sql/.test(v212) &&
+            /Сначала примените database\/migrate-v2\.9-ops-monitoring\.sql/.test(v212) &&
+            /Сначала примените database\/migrate-v2\.10-estimates\.sql/.test(v212));
+
+        ok('v2.12.0: самопроверка стережёт и выдачу (13 строк)',
+            /Ожидается 13 строк со статусом 'ok'/.test(v212) &&
+            /MISSING - выдача не работает в данных/.test(v212) &&
+            /MISSING - деньги не примут выданное право/.test(v212));
 
         // 7. Каталог прав экрана покрывает ВСЮ заводскую матрицу: иначе часть
         //    прав нельзя ни увидеть, ни снять — экран молчал бы о них.
@@ -1311,13 +1357,16 @@ function main() {
             /export const LOCKED_PERMISSIONS = \['manage_access'\]/.test(permsJs) &&
             /isPermissionLocked/.test(permsJs) && /isPermissionLocked\(right\)/.test(accessJs));
 
-        // 9. Проверка прав ВЫЧИТАЕТ отзыв: право есть в коде, но снято — роль его
-        //    теряет; читаются отзывы при входе, пишутся — только кнопкой экрана.
-        ok('v2.12.0: can() вычитает отзыв из заводской матрицы',
-            /export function can\(action\)[\s\S]{0,500}?isPermissionRevoked\(currentRole, action\)/.test(permsJs) &&
-            /export async function loadPermissionRevocations/.test(permsJs) &&
-            /export async function savePermissionRevocations/.test(permsJs) &&
-            /loadPermissionRevocations\(\)/.test(permsJs));
+        // 9. Проверка прав ПРИМЕНЯЕТ правки администратора: снятое право
+        //    пропадает, выданное — появляется; читаются правки при входе,
+        //    пишутся — только кнопкой экрана.
+        ok('v2.12.0: can() учитывает и отзыв, и выдачу права',
+            /export function can\(action\)[\s\S]{0,300}?hasPermission\(currentRole, action\)/.test(permsJs) &&
+            /export function hasPermission\(role, right\)[\s\S]{0,400}?granted/.test(permsJs) &&
+            /export function isPermissionGranted\(role, right\)/.test(permsJs) &&
+            /export async function loadPermissionOverrides/.test(permsJs) &&
+            /export async function savePermissionOverrides/.test(permsJs) &&
+            /loadPermissionOverrides\(\)/.test(permsJs));
 
         // 10. Разметка, точка входа и оболочка: без любого из трёх раздел либо
         //     не открывается, либо не появляется у сотрудников после обновления.
@@ -1327,6 +1376,17 @@ function main() {
             /id="access-changes"/.test(htmlV212) &&
             /loadAccess\(\)/.test(mainJsV212) && /'access'/.test(mainJsV212) &&
             /'\.\/js\/modules\/access\.js'/.test(swV212));
+
+        // 11б. Клетка матрицы — квадратик с галочкой, а не «—»: в пустой клетке
+        //      право можно ВЫДАТЬ, поэтому прочерка на экране больше нет, а
+        //      черновик хранит именно галочку (её и сравнивает «💾 Сохранить»).
+        ok('v2.12.0: в матрице нет клеток «—»: право можно и снять, и выдать',
+            !/—<\/td>/.test(accessJs) &&
+            !/access\.notGranted/.test(accessJs) &&
+            !/'access\.notGranted'/.test(i18nV212) &&
+            /function cellChecked\(role, right\)/.test(accessJs) &&
+            /setDraft\(role, right, input\.checked === true\)/.test(accessJs) &&
+            /getPermissionOverrideRow/.test(accessJs));
 
         // 11. Когда таблицы ещё нет, администратору нужно знать, что применить:
         //     подсказка с именем файла миграции — в словаре обоих языков.

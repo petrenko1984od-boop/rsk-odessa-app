@@ -1,4 +1,4 @@
-// =====================================================================
+﻿// =====================================================================
 // Прогон БЕЗ БРАУЗЕРА (только Node): раздел «🔐 Доступы» (v2.12.0)
 // =====================================================================
 // Зачем. Экран собирает подписи прав ИЗ ДАННЫХ:
@@ -22,15 +22,22 @@
 //      их менять не разрешает (или наоборот);
 //   5. ПОВЕДЕНИЕ экрана и прав на «живых» модулях приложения (js/permissions.js
 //      и js/modules/access.js) с заглушкой Supabase вместо настоящей базы:
-//      · can() вычитает снятое право, но не трогает остальные;
+//      · can() вычитает снятое право и прибавляет выданное, но не трогает
+//        остальные;
+//      · клетка матрицы — пустой квадратик или галочка: право можно и снять,
+//        и ВЫДАТЬ (в пустой клетке), поэтому прочерка «—» на экране нет;
 //      · строки о несуществующих ролях/правах не применяются и показываются
 //        администратору предупреждением;
-//      · служебное право и незнакомые значения экран в базу НЕ пишет;
+//      · служебное право и незнакомые значения экран в базу НЕ пишет (ни
+//        выдачи, ни отзыва);
 //      · запись уходит без changed_at/changed_by — их ставит триггер базы;
 //      · галочка → черновик → «💾 Сохранить» → перечитывание → перерисовка:
 //        снятая галочка видна на экране, а право сразу перестаёт работать;
+//        поставленная в пустой клетке становится ВЫДАЧЕЙ (granted = true);
+//      · «↩» у роли возвращает заводские права в обе стороны;
 //      · без таблицы в базе экран говорит, какой файл применить, и не даёт
-//        сохранить правки;
+//        сохранить правки; таблица без колонки granted — тоже (её файл v2.12.0
+//        применяли первой версией, только с отзывом);
 //      · роль не попадает в раздел, который у неё закрыт (getStartTab).
 //
 // Запуск (из папки tools/checks):  node access-check.mjs
@@ -415,12 +422,12 @@ const access = await quiet(() => import(pathToFileURL(ACCESS_JS).href));
 // Так выглядит приложение до того, как администратор применил
 // database/migrate-v2.12-role-permissions.sql: чтение таблицы отвечает
 // PGRST205. Экран обязан назвать файл и погасить «💾 Сохранить», а права —
-// работать по заводской матрице. Неудачное чтение НИЧЕГО не выдаёт сверх
-// кода: отзывы только урезают права, поэтому потерять их при сбое безопасно,
-// а вот «забыть» снятое право означало бы выдать лишнее.
+// работать по заводской матрице. Пока таблицы нет, хранилище пустое: ни
+// выданных, ни снятых прав, поэтому поведение роли ровно такое, как в коде.
 const ROLE = 'Администратор';
-const PLAIN = 'view_employees';      // право, которое не снимали
+const PLAIN = 'view_employees';      // право, которое не меняли
 const REVOKED = 'add_employee';      // право, которое снимем
+const CLOSED = 'close_section';      // права у этой роли нет: его ВЫДАДИМ
 
 fake.fail = { table: 'role_permissions', message: "Could not find the table 'public.role_permissions' in the schema cache" };
 fake.tables.employees = [{ id: 7, position: ROLE, status: 'active', user_id: 'user-1' }];
@@ -430,13 +437,14 @@ await quiet(() => perms.loadPermissions());
 await quiet(() => access.loadAccess());
 
 const warning = (elements.get('access-warning') || elementFor('access-warning')).innerHTML;
+const warningNow = () => (elements.get('access-warning') || elementFor('access-warning')).innerHTML;
 const saveButton = () => elements.get('access-save-btn') || elementFor('access-save-btn');
 
 ok('без таблицы в базе экран называет файл миграции и работает по коду',
-    perms.getRevocationStore().reason === 'no_table' &&
+    perms.getPermissionStore().reason === 'no_table' &&
     warning.includes('migrate-v2.12-role-permissions.sql') &&
-    perms.can(REVOKED) === true,
-    `причина: ${perms.getRevocationStore().reason}; can(${REVOKED}) = ${perms.can(REVOKED)}`);
+    perms.can(REVOKED) === true && perms.can(CLOSED) === false,
+    `причина: ${perms.getPermissionStore().reason}; can(${REVOKED}) = ${perms.can(REVOKED)}; can(${CLOSED}) = ${perms.can(CLOSED)}`);
 
 access.toggleAccessRight({ target: { dataset: { arg: `${ROLE}|${PLAIN}` }, checked: false } });
 
@@ -445,10 +453,22 @@ ok('без таблицы «💾 Сохранить» гаснет: сохран
     `кнопка выключена: ${saveButton().disabled}`);
 
 access.revertAccessDraft();
+
+// Таблица есть, а колонки granted в ней нет: файл v2.12.0 применяли первой
+// версией — тогда экран умел только отзывать права. Экран обязан сказать, что
+// применить файл заново, и не давать сохранять: иначе выдача молча не запишется.
+fake.fail = { table: 'role_permissions', message: 'column role_permissions.granted does not exist' };
+await quiet(() => access.loadAccess());
+
+ok('таблица без колонки granted: экран называет причину и не даёт сохранять',
+    perms.getPermissionStore().reason === 'no_column' &&
+    warningNow().includes('granted') && saveButton().disabled === true,
+    `причина: ${perms.getPermissionStore().reason}, кнопка выключена: ${saveButton().disabled}`);
+
 fake.fail = null;
 
 // ---------------------------------------------------------------------
-// 3.2. Права: заводская матрица и отзыв из базы
+// 3.2. Права: заводская матрица, отзыв и выдача из базы
 // ---------------------------------------------------------------------
 
 fake.tables.employees = [{ id: 7, position: ROLE, status: 'active', user_id: 'user-1' }];
@@ -456,18 +476,18 @@ fake.tables.role_permissions = [];
 
 await quiet(() => perms.loadPermissions());
 
-ok('права прочитаны: роль взята из карточки сотрудника, отзывов в базе нет',
-    perms.getRole() === ROLE && perms.getRevocationStore().read === true &&
-    perms.getRevocationStore().rows === 0,
-    `роль: ${perms.getRole() || '—'}, строк отзывов: ${perms.getRevocationStore().rows}`);
+ok('права прочитаны: роль взята из карточки сотрудника, правок в базе нет',
+    perms.getRole() === ROLE && perms.getPermissionStore().read === true &&
+    perms.getPermissionStore().rows === 0,
+    `роль: ${perms.getRole() || '—'}, строк правок: ${perms.getPermissionStore().rows}`);
 
-ok('без отзывов can() работает по заводской матрице',
+ok('без правок can() работает по заводской матрице',
     perms.can(PLAIN) === true && perms.can('manage_access') === true);
 
 fake.tables.role_permissions = [
     { role: ROLE, permission: REVOKED, revoked: true, changed_at: '2026-09-01T10:00:00Z', changed_by: 7 }
 ];
-const readBack = await quiet(() => perms.loadPermissionRevocations());
+const readBack = await quiet(() => perms.loadPermissionOverrides());
 
 ok('отзыв из базы снимает право, соседние права не трогает',
     readBack.ok === true && perms.can(REVOKED) === false && perms.can(PLAIN) === true,
@@ -479,28 +499,94 @@ ok('getRolePermissions() и getAllPermissions() отдают права без �
     !perms.getAllPermissions().includes(REVOKED),
     `прав у роли: ${perms.getRolePermissions(ROLE).length}`);
 
-const savedRow = perms.getRevocationRow(ROLE, REVOKED);
-ok('в строке отзыва видно, кто и когда снял право (ставит база)',
+const savedRow = perms.getPermissionOverrideRow(ROLE, REVOKED);
+ok('в строке правки видно, кто и когда её сделал (ставит база)',
     !!savedRow && savedRow.changed_by === 7 && savedRow.changed_at === '2026-09-01T10:00:00Z',
     JSON.stringify(savedRow || {}));
+
+// ВЫДАЧА: право, которого у роли не было в коде, начинает работать — и в
+// интерфейсе (can), и в списке её прав. Проверяем вместе с отзывом: две правки
+// в одной роли не должны мешать друг другу.
+fake.tables.role_permissions = [
+    { role: ROLE, permission: REVOKED, revoked: true, changed_at: '2026-09-01T10:00:00Z', changed_by: 7 },
+    { role: ROLE, permission: CLOSED, granted: true, changed_at: '2026-09-02T10:00:00Z', changed_by: 7 }
+];
+const readGrants = await quiet(() => perms.loadPermissionOverrides());
+
+ok('выдача из базы (granted = true) открывает право, которого в коде не было',
+    readGrants.ok === true && perms.can(CLOSED) === true && perms.can(REVOKED) === false &&
+    perms.can(PLAIN) === true,
+    `can(${CLOSED}) = ${perms.can(CLOSED)}, can(${REVOKED}) = ${perms.can(REVOKED)}`);
+
+ok('состояния клетки три: заводское, снятое и выданное',
+    perms.getPermissionState(ROLE, PLAIN) === 'factory' &&
+    perms.getPermissionState(ROLE, REVOKED) === 'revoked' &&
+    perms.getPermissionState(ROLE, CLOSED) === 'granted' &&
+    perms.isPermissionGranted(ROLE, CLOSED) === true &&
+    perms.isPermissionRevoked(ROLE, CLOSED) === false &&
+    perms.getPermissionStore().granted === 1 && perms.getPermissionStore().revoked === 1,
+    `строк: ${perms.getPermissionStore().rows}, выдано: ${perms.getPermissionStore().granted}, снято: ${perms.getPermissionStore().revoked}`);
+
+ok('hasPermission() отвечает и по чужой роли — тем же правилом, что клетки экрана',
+    perms.hasPermission(ROLE, CLOSED) === true &&
+    perms.hasPermission('Прораб', CLOSED) === true &&
+    perms.hasPermission('Прораб', PLAIN) === false &&
+    perms.getRolePermissions(ROLE).includes(CLOSED),
+    `прав у Администратора: ${perms.getRolePermissions(ROLE).length}`);
+
+// Строку «и снято, и выдано» база не принимает (ограничение таблицы), но и в
+// приложении отзыв должен побеждать: иначе выдача «оживила» бы закрытое право.
+fake.tables.role_permissions = [
+    { role: ROLE, permission: REVOKED, revoked: true, granted: true, changed_at: '2026-09-03T10:00:00Z', changed_by: 7 }
+];
+await quiet(() => perms.loadPermissionOverrides());
+
+ok('если строка противоречива, отзыв побеждает: право не работает',
+    perms.can(REVOKED) === false && perms.isPermissionGranted(ROLE, REVOKED) === false,
+    `can(${REVOKED}) = ${perms.can(REVOKED)}`);
 
 fake.tables.role_permissions = [
     { role: ROLE, permission: REVOKED, revoked: true, changed_at: '2026-09-01T10:00:00Z', changed_by: 7 },
     { role: 'Уборщик', permission: PLAIN, revoked: true },       // роли нет в коде
-    { role: ROLE, permission: 'no_such_right', revoked: true }   // права нет в каталоге
+    { role: ROLE, permission: 'no_such_right', granted: true }   // права нет в каталоге
 ];
-const withUnknown = await quiet(() => perms.loadPermissionRevocations());
+const withUnknown = await quiet(() => perms.loadPermissionOverrides());
 
 ok('строки о несуществующей роли и неизвестном праве не применяются, но названы администратору',
-    withUnknown.unknown.length === 2 && perms.getRevocationStore().rows === 1 &&
-    perms.can(PLAIN) === true,
-    `не понято: ${withUnknown.unknown.join(' | ') || '—'}; строк применено: ${perms.getRevocationStore().rows}`);
+    withUnknown.unknown.length === 2 && perms.getPermissionStore().rows === 1 &&
+    perms.can(PLAIN) === true && perms.getPermissionStore().granted === 0,
+    `не понято: ${withUnknown.unknown.join(' | ') || '—'}; строк применено: ${perms.getPermissionStore().rows}`);
 
 ok('isPermissionKnown / isPermissionLocked отвечают по закрытому списку',
     perms.isPermissionKnown('manage_access') === true &&
     perms.isPermissionKnown('no_such_right') === false &&
     perms.isPermissionLocked('manage_access') === true &&
     perms.isPermissionLocked(PLAIN) === false);
+
+// Урезанное рабочее место роли (ROLE_UI) скрывает раздел, но выдача права в
+// «🔐 Доступах» сильнее: администратор видел эту строку матрицы и поставил
+// галочку, значит раздел роли нужен. Иначе галочка у «Снабженца» или
+// «Финансиста» открывала бы право, которого сотрудник всё равно не видит.
+fake.tables.employees = [{ id: 8, position: 'Снабженец', status: 'active', user_id: 'user-1' }];
+fake.tables.role_permissions = [];
+await quiet(() => perms.loadPermissions());
+
+const snagachBefore = perms.canSeeTab('employees');
+
+fake.tables.role_permissions = [
+    { role: 'Снабженец', permission: 'view_tab_employees', granted: true, changed_at: '2026-09-04T10:00:00Z', changed_by: 7 }
+];
+await quiet(() => perms.loadPermissionOverrides());
+
+ok('выдача права сильнее урезанного рабочего места: раздел и вход в него открываются',
+    snagachBefore === false && perms.canSeeTab('employees') === true &&
+    perms.canSeeTab('tasks') === false && perms.can('view_employees') === true,
+    `до выдачи: ${snagachBefore}, после: ${perms.canSeeTab('employees')}`);
+
+// Возвращаем состояние экрана: дальше проверяется матрица Администратора.
+fake.tables.employees = [{ id: 7, position: ROLE, status: 'active', user_id: 'user-1' }];
+fake.tables.role_permissions = [];
+await quiet(() => perms.loadPermissions());
 
 // ---------------------------------------------------------------------
 // 3.3. Экран: матрица, черновик, сохранение
@@ -528,12 +614,12 @@ ok('экран рисует матрицу «право × роль»: по та
     catalogRights.every((right) => screen.includes(labels.ru.rights.get(right))),
     `длина разметки: ${screen.length} символов`);
 
-ok('клетки: галочка у права роли, «—» у права, которого у роли нет, 🔒 у служебного',
+ok('клетки: квадратик у каждого права (пустой — права нет), 🔒 только у служебного',
     screen.includes(`data-arg="${ROLE}|${PLAIN}"`) &&
-    /—<\/td>/.test(screen) && !!closedRight &&
-    !screen.includes(`data-arg="${ROLE}|${closedRight}"`) &&
+    !!closedRight && screen.includes(`data-arg="${ROLE}|${closedRight}"`) &&
+    hasChecked(screen, `${ROLE}|${closedRight}`) === false &&
     !screen.includes(`data-arg="${ROLE}|manage_access"`) &&
-    screen.includes('🔒'),
+    screen.includes('🔒') && !screen.includes('—</td>'),
     `право без галочки в коде: ${closedRight || '—'}`);
 
 ok('снятое право показано снятой галочкой и пометкой «снято»',
@@ -580,11 +666,56 @@ access.toggleAccessRight({ target: { dataset: { arg: `${ROLE}|${PLAIN}` }, check
 await quiet(() => access.saveAccessMatrix());
 
 const update = fake.calls.find((call) => call.op === 'update');
-ok('возврат права — это update строки (revoked = false), а не удаление: история остаётся',
+ok('возврат права — это update строки (revoked = false, granted = false), а не удаление: история остаётся',
     !!update && update.table === 'role_permissions' && update.payload.revoked === false &&
+    update.payload.granted === false &&
     update.filters.role === ROLE && update.filters.permission === PLAIN &&
     !fake.calls.some((call) => call.op === 'delete') && perms.can(PLAIN) === true,
     JSON.stringify(update ? { payload: update.payload, filters: update.filters } : {}));
+
+// Галочка в ПУСТОМ квадратике — это ВЫДАЧА права: в базу уходит строка с
+// granted = true, а право начинает работать сразу после сохранения — и в
+// приложении, и в базе (там его проверяет public.rsk_permission_granted()).
+fake.calls.length = 0;
+fake.tables.role_permissions = fake.tables.role_permissions.filter((row) => row.permission !== CLOSED);
+createdNodes.length = 0;
+access.toggleAccessRight({ target: { dataset: { arg: `${ROLE}|${CLOSED}` }, checked: true } });
+
+const grantDraft = saveBtn().textContent;
+await quiet(() => access.saveAccessMatrix());
+
+const grantInsert = fake.calls.find((call) => call.op === 'insert');
+ok('галочка в пустой клетке — выдача: в базу идёт granted = true, revoked = false',
+    !!grantInsert && grantInsert.table === 'role_permissions' &&
+    grantInsert.payload.role === ROLE && grantInsert.payload.permission === CLOSED &&
+    grantInsert.payload.granted === true && grantInsert.payload.revoked === false &&
+    !('changed_at' in grantInsert.payload) && !('changed_by' in grantInsert.payload) &&
+    grantDraft.includes('(1)'),
+    JSON.stringify(grantInsert ? grantInsert.payload : {}));
+
+ok('после сохранения право у роли работает, клетка — с галочкой и пометкой «выдано»',
+    perms.can(CLOSED) === true && perms.getPermissionState(ROLE, CLOSED) === 'granted' &&
+    hasChecked(matrix().innerHTML, `${ROLE}|${CLOSED}`) &&
+    matrix().innerHTML.includes('выдано') &&
+    (elements.get('access-summary') || elementFor('access-summary')).innerHTML.includes('Выдано: 1'),
+    `can(${CLOSED}) = ${perms.can(CLOSED)}`);
+
+// «↩» у роли возвращает заводские права в ОБЕ стороны: и снятое (add_employee),
+// и выданное (close_section) — двумя строками-правками, без удаления из базы.
+fake.calls.length = 0;
+access.resetRoleAccess(ROLE);
+
+const resetDraft = fake.calls.length === 0;
+await quiet(() => access.saveAccessMatrix());
+
+const resets = fake.calls.filter((call) => call.op === 'update');
+ok('«↩» у роли возвращает заводское и для выдачи, и для отзыва (без удаления строк)',
+    resets.length === 2 &&
+    resets.every((call) => call.payload.revoked === false && call.payload.granted === false) &&
+    resets.map((call) => call.filters.permission).sort().join(',') === [REVOKED, CLOSED].sort().join(',') &&
+    perms.can(PLAIN) === true && perms.can(REVOKED) === true && perms.can(CLOSED) === false &&
+    resetDraft && !fake.calls.some((call) => call.op === 'delete'),
+    `правок: ${resets.length} (${resets.map((call) => call.filters.permission).join(', ')}), can(${CLOSED}) = ${perms.can(CLOSED)}`);
 
 ok('экран доступен разметке: обработчики на window.* (data-action зовут их по имени)',
     ['loadAccess', 'toggleAccessRight', 'resetRoleAccess', 'revertAccessDraft', 'saveAccessMatrix']
@@ -600,15 +731,17 @@ ok('«↩ Отменить» выбрасывает черновик и не п�
     saveBtn().disabled === true && writes().length === 0 && perms.can(PLAIN) === true,
     `кнопка выключена: ${saveBtn().disabled}`);
 
-// Служебное право и незнакомые значения отклоняются ДО базы.
+// Служебное право и незнакомые значения отклоняются ДО базы — и при выдаче, и
+// при отзыве: админ не может ни выключить себе вход сюда, ни записать мусор.
 fake.calls.length = 0;
-const rejected = await quiet(() => perms.savePermissionRevocations([
-    { role: ROLE, permission: 'manage_access', revoked: true },
-    { role: ROLE, permission: 'no_such_right', revoked: true },
-    { role: 'Уборщик', permission: PLAIN, revoked: true }
+const rejected = await quiet(() => perms.savePermissionOverrides([
+    { role: ROLE, permission: 'manage_access', allowed: false },
+    { role: ROLE, permission: 'manage_access', allowed: true },
+    { role: ROLE, permission: 'no_such_right', allowed: true },
+    { role: 'Уборщик', permission: PLAIN, allowed: true }
 ]));
 
-ok('служебное право не отзывается, неизвестные право и роль отклоняются без записей в базу',
+ok('служебное право не меняется, неизвестные право и роль отклоняются без записей в базу',
     rejected.ok === false && rejected.saved === 0 &&
     ['locked', 'unknown_permission', 'unknown_role'].every((reason) =>
         rejected.failed.some((item) => item.reason === reason)) &&
@@ -639,7 +772,7 @@ ok('раздел, закрытый администратором, не откр
 // =====================================================================
 log('');
 log(failed === 0
-    ? '  ВСЁ ВЕРНО: подписи, каталог и отзыв прав в разделе «🔐 Доступы» работают'
+    ? '  ВСЁ ВЕРНО: подписи, каталог, снятие и выдача прав в разделе «🔐 Доступы» работают'
     : '  не прошло проверок: ' + failed);
 
 const outDir = path.join(os.tmpdir(), 'freedom-fin');

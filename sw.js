@@ -346,12 +346,17 @@ const LEGACY_CACHE_PREFIXES = ['rsk-odessa'];
 //        Снятые галочки хранит таблица public.role_permissions
 //        (database/migrate-v2.12-role-permissions.sql), читает их
 //        js/permissions.js → can(), поэтому у роли сразу пропадают раздел,
-//        кнопка и действие. Выдача прав сверх кода осталась за кодом вместе с
-//        политиками RLS — это описано прямо на экране. Оболочка обновилась
-//        потому, что добавился js/modules/access.js, изменились index.html,
-//        js/main.js, js/permissions.js, js/i18n.js и css/tailwind.css
-//        (строка-отпечаток в конце файла).
-const SHELL_REVISION = 'r1';
+//        кнопка и действие.
+//   r2 — там же: право можно не только снять, но и ВЫДАТЬ — поставить галочку
+//        в пустом квадратике («—» на экране больше нет). Решение хранится в
+//        той же строке (granted), а миграция v2.12.0 добавила функцию
+//        public.rsk_permission_granted(), политики RLS-выдачи, правку редактора
+//        смет и гейтов четырёх финансовых RPC — поэтому выдача работает и в
+//        данных, а не только в разметке. Оболочка обновилась потому, что
+//        изменились js/permissions.js, js/modules/access.js, js/i18n.js,
+//        index.html, database/schema.sql и миграция (файл кэша тот же набор —
+//        см. APP_SHELL ниже).
+const SHELL_REVISION = 'r2';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

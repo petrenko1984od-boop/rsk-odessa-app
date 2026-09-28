@@ -463,30 +463,45 @@ group by e.id, e.name;
 -- =====================================================================
 -- v2.12.0 — УПРАВЛЕНИЕ ДОСТУПАМИ (database/migrate-v2.12-role-permissions.sql)
 -- =====================================================================
--- Таблица public.role_permissions — «какие права роль ПОТЕРЯЛА». Строку пишет
--- Администратор в разделе «🔐 Доступы» (js/modules/access.js), читает каждое
--- устройство на входе (js/permissions.js → loadPermissionRevocations), и
--- проверка прав can() вычитает отзыв из заводской матрицы ROLE_PERMISSIONS.
+-- Таблица public.role_permissions — решения администратора по матрице
+-- «право × роль» (раздел «🔐 Доступы», js/modules/access.js). Пишет их
+-- Администратор, читает каждое устройство на входе (js/permissions.js →
+-- loadPermissionOverrides), а проверка прав can() применяет их к заводской
+-- матрице ROLE_PERMISSIONS: выдачи добавляет, отзывы вычитает.
 --
 --   role        text — должность из CONFIG.POSITIONS (ключ ROLE_PERMISSIONS);
 --   permission  text — право из каталога PERMISSION_CATALOG (js/permissions.js);
---   revoked     boolean — true: право снято; false: вернули заводское
---                         (строка остаётся ради истории изменений);
+--   revoked     boolean — true: право снято у роли;
+--   granted     boolean — true: право выдано роли сверх заводской матрицы;
+--                         revoked = false и granted = false вместе — вернули
+--                         заводское (строка остаётся ради истории изменений);
 --   changed_at / changed_by — время и сотрудник: их подставляет триггер
 --                         rsk_role_permissions_stamp() из сессии, не браузер;
 --   ключ (role, permission) — одна строка на одно решение; права, которых в
---                         таблице нет, работают ровно как записаны в коде.
+--                         таблице нет, работают ровно как записаны в коде;
+--   ограничение role_permissions_override_check — «снято» и «выдано» сразу
+--                         невозможно: такая строка сломала бы и экран, и базу.
 --
 -- Читают таблицу все вошедшие (политика rsk_role_permissions_select_all),
 -- меняет — ТОЛЬКО Администратор (rsk_role_permissions_write_admin: роль берётся
 -- из rsk_current_employee_role(), подменить её в браузере нельзя). Ключ anon
--- закрыт. Выдачи прав эта таблица не делает: политики RLS остальных таблиц
--- знают роли ПО ИМЕНАМ, поэтому выданное в приложении право база отклонила бы
--- при записи — новые права добавляются кодом вместе с политиками.
+-- закрыт.
 --
--- Зависимость: rsk_current_employee_role() и rsk_current_employee_id() из
--- migrate-v2.7-rls-finance.sql. Самопроверка — в конце самой миграции
--- (ok / MISSING).
+-- ВЫДАЧА РАБОТАЕТ И В ДАННЫХ. Право, поставленное галочкой, проверяет функция
+-- public.rsk_permission_granted(text) — она читает ту же таблицу. Ею дополнены
+-- политики RLS на денежные заявки и операции (rsk_cash_requests_select_granted,
+-- rsk_cash_requests_update_decision_granted, rsk_cash_requests_update_issue_granted,
+-- rsk_cash_operations_select_granted, rsk_cash_operations_insert_self_granted,
+-- rsk_cash_operations_insert_cashier_granted), политика журнала ошибок
+-- (rsk_app_errors_select_granted), функция редактора смет rsk_is_estimate_editor()
+-- и четыре финансовых RPC v2.8.0 (гейт «роль не подходит И право не выдано»).
+-- Политики добавлены дополнительными (permissive), поэтому доступ ролей может
+-- только расшириться — тот, кто работал вчера, работает и сегодня.
+--
+-- Зависимости: rsk_current_employee_role() и rsk_current_employee_id() из
+-- migrate-v2.7-rls-finance.sql, денежные таблицы и RPC v2.8.0, журнал app_errors
+-- v2.9.0, rsk_is_estimate_editor() v2.10.0. Самопроверка — в конце самой
+-- миграции (13 строк ok / MISSING).
 -- =====================================================================
 
 

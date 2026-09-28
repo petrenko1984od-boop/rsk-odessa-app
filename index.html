@@ -258,10 +258,10 @@
                     <!-- Доступы: матрица прав по ролям (js/modules/access.js, v2.12.0).
                          Виден только Администратору — право manage_access
                          (js/permissions.js → TAB_REQUIREMENTS.access), и оно же
-                         не отзывается на этом экране (LOCKED_PERMISSIONS), чтобы
-                         администратор не закрыл себе вход сюда. Та же пара правил
-                         в базе: политика RLS на таблицу role_permissions
-                         (database/migrate-v2.12-role-permissions.sql). -->
+                         не меняется на этом экране ни в одну сторону
+                         (LOCKED_PERMISSIONS), чтобы администратор не закрыл себе
+                         вход сюда. Та же пара правил в базе: политика RLS на таблицу
+                         role_permissions (database/migrate-v2.12-role-permissions.sql). -->
                     <button data-action="switchTab" data-arg="access" id="btn-access" data-i18n="access.nav" class="nav-chip px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition shadow hidden">🔐 Доступы</button>
                     <!-- Низ сайдбара: на телефоне этого элемента нет (hidden), поэтому
                          верхняя шапка собирается ровно как раньше. На ПК разделитель
@@ -726,7 +726,7 @@
                     </div>
                 </div>
 
-                <p class="text-[11px] text-gray-500 bg-white p-3 rounded-xl shadow-sm border" data-i18n="access.hint">Снятая галочка закрывает у роли раздел, кнопку и действие — решение хранится в базе и действует на всех устройствах. Выдать право, которого у роли нет, экран не может: данные защищают политики RLS в Postgres, они знают роли по именам. Клетка «—» значит, что права у роли нет, 🔒 — служебное право (вход на этот экран): его не отзывают.</p>
+                <p class="text-[11px] text-gray-500 bg-white p-3 rounded-xl shadow-sm border" data-i18n="access.hint">Галочка — право у роли работает, пустой квадратик — не работает. Поставьте галочку, и право появится у роли (раздел, кнопка, действие — сразу на всех устройствах), снимите — исчезнет. Решение уходит в базу и действует и в приложении, и в проверках базы. 🔒 — служебное право (вход на этот экран): его не меняют.</p>
 
                 <div id="access-warning" class="hidden space-y-2"></div>
 
