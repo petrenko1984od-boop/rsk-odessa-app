@@ -15,10 +15,13 @@
 //   * после правки пересчитываются только итоги и суммы строк;
 //   * сохранение неделимо: обрыв сети не оставит смету без разделов.
 //
-// СВЯЗЬ С ОБЪЕКТОМ. Смету можно привязать к объекту (projects) и перенести её
-// план в разделы объекта кнопкой «📤 В план объекта»: тогда план-факт, график
-// и заявки на материалы работают без выгрузки Excel — так же, как после
-// загрузки файла сметы (js/modules/estimate.js).
+// СВЯЗЬ С ОБЪЕКТОМ. Поля «Объект стройки (для плана и план-факта)» в редакторе
+// больше нет: смету к объекту вручную не привязывают. У смет, которые к объекту
+// уже привязаны (project_id пришёл из базы), кнопка «📤 В план объекта» работает
+// как прежде: план уходит в разделы объекта, и план-факт, график и заявки на
+// материалы обходятся без выгрузки Excel (как после загрузки файла сметы,
+// js/modules/estimate.js). Дальше связь будет обратной — объект (план-факт)
+// выбирает смету из списка смет этого раздела.
 // =====================================================================
 
 import { db, RPC_ESTIMATES } from '../database.js';
@@ -35,6 +38,7 @@ import {
 import {
     loadEstimateCatalog, getEstimateCatalog, getEstimateUnits, getEstimateCompany,
     getWorkMaterialsFor, findEstimateWork, findEstimateMaterial,
+    getEstimateWorkSectionTree,
     onEstimateCatalogChange, openEstimateCompanyModal
 } from './estimate-catalog.js';
 
@@ -58,6 +62,9 @@ const state = {
     loaded: false,
     view: 'list',          // list | editor
     list: [],
+    // Объекты (projects) нужны списку смет: у смет, привязанных к объекту раньше,
+    // в карточке видно его название. Поля «Объект стройки» в редакторе больше нет
+    // (см. шапку файла) — здесь только чтение названия.
     projects: [],
     filters: { search: '', status: '' },
     editor: null,          // смета, которую правят сейчас
@@ -105,6 +112,8 @@ function explainEstimateError(error) {
 // =====================================================================
 
 export async function loadEstimates() {
+    // Объекты читаем вместе со сметами: в карточке списка видно название объекта
+    // у смет, привязанных к нему раньше (поля «Объект стройки» в редакторе нет).
     const [estimates, projects] = await Promise.all([
         db.select('estimates', { orderBy: { column: 'created_at', asc: false } }),
         db.select('projects', { orderBy: { column: 'name', asc: true } })
@@ -456,17 +465,6 @@ function unitsOptions(selected) {
         .join('');
 }
 
-function fillProjectSelect(selected) {
-    const select = el('estimate-project');
-    if (!select) return;
-
-    select.innerHTML = '<option value="">— Без объекта —</option>' + state.projects
-        .map(project => `<option value="${project.id}">${escapeHtml(project.name)}</option>`)
-        .join('');
-
-    select.value = selected ? String(selected) : '';
-}
-
 function fillClientSelect(selected) {
     const select = el('estimate-client');
     if (!select) return;
@@ -500,11 +498,12 @@ export function renderEstimateEditor() {
     setValue('estimate-vat-base', editor.vat_base);
     setValue('estimate-status', editor.status);
 
-    fillProjectSelect(editor.project_id);
     fillClientSelect(editor.client_id);
 
     // «В план объекта» нужен и объект, и сохранённая смета: до первого
-    // сохранения переносить нечего — в базе ещё нет разделов сметы.
+    // сохранения переносить нечего — в базе ещё нет разделов сметы. Объект
+    // (project_id) приходит только из базы: поля в редакторе больше нет, и у
+    // новой сметы связи не будет — кнопку не показываем.
     const applyButton = el('estimate-apply-project-btn');
     if (applyButton) {
         const canApply = Boolean(editor.id && editor.project_id);
@@ -984,15 +983,8 @@ export function setEstimateField(event) {
     if (scope === 'estimate') {
         state.editor[field] = value;
 
-        // ПДВ и объект влияют на итоги: налог — на суммы, объект — на кнопку
-        // «В план объекта».
-        if (field === 'vat_percent' || field === 'project_id') renderEstimateTotals();
-        if (field === 'project_id') {
-            const applyButton = el('estimate-apply-project-btn');
-            if (applyButton) {
-                applyButton.classList.toggle('hidden', !(state.editor.id && state.editor.project_id));
-            }
-        }
+        // ПДВ влияет на итоги: налог считается от подытога сметы.
+        if (field === 'vat_percent') renderEstimateTotals();
         return;
     }
 
@@ -1648,6 +1640,7 @@ window.removeEstimateLimit = removeEstimateLimit;
 window.setEstimateField = setEstimateField;
 window.openEstimateWorkPicker = openEstimateWorkPicker;
 window.setEstimateWorkPickerSearch = setEstimateWorkPickerSearch;
+window.selectEstimateWork = selectEstimateWork;
 window.chooseEstimateWork = chooseEstimateWork;
 window.openEstimateMaterialPicker = openEstimateMaterialPicker;
 window.setEstimateMaterialPickerSearch = setEstimateMaterialPickerSearch;
@@ -1683,49 +1676,135 @@ onEstimateCatalogChange(() => {
 // =====================================================================
 // ВЫБОР РАБОТЫ И МАТЕРИАЛА ИЗ СПРАВОЧНИКА
 // =====================================================================
+// Окно выбора работы — в две колонки (index.html → #estimate-work-picker-modal):
+// слева дерево разделов и подразделов справочника с работами внутри, справа
+// карточка выбранной работы и материалы, которые к ней привязаны (нормы
+// расхода). Так сотрудник видит, что подставится в смету, ДО нажатия
+// «➕ Добавить в смету»: в прежнем плоском списке были только название и цены,
+// и материалы появлялись «сами собой».
+// Разделы рисуются ТЕМ ЖЕ деревом, что и в справочнике
+// (getEstimateWorkSectionTree), поэтому структура папок в окне и в прайсе одна.
 
 export function openEstimateWorkPicker(sectionKey) {
     if (!state.editor) return;
     if (!findSectionByKey(sectionKey)) return;
 
-    state.picker = { kind: 'work', sectionKey };
+    state.picker = { kind: 'work', sectionKey, workId: null };
     setValue('estimate-work-picker-search', '');
 
-    renderEstimateWorkPickerList();
+    renderEstimateWorkPicker();
     showModal('estimate-work-picker-modal');
 }
 
 export function setEstimateWorkPickerSearch(value) {
     setValue('estimate-work-picker-search', value);
-    renderEstimateWorkPickerList();
+    renderEstimateWorkPicker();
 }
 
-function renderEstimateWorkPickerList() {
+/** Перерисовывает обе половины окна: дерево работ и карточку выбранной работы. */
+function renderEstimateWorkPicker() {
+    renderEstimateWorkPickerTree();
+    renderEstimateWorkPickerPreview();
+}
+
+/** Клик по работе в дереве: подсветить её и показать её материалы справа. */
+export function selectEstimateWork(workId) {
+    if (!state.editor || state.picker?.kind !== 'work') return;
+    if (!findEstimateWork(workId)) return;
+
+    state.picker.workId = Number(workId);
+    renderEstimateWorkPicker();
+}
+
+/**
+ * Дерево окна: раздел → подраздел → работы. Показываем ВСЕ созданные разделы и
+ * подразделы (сотрудник видит ту же структуру, что в справочнике), а поиск
+ * сужает только работы: папки без подходящих работ во время поиска скрываются,
+ * иначе список из одних заголовков папок прячет найденное.
+ */
+function renderEstimateWorkPickerTree() {
     const container = el('estimate-work-picker-list');
     if (!container) return;
 
+    // Перерисовка идёт и по клику (подсветить выбранную строку): сохраняем
+    // прокрутку, иначе список прыгал бы в начало.
+    const scrollTop = container.scrollTop;
+
     const search = (el('estimate-work-picker-search')?.value || '').trim().toLowerCase();
-    const works = (getEstimateCatalog().works || [])
-        .filter(work => !search || work.name.toLowerCase().includes(search));
+    const works = getEstimateCatalog().works || [];
 
     if (works.length === 0) {
-        container.innerHTML = `
-            <p class="text-xs text-gray-500 p-4 text-center">
-                Ничего не найдено. Работы заполняются в «📚 Справочники → Работы».
-            </p>
-        `;
+        container.innerHTML = workPickerEmpty();
         return;
     }
 
-    container.innerHTML = works.map(work => `
-        <button data-action="chooseEstimateWork" data-arg="${work.id}"
-                class="w-full text-left px-3 py-2 rounded-lg hover:bg-emerald-50 border border-transparent hover:border-emerald-200 transition">
+    const bySection = new Map();
+    works
+        .filter(work => !search || work.name.toLowerCase().includes(search))
+        .forEach(work => {
+            const id = work.section_id ? Number(work.section_id) : 0;
+            if (!bySection.has(id)) bySection.set(id, []);
+            bySection.get(id).push(work);
+        });
+
+    const rows = [];
+
+    getEstimateWorkSectionTree().forEach(({ section, level }) => {
+        const own = bySection.get(Number(section.id)) || [];
+        if (search && own.length === 0) return;
+
+        rows.push(pickerSectionTitle(section, level));
+        own.forEach(work => rows.push(pickerWorkRow(work, level + 1)));
+    });
+
+    // Работы без раздела — отдельной группой внизу: потерять такую слишком легко.
+    const orphans = bySection.get(0) || [];
+    if (orphans.length > 0) {
+        rows.push(pickerSectionTitle(null, 0));
+        orphans.forEach(work => rows.push(pickerWorkRow(work, 1)));
+    }
+
+    container.innerHTML = rows.length === 0 ? workPickerEmpty() : rows.join('');
+    container.scrollTop = scrollTop;
+}
+
+/** Пустое состояние дерева: работ в прайсе нет или поиск ничего не нашёл. */
+function workPickerEmpty() {
+    return `
+        <p class="text-xs text-gray-500 p-4 text-center">
+            Ничего не найдено. Работы заполняются в «📚 Справочники → Работы».
+        </p>
+    `;
+}
+
+/** Заголовок папки в дереве: те же отступы, что у разделов справочника. */
+function pickerSectionTitle(section, level) {
+    const icon = section ? '📁' : '📄';
+    const name = section ? section.name : 'Без раздела';
+    const arrow = section && level > 0 ? '↳ ' : '';
+
+    return `
+        <p class="text-[11px] font-bold text-gray-500 pt-2 pb-1"
+           style="padding-left:${8 + level * 14}px">${arrow}${icon} ${escapeHtml(name)}</p>
+    `;
+}
+
+/** Работа в дереве: клик выбирает её (материалы показываются справа). */
+function pickerWorkRow(work, level) {
+    const active = Number(state.picker?.workId) === Number(work.id);
+
+    return `
+        <button data-action="selectEstimateWork" data-arg="${work.id}"
+                class="w-full text-left px-3 py-2 rounded-lg border transition ${active
+                    ? 'bg-emerald-50 border-emerald-300'
+                    : 'border-transparent hover:bg-emerald-50 hover:border-emerald-200'}"
+                style="padding-left:${8 + level * 14}px">
             <div class="text-sm font-medium text-gray-800">${escapeHtml(work.name)}</div>
             <div class="text-[11px] text-gray-500">
                 ${escapeHtml(work.unit)} · наряд ${formatMoney(work.price_worker)} · кошторис ${formatMoney(work.price_client)}
             </div>
         </button>
-    `).join('');
+    `;
 }
 
 export function chooseEstimateWork(workId) {
@@ -1767,6 +1846,72 @@ export function chooseEstimateWork(workId) {
     renderEstimateLimits();
 
     toast(`Добавлено: ${work.name}`, 'success');
+}
+
+/** Карточка выбранной работы: цены и материалы, привязанные к работе (нормы). */
+function renderEstimateWorkPickerPreview() {
+    const container = el('estimate-work-picker-preview');
+    if (!container) return;
+
+    const work = state.picker?.workId ? findEstimateWork(state.picker.workId) : null;
+
+    if (!work) {
+        container.innerHTML = `
+            <p class="text-xs text-gray-500 text-center pt-6">
+                Выберите работу — покажем материалы, которые к ней привязаны.
+            </p>
+        `;
+        return;
+    }
+
+    const norms = getWorkMaterialsFor(work.id);
+
+    container.innerHTML = `
+        <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Выбранная работа</p>
+        <p class="text-sm font-bold text-gray-800">${escapeHtml(work.name)}</p>
+        <p class="text-[11px] text-gray-500">
+            ${escapeHtml(work.unit)} · наряд ${formatMoney(work.price_worker)} · кошторис ${formatMoney(work.price_client)}
+        </p>
+
+        <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mt-4">
+            Материалы работы (нормы расхода)
+        </p>
+        ${norms.length === 0 ? `
+            <p class="text-[11px] text-gray-500 p-2 bg-white rounded-lg border border-dashed">
+                К работе материалы не привязаны. Добавить их можно в справочнике
+                («📚 Справочники → Работы → 📦») — тогда они подставятся в смету сами.
+            </p>
+        ` : `
+            <table class="w-full text-[11px] bg-white rounded-lg">
+                <thead class="text-gray-500">
+                    <tr>
+                        <th class="px-2 py-1 text-left">Материал</th>
+                        <th class="px-2 py-1 w-16 text-right">Расход</th>
+                        <th class="px-2 py-1 w-12 text-left">Од.</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    ${norms.map(({ material, consumption }) => `
+                        <tr>
+                            <td class="px-2 py-1 text-gray-800">
+                                ${escapeHtml(material.name)}
+                                ${material.is_customer_supplied
+                                    ? '<span class="text-[10px] px-1 rounded bg-amber-100 text-amber-800">заказчика</span>'
+                                    : ''}
+                            </td>
+                            <td class="px-2 py-1 text-right">${formatNumber(consumption, 4)}</td>
+                            <td class="px-2 py-1 text-gray-500">${escapeHtml(material.unit)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `}
+
+        <button data-action="chooseEstimateWork" data-arg="${work.id}"
+                class="w-full mt-4 bg-[#15803d] hover:bg-[#166534] text-white px-3 py-2 rounded-lg text-xs font-semibold shadow transition">
+            ➕ Добавить в смету
+        </button>
+    `;
 }
 
 /** Строка материала позиции из справочника (количество = расход × объём). */

@@ -579,6 +579,16 @@ function sectionTree(kind, parentId = null, level = 0, acc = []) {
     return acc;
 }
 
+/**
+ * Разделы работ деревом: [{ section, level }] — папка, затем её подпапки.
+ * Тем же списком показывает разделы окно «➕ Работа из справочника»
+ * (js/modules/estimates.js): дерево строится здесь, поэтому окно выбора работы
+ * и сам справочник не разойдутся.
+ */
+export function getEstimateWorkSectionTree() {
+    return sectionTree('work');
+}
+
 /** Единицы измерения сметы. */
 function renderUnitsTable() {
     if (state.units.length === 0) {
