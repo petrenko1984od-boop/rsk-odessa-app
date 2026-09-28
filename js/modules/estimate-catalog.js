@@ -292,8 +292,8 @@ export function renderEstimateCatalog() {
     // смет (Администратор, Главный инженер, Инженер ПТО). Данные в базе
     // закрыты тем же правилом (RLS → rsk_is_estimate_editor()).
     if (!can('manage_estimate')) {
-        container.innerHTML = emptyRow(
-            'Справочник смет доступен Администратору, Главному инженеру и Инженеру ПТО.', 1);
+        container.innerHTML = emptyCard('🔒', 'Справочник закрыт для этой должности',
+            'Справочник смет доступен Администратору, Главному инженеру и Инженеру ПТО.');
         // Панель папок в этом случае пуста: иначе слева остались бы разделы
         // прошлого открытия, а справа — объяснение, что доступа нет.
         const denied = document.getElementById('estimate-catalog-sections');
@@ -308,11 +308,27 @@ export function renderEstimateCatalog() {
         const btn = document.getElementById(`estimate-catalog-tab-${tab}`);
         if (!btn) return;
         const active = tab === state.activeTab;
-        btn.classList.toggle('bg-[#15803d]', active);
-        btn.classList.toggle('text-white', active);
-        btn.classList.toggle('bg-gray-100', !active);
-        btn.classList.toggle('text-gray-700', !active);
+
+        // Активная вкладка — белая «пилюля» в серой полосе (v2.12.0-r9), счётчик
+        // в ней зелёный: видно, какой прайс открыт, даже в оттенках серого.
+        btn.classList.toggle('bg-white', active);
+        btn.classList.toggle('text-[#166534]', active);
+        btn.classList.toggle('shadow-sm', active);
+        btn.classList.toggle('text-gray-600', !active);
+        btn.classList.toggle('hover:text-gray-800', !active);
+
+        const pill = document.getElementById(`estimate-catalog-tab-${tab}-count`);
+        if (pill) {
+            pill.classList.toggle('bg-emerald-100', active);
+            pill.classList.toggle('text-emerald-800', active);
+            pill.classList.toggle('bg-white/70', !active);
+            pill.classList.toggle('text-gray-500', !active);
+        }
     });
+
+    // «✕» в поле поиска показывается только тогда, когда есть что очищать.
+    const searchClear = document.getElementById('estimate-catalog-search-clear');
+    if (searchClear) searchClear.classList.toggle('hidden', !state.search);
 
     const addBtn = document.getElementById('estimate-catalog-add-btn');
     if (addBtn) addBtn.textContent = `➕ Добавить ${TAB_LABELS[state.activeTab] || ''}`.trim();
@@ -345,8 +361,24 @@ export function renderEstimateCatalog() {
         clients: renderClientsTable
     };
 
+    renderCatalogTabCounts();
     container.innerHTML = (renderers[state.activeTab] || renderWorksTable)();
     renderCatalogPaneFoot();
+}
+
+/** Счётчики в пилюлях вкладок: видно, что есть в прайсе, не открывая вкладку. */
+function renderCatalogTabCounts() {
+    const counts = {
+        works: state.works.length,
+        materials: state.materials.length,
+        units: state.units.length,
+        clients: state.clients.length
+    };
+
+    CATALOG_TABS.forEach(tab => {
+        const node = document.getElementById(`estimate-catalog-tab-${tab}-count`);
+        if (node) node.textContent = String(counts[tab] || 0);
+    });
 }
 
 /** Вид справочника по открытой вкладке: работы или материалы. */
@@ -363,6 +395,11 @@ function catalogItems(kind) {
  * Левая половина окна — папки прайса: «Все разделы», дерево разделов и группа
  * «📄 Без раздела». Клик выбирает папку, и справа остаётся только её прайс
  * (см. scopeSectionIds): работы ищут по разделам, а не листая сотни строк.
+ *
+ * Панель объясняет себя сама (v2.12.0-r9): заголовок «Папки прайса», счётчики
+ * позиций у каждой папки, «↳» и имя родителя у повторяющихся имён, а выходы
+ * «Все разделы» / «Без раздела» вынесены из прокрутки — новичок открывает окно
+ * и сразу видит, где папки, где прайс и что нажимать.
  */
 function renderCatalogSections() {
     const aside = document.getElementById('estimate-catalog-sections');
@@ -379,6 +416,7 @@ function renderCatalogSections() {
     const active = String(state.sectionFilter || '');
     const orphans = all.filter(item => !item.section_id).length;
     const tree = sectionTree(kind);
+    const nameHints = getSectionNameHints(tree);
     const rows = [];
     const collapsedLevels = [];         // уровни, внутри которых ветка свёрнута
 
@@ -402,7 +440,12 @@ function renderCatalogSections() {
             value: String(id),
             level,
             active: String(id) === active,
-            label: `📁 ${escapeHtml(section.name)}`,
+            label: `${level > 0 ? '↳ ' : ''}📁 ${escapeHtml(section.name)}`,
+            title: sectionPath(kind, id),
+            // Подсказка у папки, чьё имя повторяется в дереве («Земляные работы»
+            // внутри «Земляные работы»): без неё две одинаковые строки не отличить
+            // — именно на это и жаловались («в справочнике легко запутаться»).
+            note: nameHints.get(id) || '',
             // Счётчик — по всей ветке: у папки может быть пусто, а работы лежат
             // в подпапке, и «0» у неё выглядело бы враньём.
             count: branchItems(kind, id).length,
@@ -414,17 +457,75 @@ function renderCatalogSections() {
 
     // «Все разделы» сверху и «Без раздела» снизу не прокручиваются вместе с
     // деревом: выход к целому прайсу и к позициям без папки всегда под рукой.
+    // Заголовок панели называет колонку: новичок не догадывается, что слева
+    // именно папки прайса, а не второй список работ.
     aside.innerHTML = `
-        <div class="shrink-0 p-1.5">
-            ${sectionLink({ kind, value: '', label: '📚 Все разделы', count: all.length, level: 0, active: active === '' })}
+        <div class="shrink-0 flex items-center justify-between gap-2 px-3 pb-1 pt-2.5">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-gray-500">Папки прайса</span>
+            <span class="shrink-0 rounded-full bg-white px-1.5 text-[10px] text-gray-400 ring-1 ring-gray-200">Папок: ${tree.length}</span>
         </div>
-        <div class="flex-1 min-h-0 overflow-y-auto px-1.5 space-y-0.5">${rows.join('')}</div>
+        <div class="shrink-0 px-1.5 pb-1.5">
+            ${sectionLink({
+                kind, value: '', level: 0, active: active === '', strong: true,
+                label: '📚 Все разделы', title: 'Весь прайс целиком', count: all.length
+            })}
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto px-1.5 pb-1.5 space-y-0.5">${rows.join('')}</div>
         ${orphans > 0 ? `
-            <div class="shrink-0 p-1.5">
-                ${sectionLink({ kind, value: '0', label: '📄 Без раздела', count: orphans, level: 0, active: active === '0' })}
+            <div class="shrink-0 border-t border-gray-200 p-1.5">
+                ${sectionLink({
+                    kind, value: '0', level: 0, active: active === '0',
+                    label: '📄 Без раздела', title: 'Позиции без папки', count: orphans
+                })}
             </div>
         ` : '<div class="shrink-0 h-1.5"></div>'}
     `;
+}
+
+/** Ключ имени раздела: по нему видно, повторяется ли имя в дереве. */
+function sectionNameKey(section) {
+    return String(section.name || '').trim().toLowerCase();
+}
+
+/**
+ * Имена, которые в дереве встречаются больше одного раза. У таких папок в
+ * панели показывается родитель — иначе «Земляные работы» и её подпапка
+ * «Земляные работы» выглядят двумя одинаковыми строками.
+ */
+function repeatedNames(tree) {
+    const counts = new Map();
+
+    tree.forEach(({ section }) => {
+        const key = sectionNameKey(section);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    });
+
+    return new Set([...counts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([key]) => key));
+}
+
+/**
+ * Подсказки к папкам, чьё имя в дереве повторяется: Map(id → «Имя родителя»).
+ * Нужны и панели справочника, и дереву окна выбора работы
+ * (js/modules/estimates.js): «Земляные работы» внутри «Земляные работы» иначе
+ * выглядят двумя одинаковыми строками — с этого и начиналась путаница в
+ * справочнике.
+ */
+export function getSectionNameHints(tree) {
+    const repeated = repeatedNames(tree);
+    const byId = new Map(tree.map(({ section }) => [Number(section.id), section]));
+    const hints = new Map();
+
+    tree.forEach(({ section }) => {
+        const id = Number(section.id);
+        const parentId = section.parent_id ? Number(section.parent_id) : 0;
+        const parent = parentId ? byId.get(parentId) : null;
+
+        if (parent && repeated.has(sectionNameKey(section))) hints.set(id, `«${parent.name}»`);
+    });
+
+    return hints;
 }
 
 /** Ключ свёрнутой папки: разделы работ и материалов — разные таблицы. */
@@ -500,6 +601,9 @@ function sectionPath(kind, id) {
  * ветку. Кнопок правки и удаления здесь нет намеренно: они повторялись у
  * каждой папки и занимали пол-строки — они в полосе над прайсом, у выбранной
  * папки (см. folderActions).
+ *
+ * Выбранная строка подкрашена (emerald + ring), счётчик — «пилюлей»: глаз
+ * находит текущую папку в дереве из десятков строк, не перечитывая названия.
  */
 function sectionLink(options) {
     const guides = '<span class="shrink-0 self-stretch w-3.5 border-l border-gray-200"></span>'
@@ -511,15 +615,25 @@ function sectionLink(options) {
                     class="shrink-0 w-4 text-[10px] leading-none text-gray-500 transition hover:text-gray-900"
                     title="${options.expanded ? 'Свернуть раздел' : 'Раскрыть раздел'}">${options.expanded ? '▾' : '▸'}</button>
         `;
+    const nameClass = options.active
+        ? 'font-semibold text-emerald-900'
+        : (options.strong ? 'font-semibold text-gray-800' : 'text-gray-700');
 
     return `
-        <div class="flex items-stretch rounded-lg transition ${options.active ? 'bg-emerald-50' : 'hover:bg-white'}">
+        <div class="flex items-stretch rounded-lg transition ${options.active
+            ? 'bg-emerald-100/70 ring-1 ring-inset ring-emerald-200'
+            : 'hover:bg-white'}">
             ${guides}${chevron}
             <button data-action="selectEstimateCatalogSection" data-arg="${options.value}"
-                    class="flex-1 min-w-0 py-1.5 pr-1 text-left">
-                <span class="block truncate text-xs ${options.active ? 'font-semibold text-emerald-900' : 'text-gray-700'}">${options.label}</span>
+                    class="flex-1 min-w-0 py-2 pr-1 text-left" title="${escapeHtml(options.title || '')}">
+                <span class="flex min-w-0 items-baseline gap-1">
+                    <span class="min-w-0 truncate text-xs ${nameClass}">${options.label}</span>
+                    ${options.note ? `<span class="shrink-0 text-[10px] text-gray-400">${escapeHtml(options.note)}</span>` : ''}
+                </span>
             </button>
-            <span class="shrink-0 self-center pr-2 text-[10px] ${options.count ? 'text-gray-500' : 'text-gray-300'}">${options.count}</span>
+            <span class="shrink-0 self-center mr-1.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${options.count
+                ? (options.active ? 'bg-white font-semibold text-emerald-800' : 'bg-white/70 text-gray-500')
+                : 'text-gray-300'}">${options.count}</span>
         </div>
     `;
 }
@@ -569,29 +683,68 @@ function filterItems(items, scope = null, kind = null) {
 }
 
 /**
- * Пустое состояние списка. Обёртка-таблица нужна не для красоты: без неё
- * браузер выбрасывает `<tr>` и `<td>` (правило разбора HTML — строка таблицы
- * вне таблицы), и подсказка показывалась серым текстом без отступов и
- * выравнивания.
+ * Карточка пустого состояния. Раньше это была строка таблицы с текстом: без
+ * обёртки-таблицы браузер выбрасывал `<tr>` и `<td>` (правило разбора HTML —
+ * строка таблицы вне таблицы), но и с обёрткой подсказка была просто серым
+ * текстом без действия — сотрудник читал «прайс пуст» и не знал, что нажать.
+ * Теперь это карточка с иконкой, заголовком, объяснением и КНОПКАМИ (завести
+ * папку, добавить позицию, выйти к «Все разделы», очистить поиск).
  */
-function emptyRow(text, columns) {
+function emptyCard(icon, title, hint, actions = '') {
     return `
-        <table class="w-full text-xs">
-            <tbody>
-                <tr>
-                    <td colspan="${columns}" class="px-4 py-10 text-center text-xs text-gray-500">
-                        ${escapeHtml(text)}
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+        <div class="flex flex-col items-center justify-center gap-2 px-6 py-12 text-center">
+            <span class="text-3xl">${icon}</span>
+            ${title ? `<p class="text-sm font-semibold text-gray-700">${title}</p>` : ''}
+            <p class="max-w-lg text-xs text-gray-500">${escapeHtml(hint)}</p>
+            ${actions ? `<div class="mt-1 flex flex-wrap items-center justify-center gap-2">${actions}</div>` : ''}
+        </div>
     `;
+}
+
+/**
+ * Пустое состояние прайса: у четырёх ситуаций свой заголовок и свои кнопки.
+ * Пустой прайс — завести папку, пустая папка — добавить позицию или выйти к
+ * «Все разделы», поиск без результата — очистить запрос.
+ */
+function catalogEmptyState(kind) {
+    const id = Number(state.sectionFilter) || 0;
+
+    if (state.search) {
+        return emptyCard('🔍', 'Ничего не найдено', catalogEmptyText(kind), `
+            <button data-action="setEstimateCatalogSearch" data-arg=""
+                    class="bg-gray-900 hover:bg-gray-800 text-white px-3 py-1.5 rounded-lg text-[11px] font-semibold transition">
+                ✕ Очистить поиск</button>
+        `);
+    }
+
+    const actions = `
+        ${id ? '' : `
+            <button data-action="addEstimateFolder"
+                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition">
+                📁 Добавить раздел</button>
+        `}
+        <button data-action="addEstimateCatalogItem" data-arg="${id}"
+                class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-[11px] font-semibold shadow-sm transition">
+            ➕ ${itemTitle(kind)}</button>
+        ${id ? `
+            <button data-action="selectEstimateCatalogSection" data-arg=""
+                    class="bg-white ring-1 ring-gray-200 hover:bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition">
+                📚 Все разделы</button>
+        ` : ''}
+    `;
+
+    return emptyCard(
+        kind === 'material' ? '📦' : '🛠',
+        state.sectionFilter ? 'Здесь пока пусто' : '',
+        catalogEmptyText(kind),
+        actions
+    );
 }
 
 /** Кнопки строки справочника: правка и удаление. */
 function rowActions(actionEdit, actionDelete, id, extra = '') {
     return `
-        <td class="px-3 py-2 text-right whitespace-nowrap">
+        <td class="px-3 py-1.5 text-right align-top whitespace-nowrap">
             ${extra}
             <button data-action="${actionEdit}" data-arg="${id}" data-stop
                     class="text-xs px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition"
@@ -647,7 +800,6 @@ function catalogEmptyText(kind) {
 /** Работы: две цены рядом — сразу видно, где прибыль. */
 function renderWorksTable() {
     return renderCatalogList('work', {
-        totalColumns: 7,
         head: `
             <th class="px-3 py-2 text-left">Название работы</th>
             <th class="px-3 py-2 text-left w-44">Раздел</th>
@@ -658,29 +810,49 @@ function renderWorksTable() {
             <th class="px-3 py-2 w-28"></th>
         `,
         row: (work) => `
-            <tr class="hover:bg-gray-50">
-                <td class="px-3 py-2">
+            <tr class="hover:bg-emerald-50/40">
+                <td class="px-3 py-2 align-top">
                     <div class="font-medium text-gray-800">${escapeHtml(work.name)}</div>
                     ${work.description ? `<div class="text-[10px] text-gray-500">${escapeHtml(work.description)}</div>` : ''}
                 </td>
                 ${sectionCell('work', work.section_id)}
-                <td class="px-3 py-2 text-gray-600">${escapeHtml(work.unit)}</td>
-                <td class="px-3 py-2 text-right text-gray-700">${formatMoney(work.price_worker)}</td>
-                <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(work.price_client)}</td>
-                <td class="px-3 py-2 text-center text-gray-500">${getWorkMaterialNorms(work.id).length}</td>
-                ${rowActions('openEstimateWorkModal', 'deleteEstimateWork', work.id,
-                    `<button data-action="openEstimateWorkNorms" data-arg="${work.id}" data-stop
-                             class="text-xs px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold transition"
-                             title="Нормы расхода материалов">📦</button>`)}
+                <td class="px-3 py-2 align-top">
+                    <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">${escapeHtml(work.unit)}</span>
+                </td>
+                <td class="px-3 py-2 text-right align-top tabular-nums text-gray-700">${formatMoney(work.price_worker)}</td>
+                <td class="px-3 py-2 text-right align-top tabular-nums font-semibold text-[#166534]">${formatMoney(work.price_client)}</td>
+                <td class="px-3 py-2 text-center align-top">${normsBadge(work.id)}</td>
+                ${rowActions('openEstimateWorkModal', 'deleteEstimateWork', work.id, normsButton(work.id))}
             </tr>
         `
     });
 }
 
+/**
+ * Сколько материалов привязано к работе: «0» серым (искать нечего), число —
+ * жёлтой пилюлей, как и кнопка «📦» рядом: видно, у каких работ материалы
+ * подставятся в смету сами.
+ */
+function normsBadge(workId) {
+    const count = getWorkMaterialNorms(workId).length;
+
+    return count
+        ? `<span class="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">${count}</span>`
+        : '<span class="text-[10px] text-gray-300">0</span>';
+}
+
+/** «📦» — окно норм расхода материалов работы (сколько материала на 1 ед.). */
+function normsButton(workId) {
+    return `
+        <button data-action="openEstimateWorkNorms" data-arg="${workId}" data-stop
+                class="text-xs px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold transition"
+                title="Нормы расхода материалов">📦</button>
+    `;
+}
+
 /** Материалы: закупка/кошторис + пометка «давальческий». */
 function renderMaterialsTable() {
     return renderCatalogList('material', {
-        totalColumns: 7,
         head: `
             <th class="px-3 py-2 text-left">Название материала</th>
             <th class="px-3 py-2 text-left w-44">Раздел</th>
@@ -691,13 +863,15 @@ function renderMaterialsTable() {
             <th class="px-3 py-2 w-28"></th>
         `,
         row: (material) => `
-            <tr class="hover:bg-gray-50">
-                <td class="px-3 py-2 font-medium text-gray-800">${escapeHtml(material.name)}</td>
+            <tr class="hover:bg-emerald-50/40">
+                <td class="px-3 py-2 align-top font-medium text-gray-800">${escapeHtml(material.name)}</td>
                 ${sectionCell('material', material.section_id)}
-                <td class="px-3 py-2 text-gray-600">${escapeHtml(material.unit)}</td>
-                <td class="px-3 py-2 text-right text-gray-700">${formatMoney(material.price_purchase)}</td>
-                <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(material.price_client)}</td>
-                <td class="px-3 py-2 text-center">
+                <td class="px-3 py-2 align-top">
+                    <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">${escapeHtml(material.unit)}</span>
+                </td>
+                <td class="px-3 py-2 text-right align-top tabular-nums text-gray-700">${formatMoney(material.price_purchase)}</td>
+                <td class="px-3 py-2 text-right align-top tabular-nums font-semibold text-[#166534]">${formatMoney(material.price_client)}</td>
+                <td class="px-3 py-2 text-center align-top">
                     ${material.is_customer_supplied
                         ? '<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">заказчика</span>'
                         : '<span class="text-[10px] text-gray-400">наш</span>'}
@@ -733,15 +907,18 @@ function renderCatalogPaneHead() {
     const kind = catalogKind();
     const value = String(state.sectionFilter || '');
     const shown = filterItems(catalogItems(kind), scopeSectionIds(kind), kind).length;
-    const counter = `<span class="shrink-0 text-[11px] text-gray-400">· ${shown} ${itemsWord(shown)}</span>`;
+    // Счётчик — зелёной «пилюлей»: это число позиций в показанном прайсе,
+    // по нему сразу видно, попал ли в выборку нужный раздел.
+    const counter = `<span class="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">${shown} ${itemsWord(shown)}</span>`;
 
     if (!value) {
         head.innerHTML = `
             <div class="flex min-w-0 items-center gap-2">
-                <span class="shrink-0 text-xs font-semibold text-gray-700">📚 Все разделы</span>
+                <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-xs">📚</span>
+                <span class="shrink-0 text-xs font-semibold text-gray-700">Все разделы</span>
                 ${counter}
             </div>
-            <p class="ml-auto hidden shrink-0 text-[11px] text-gray-400 lg:block">
+            <p class="ml-auto hidden shrink-0 text-[11px] text-gray-400 xl:block">
                 Выбери папку слева — останется только её прайс
             </p>
         `;
@@ -751,16 +928,15 @@ function renderCatalogPaneHead() {
     const id = Number(value) || 0;
     const crumbs = id
         ? sectionChain(kind, id).map(section => crumbHtml(kind, section))
-            .join('<span class="shrink-0 text-gray-300">›</span>')
+            .join('<span class="shrink-0 px-0.5 text-gray-300">›</span>')
         : '<span class="shrink-0 text-xs font-semibold text-gray-700">📄 Без раздела</span>';
 
     head.innerHTML = `
         <div class="flex min-w-0 items-center gap-1.5">
-            ${id ? '<span class="shrink-0 text-xs text-gray-400">📁</span>' : ''}
             ${crumbs}
             ${counter}
         </div>
-        <div class="ml-auto flex shrink-0 items-center gap-1">${folderActions(kind, id)}</div>
+        <div class="ml-auto flex shrink-0 items-center gap-1.5">${folderActions(kind, id)}</div>
     `;
 }
 
@@ -785,11 +961,13 @@ function crumbHtml(kind, section) {
  * Кнопки выбранной папки: подпапка внутри, позиция внутри, переименовать,
  * удалить. Позиция создаётся СРАЗУ в этой папке — окно откроется с уже
  * выбранным разделом, поэтому прайс заполняется сверху вниз, от папки к работе.
+ * Кнопки «папки» стоят вместе, «служебные» ✏/🗑 — отдельно: новичок жмёт
+ * зелёную кнопку и не боится задеть удаление раздела.
  */
 function folderActions(kind, id) {
     const addItem = `
         <button data-action="addEstimateCatalogItem" data-arg="${id}"
-                class="bg-[#15803d] hover:bg-[#166534] text-white px-2 py-1 rounded-lg text-[11px] font-semibold transition"
+                class="bg-[#15803d] hover:bg-[#166534] text-white px-2.5 py-1 rounded-lg text-[11px] font-semibold shadow-sm transition"
                 title="Добавить ${itemWord(kind)} в этот раздел">➕ ${itemTitle(kind)}</button>
     `;
 
@@ -797,10 +975,12 @@ function folderActions(kind, id) {
     if (!id) return addItem;
 
     return `
-        <button data-action="addEstimateSubsection" data-arg="${kind}:${id}"
-                class="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-2 py-1 rounded-lg text-[11px] font-semibold transition"
-                title="Создать папку внутри">📁➕ Подраздел</button>
-        ${addItem}
+        <div class="flex items-center gap-1 rounded-lg bg-gray-100 p-0.5">
+            <button data-action="addEstimateSubsection" data-arg="${kind}:${id}"
+                    class="bg-white hover:bg-emerald-50 text-emerald-800 px-2 py-1 rounded-md text-[11px] font-semibold shadow-sm transition"
+                    title="Создать папку внутри">📁➕ Подраздел</button>
+            ${addItem}
+        </div>
         <button data-action="openEstimateSectionModal" data-arg="edit:${kind}:${id}"
                 class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded-lg text-[11px] font-semibold transition"
                 title="Переименовать раздел">✏</button>
@@ -810,12 +990,16 @@ function folderActions(kind, id) {
     `;
 }
 
-/** Полоса под таблицей: сколько строк показано и на какую сумму. */
+/**
+ * Полоса под таблицей: сколько строк показано и на какую сумму. Раньше тут
+ * стояло просто «Итого» — внутри папки непонятно, итого по чему. Теперь полоса
+ * называет охват («по всему прайсу» или «в папке «Покрівля»»).
+ */
 function renderCatalogPaneFoot() {
     const foot = document.getElementById('estimate-catalog-pane-foot');
     if (!foot) return;
 
-    const search = state.search ? `🔍 «${state.search}» · ` : '';
+    const search = state.search ? `🔍 «${escapeHtml(state.search)}» · ` : '';
 
     if (state.activeTab === 'units' || state.activeTab === 'clients') {
         const units = state.activeTab === 'units';
@@ -831,7 +1015,17 @@ function renderCatalogPaneFoot() {
         ? `закупка ${sum('price_purchase')} · костор. ${sum('price_client')}`
         : `наряд ${sum('price_worker')} · костор. ${sum('price_client')}`;
 
-    foot.innerHTML = `${search}Итого: ${items.length} ${itemsWord(items.length)} · ${prices}`;
+    foot.innerHTML = `${search}${catalogScopeText(kind)}: ${items.length} ${itemsWord(items.length)} · ${prices}`;
+}
+
+/** Охват полосы итогов: весь прайс, папка или позиции без раздела. */
+function catalogScopeText(kind) {
+    const id = Number(state.sectionFilter) || 0;
+
+    if (!id) return state.sectionFilter === '0' ? 'Итого без раздела' : 'Итого по всему прайсу';
+
+    const name = (sectionList(kind).find(section => Number(section.id) === id) || {}).name;
+    return name ? `Итого в папке «${name}»` : 'Итого по всему прайсу';
 }
 
 /** Склонение слова «позиция» для подписи у папки. */
@@ -842,18 +1036,44 @@ function itemsWord(count) {
     return 'позиций';
 }
 
-/** Ячейка «Раздел»: папка позиции, полный путь — в подсказке. */
+/**
+ * Ячейка «Раздел»: папка позиции «пилюлей», полный путь — в подсказке.
+ * Внутри выбранной папки показывается только ПОДпапка позиции
+ * (relativeSectionPath): повторять в каждой строке имя папки, которая и так
+ * открыта слева, — это тот шум, из-за которого прайс читался тяжело.
+ */
 function sectionCell(kind, sectionId) {
-    if (!sectionId) return '<td class="px-3 py-2 text-gray-400">— без раздела —</td>';
+    if (!sectionId) {
+        return `<td class="px-3 py-2 align-top">
+            <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-400">без раздела</span>
+        </td>`;
+    }
 
     const known = sectionPath(kind, sectionId);
     const text = known || 'раздел не найден';
 
     return `
-        <td class="px-3 py-2 text-gray-500">
-            <span class="block max-w-[11rem] truncate" title="${escapeHtml(text)}">📁 ${escapeHtml(text)}</span>
+        <td class="px-3 py-2 align-top">
+            <span class="inline-flex max-w-[11rem] items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[10px] text-gray-600 ring-1 ring-gray-200"
+                  title="${escapeHtml(text)}">
+                <span>📁</span>
+                <span class="truncate">${escapeHtml(relativeSectionPath(kind, sectionId))}</span>
+            </span>
         </td>
     `;
+}
+
+/** Путь раздела без выбранной папки: остаётся только подпапка позиции. */
+function relativeSectionPath(kind, sectionId) {
+    const chain = sectionChain(kind, sectionId);
+    const id = Number(state.sectionFilter) || 0;
+    const at = id ? chain.findIndex(section => Number(section.id) === id) : -1;
+
+    if (at >= 0 && at < chain.length - 1) {
+        return chain.slice(at + 1).map(section => section.name).join(' › ');
+    }
+
+    return chain.map(section => section.name).join(' › ');
 }
 
 /**
@@ -891,14 +1111,14 @@ function renderCatalogList(kind, options) {
         .sort((a, b) => rank(a) - rank(b))
         .map(options.row);
 
-    if (rows.length === 0) return emptyRow(catalogEmptyText(kind), options.totalColumns);
+    if (rows.length === 0) return catalogEmptyState(kind);
 
     return `
         <table class="w-full text-xs">
-            <thead class="sticky top-0 z-10 bg-gray-50 text-gray-600">
+            <thead class="sticky top-0 z-10 border-b border-gray-200 bg-gray-50 text-gray-600">
                 <tr>${options.head}</tr>
             </thead>
-            <tbody class="divide-y">${rows.join('')}</tbody>
+            <tbody class="divide-y divide-gray-100">${rows.join('')}</tbody>
         </table>
     `;
 }
@@ -965,7 +1185,8 @@ export function getEstimateWorkSectionTree() {
 /** Единицы измерения сметы. */
 function renderUnitsTable() {
     if (state.units.length === 0) {
-        return emptyRow('Единиц измерения нет. Их список задан в CONFIG.ESTIMATE.UNITS — можно добавить свою.', 3);
+        return emptyCard('📏', 'Единиц измерения нет',
+            'Список задан в CONFIG.ESTIMATE.UNITS — можно добавить свою единицу.');
     }
 
     return `
@@ -1133,7 +1354,8 @@ export async function deleteEstimateWork(id) {
 
 function renderClientsTable() {
     if (state.clients.length === 0) {
-        return emptyRow('Клиентов пока нет. Заказчик попадает в шапку кошториса и наряда.', 5);
+        return emptyCard('👥', 'Клиентов пока нет',
+            'Заказчик попадает в шапку кошториса и наряда — добавь первого кнопкой сверху.');
     }
 
     return `

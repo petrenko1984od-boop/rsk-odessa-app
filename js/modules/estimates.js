@@ -38,7 +38,7 @@ import {
 import {
     loadEstimateCatalog, getEstimateCatalog, getEstimateUnits, getEstimateCompany,
     getWorkMaterialsFor, findEstimateWork, findEstimateMaterial,
-    getEstimateWorkSectionTree,
+    getEstimateWorkSectionTree, getSectionNameHints,
     onEstimateCatalogChange, openEstimateCompanyModal
 } from './estimate-catalog.js';
 
@@ -1640,6 +1640,8 @@ window.removeEstimateLimit = removeEstimateLimit;
 window.setEstimateField = setEstimateField;
 window.openEstimateWorkPicker = openEstimateWorkPicker;
 window.setEstimateWorkPickerSearch = setEstimateWorkPickerSearch;
+window.expandEstimateWorkPickerAll = expandEstimateWorkPickerAll;
+window.collapseEstimateWorkPickerAll = collapseEstimateWorkPickerAll;
 window.selectEstimateWork = selectEstimateWork;
 window.toggleEstimateWorkPickerSection = toggleEstimateWorkPickerSection;
 window.chooseEstimateWork = chooseEstimateWork;
@@ -1684,15 +1686,29 @@ onEstimateCatalogChange(() => {
 // «➕ Добавить в смету»: в прежнем плоском списке были только название и цены,
 // и материалы появлялись «сами собой».
 // Разделы рисуются ТЕМ ЖЕ деревом, что и в справочнике
-// (getEstimateWorkSectionTree), поэтому структура папок в окне и в прайсе одна.
+// (getEstimateWorkSectionTree), поэтому структура папок в окне и в прайсе одна,
+// а подсказки ««Родитель»» у папок с одинаковым именем считает справочник
+// (getSectionNameHints) — окно и прайс называют разделы одинаково.
+// Папки при открытии СВЁРНУТЫ (v2.12.0-r9): у прайса на сотни работ дерево,
+// раскрытое целиком, читается как одна простыня. Поиск показывает работы
+// ПЛОСКИМ списком с папкой в строке — в дереве найденное пришлось бы искать
+// глазами по раскрытым папкам.
 
 export function openEstimateWorkPicker(sectionKey) {
     if (!state.editor) return;
     if (!findSectionByKey(sectionKey)) return;
 
-    // collapsed — свёрнутые папки (id разделов; 0 — группа «Без раздела»):
-    // прайс большой, и работы нужного раздела открывают, не листая остальные.
-    state.picker = { kind: 'work', sectionKey, workId: null, collapsed: new Set() };
+    // collapsed — свёрнутые папки (id разделов; 0 — группа «Без раздела»).
+    // При открытии свёрнуты ВСЕ папки (v2.12.0-r9): у прайса на сотни работ
+    // развёрнутое дерево выглядит одной простынёй, и новый сотрудник не видит,
+    // что это разделы, а не список работ. Группа «Без раздела» остаётся
+    // раскрытой: её название ничего не говорит о том, что внутри.
+    state.picker = {
+        kind: 'work',
+        sectionKey,
+        workId: null,
+        collapsed: new Set(workPickerSectionIds())
+    };
     setValue('estimate-work-picker-search', '');
 
     renderEstimateWorkPicker();
@@ -1704,8 +1720,36 @@ export function setEstimateWorkPickerSearch(value) {
     renderEstimateWorkPicker();
 }
 
+/** «▾ Раскрыть всё»: открыть все папки дерева, не кликая по каждой. */
+export function expandEstimateWorkPickerAll() {
+    if (!state.editor || state.picker?.kind !== 'work') return;
+
+    pickerCollapsed().clear();
+    renderEstimateWorkPickerTree();
+}
+
+/** «▸ Свернуть всё»: оставить только папки — по ним и ищут нужный раздел. */
+export function collapseEstimateWorkPickerAll() {
+    if (!state.editor || state.picker?.kind !== 'work') return;
+
+    const collapsed = pickerCollapsed();
+    workPickerSectionIds().forEach(id => collapsed.add(id));
+
+    renderEstimateWorkPickerTree();
+}
+
+/** Id всех папок прайса: стартовое состояние дерева и кнопка «▸ Свернуть всё». */
+function workPickerSectionIds() {
+    return getEstimateWorkSectionTree().map(({ section }) => Number(section.id));
+}
+
 /** Перерисовывает обе половины окна: дерево работ и карточку выбранной работы. */
 function renderEstimateWorkPicker() {
+    // «✕» в поиске показывается только тогда, когда есть что очищать.
+    const search = el('estimate-work-picker-search');
+    const clear = el('estimate-work-picker-search-clear');
+    if (clear) clear.classList.toggle('hidden', !(search?.value || '').trim());
+
     renderEstimateWorkPickerTree();
     renderEstimateWorkPickerPreview();
 }
@@ -1741,15 +1785,15 @@ export function toggleEstimateWorkPickerSection(sectionId) {
 }
 
 /**
- * Дерево окна: раздел → подраздел → работы. Показываем ВСЕ созданные разделы и
- * подразделы (сотрудник видит ту же структуру, что в справочнике), а папки
- * сворачиваются кликом по заголовку — открыть работы нужного раздела, не
- * листая прайс целиком. У заголовка видно количество работ ВСЕЙ ветки (вместе
- * с подпапками): по нему понятно, есть ли в свёрнутой папке что раскрывать.
- *
- * Поиск сужает только работы и раскрывает папки принудительно: иначе найденное
- * спряталось бы в свёрнутой папке. Папки без найденных работ во время поиска не
- * показываются — иначе список был бы из одних заголовков.
+ * Левая половина окна. Два режима (v2.12.0-r9):
+ *   * дерево — раздел → подраздел → работы. Показываем ВСЕ созданные разделы
+ *     (сотрудник видит ту же структуру, что в справочнике), папки свёрнуты и
+ *     раскрываются кликом по заголовку. У заголовка — количество работ ВСЕЙ
+ *     ветки, поэтому видно, есть ли в свёрнутой папке что раскрывать;
+ *   * результаты поиска — ПЛОСКИЙ список работ с папкой в строке: найденное в
+ *     дереве пришлось бы искать глазами по раскрытым папкам.
+ * Над списком — полоса: что это за колонка, сколько работ, кнопки «Раскрыть папки»
+ * и «Свернуть папки».
  */
 function renderEstimateWorkPickerTree() {
     const container = el('estimate-work-picker-list');
@@ -1767,7 +1811,57 @@ function renderEstimateWorkPickerTree() {
         return;
     }
 
+    const found = works.filter(work => !search || work.name.toLowerCase().includes(search));
+    const body = search ? pickerSearchRows(found) : pickerTreeRows(found);
+
+    container.innerHTML = `
+        <div class="sticky top-0 z-10 flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2">
+            ${pickerPanelHead(works.length, found.length, Boolean(search))}
+        </div>
+        <div class="p-2 space-y-0.5">${body}</div>
+    `;
+
+    container.scrollTop = scrollTop;
+}
+
+/**
+ * Полоса над списком: «Разделы справочника», счётчик работ и кнопки раскрытия.
+ * Кнопки показываются по состоянию дерева: «▾ Раскрыть папки» — когда есть
+ * свёрнутые папки, «▸ Свернуть папки» — когда есть раскрытые.
+ */
+function pickerPanelHead(total, found, searching) {
+    const collapsed = pickerCollapsed();
+    const folders = workPickerSectionIds();
+    const count = searching
+        ? `<span class="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">Найдено: ${found}</span>`
+        : `<span class="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] text-gray-500 ring-1 ring-gray-200">Работ: ${total}</span>`;
+    const buttons = searching ? '' : `
+        ${folders.some(id => collapsed.has(id)) ? `
+            <button data-action="expandEstimateWorkPickerAll" title="Раскрыть все папки"
+                    class="shrink-0 rounded-lg bg-white px-2 py-1 text-[10px] font-semibold text-gray-600 ring-1 ring-gray-200 transition hover:bg-gray-100">▾ Раскрыть папки</button>
+        ` : ''}
+        ${folders.some(id => !collapsed.has(id)) ? `
+            <button data-action="collapseEstimateWorkPickerAll" title="Оставить только папки"
+                    class="shrink-0 rounded-lg bg-white px-2 py-1 text-[10px] font-semibold text-gray-600 ring-1 ring-gray-200 transition hover:bg-gray-100">▸ Свернуть папки</button>
+        ` : ''}
+    `;
+
+    return `
+        <span class="min-w-0 truncate text-[10px] font-bold uppercase tracking-wider text-gray-500">Разделы справочника</span>
+        ${count}
+        <span class="ml-auto flex shrink-0 items-center gap-1">${buttons}</span>
+    `;
+}
+
+/**
+ * Дерево папок: у каждой — сколько работ в её ветке, а под раскрытой папкой её
+ * собственные работы. Свёрнутая папка прячет и свои работы, и подпапки целиком.
+ */
+function pickerTreeRows(works) {
     const sections = getEstimateWorkSectionTree();
+    // ««Родитель»» у папок с повторяющимся именем: «Земляные работы» внутри
+    // «Земляные работы» иначе не отличить.
+    const hints = getSectionNameHints(sections);
 
     // Родитель каждого раздела: по нему считаются работы ветки и прячутся
     // подпапки свёрнутой папки.
@@ -1777,27 +1871,22 @@ function renderEstimateWorkPickerTree() {
     const bySection = new Map();
     const branchCount = new Map();
 
-    works
-        .filter(work => !search || work.name.toLowerCase().includes(search))
-        .forEach(work => {
-            const id = work.section_id ? Number(work.section_id) : 0;
-            if (!bySection.has(id)) bySection.set(id, []);
-            bySection.get(id).push(work);
+    works.forEach(work => {
+        const id = work.section_id ? Number(work.section_id) : 0;
+        if (!bySection.has(id)) bySection.set(id, []);
+        bySection.get(id).push(work);
 
-            // Считаем ветку: у папки с подпапками своих работ может и не быть.
-            const seen = new Set();
-            let current = id;
-            while (current && !seen.has(current)) {
-                seen.add(current);
-                branchCount.set(current, (branchCount.get(current) || 0) + 1);
-                current = parentOf.get(current) || 0;
-            }
-        });
+        // Считаем ветку: у папки с подпапками своих работ может и не быть.
+        const seen = new Set();
+        let current = id;
+        while (current && !seen.has(current)) {
+            seen.add(current);
+            branchCount.set(current, (branchCount.get(current) || 0) + 1);
+            current = parentOf.get(current) || 0;
+        }
+    });
 
-    // Свёрнутая папка прячет и свои работы, и подпапки целиком. Во время поиска
-    // вложенность раскрываем принудительно: иначе найденное осталось бы
-    // невидимым в свёрнутой папке.
-    const collapsed = search ? new Set() : pickerCollapsed();
+    const collapsed = pickerCollapsed();
     const hidden = new Set();
 
     const inCollapsedFolder = (id) => {
@@ -1828,12 +1917,9 @@ function renderEstimateWorkPickerTree() {
 
         const own = bySection.get(id) || [];
         const total = branchCount.get(id) || 0;
-
-        if (search && total === 0) return;
-
         const folded = collapsed.has(id);
 
-        rows.push(pickerSectionTitle(section, level, total, folded));
+        rows.push(pickerSectionTitle(section, level, total, folded, hints.get(id) || ''));
         if (!folded) own.forEach(work => rows.push(pickerWorkRow(work, level + 1)));
     });
 
@@ -1846,15 +1932,57 @@ function renderEstimateWorkPickerTree() {
         if (!folded) orphans.forEach(work => rows.push(pickerWorkRow(work, 1)));
     }
 
-    container.innerHTML = rows.length === 0 ? workPickerEmpty() : rows.join('');
-    container.scrollTop = scrollTop;
+    return rows.length ? rows.join('') : workPickerEmpty();
+}
+
+/**
+ * Результаты поиска — плоским списком: у каждой работы видно свою папку
+ * (workSectionPath), поэтому раскрывать папки не нужно вовсе. Порядок — по
+ * папкам, как в дереве, затем по названию работы.
+ */
+function pickerSearchRows(works) {
+    if (works.length === 0) return workPickerEmpty();
+
+    return works
+        .slice()
+        .sort((a, b) => workSectionPath(a.section_id).localeCompare(workSectionPath(b.section_id))
+            || String(a.name).localeCompare(String(b.name)))
+        .map(work => pickerWorkRow(work, 0, workSectionPath(work.section_id)))
+        .join('');
+}
+
+/** Путь раздела работы по дереву справочника: «Земляные работы › Разработка грунта». */
+function workSectionPath(sectionId) {
+    if (!sectionId) return '';
+
+    const byId = new Map(getEstimateWorkSectionTree()
+        .map(({ section }) => [Number(section.id), section]));
+    const names = [];
+    const seen = new Set();
+    let current = Number(sectionId);
+
+    while (current && !seen.has(current)) {
+        seen.add(current);
+
+        const section = byId.get(current);
+        if (!section) break;
+
+        names.unshift(section.name);
+        current = section.parent_id ? Number(section.parent_id) : 0;
+    }
+
+    return names.join(' › ');
 }
 
 /** Пустое состояние дерева: работ в прайсе нет или поиск ничего не нашёл. */
 function workPickerEmpty() {
+    const searching = Boolean((el('estimate-work-picker-search')?.value || '').trim());
+
     return `
-        <p class="text-xs text-gray-500 p-4 text-center">
-            Ничего не найдено. Работы заполняются в «📚 Справочники → Работы».
+        <p class="px-4 py-6 text-center text-xs text-gray-500">
+            ${searching
+                ? 'Ничего не найдено. Работы заполняются в «📚 Справочники → Работы».'
+                : 'Работ нет. Их заполняют в «📚 Справочники → Работы».'}
         </p>
     `;
 }
@@ -1863,9 +1991,10 @@ function workPickerEmpty() {
  * Заголовок папки в дереве: отступы как у разделов справочника, но это КНОПКА —
  * клик сворачивает и раскрывает папку (toggleEstimateWorkPickerSection).
  * Стрелка и счётчик работ ветки показывают состояние, поэтому у свёрнутой папки
- * видно, есть ли что раскрывать.
+ * видно, есть ли что раскрывать. Подсказка note — ««Родитель»» у папок с
+ * повторяющимся именем: без неё две строки «Земляные работы» не отличить.
  */
-function pickerSectionTitle(section, level, count, folded) {
+function pickerSectionTitle(section, level, count, folded, note = '') {
     const id = section ? Number(section.id) : 0;
     const icon = section ? '📁' : '📄';
     const name = section ? section.name : 'Без раздела';
@@ -1873,29 +2002,46 @@ function pickerSectionTitle(section, level, count, folded) {
 
     return `
         <button data-action="toggleEstimateWorkPickerSection" data-arg="${id}"
-                class="w-full flex items-center gap-1 py-1.5 pr-2 rounded-lg hover:bg-gray-100 transition text-left"
+                class="flex w-full items-center gap-1.5 rounded-lg py-2 pr-2 text-left transition hover:bg-white"
                 style="padding-left:${8 + level * 14}px"
                 title="${folded ? 'Раскрыть раздел' : 'Свернуть раздел'}">
-            <span class="text-[10px] text-gray-400 w-3 shrink-0">${folded ? '▸' : '▾'}</span>
-            <span class="text-[11px] font-bold text-gray-600 truncate">${arrow}${icon} ${escapeHtml(name)}</span>
-            <span class="text-[10px] text-gray-400 shrink-0">· ${count} поз.</span>
+            <span class="w-3 shrink-0 text-[10px] text-gray-400">${folded ? '▸' : '▾'}</span>
+            <span class="min-w-0 truncate text-[11px] font-bold text-gray-700">${arrow}${icon} ${escapeHtml(name)}</span>
+            ${note ? `<span class="shrink-0 text-[10px] text-gray-400">${escapeHtml(note)}</span>` : ''}
+            <span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${count
+                ? 'bg-white text-gray-500 ring-1 ring-gray-200'
+                : 'text-gray-300'}">${count}</span>
         </button>
     `;
 }
 
-/** Работа в дереве: клик выбирает её (материалы показываются справа). */
-function pickerWorkRow(work, level) {
+/**
+ * Работа в дереве: клик выбирает её (материалы показываются справа). В строке
+ * видно единицу измерения, обе цены и пилюлю «📦 N» — сколько материалов
+ * подставится в смету по нормам. Для результатов поиска (path) сверху
+ * печатается папка работы: искать её в дереве не нужно.
+ */
+function pickerWorkRow(work, level, path = '') {
     const active = Number(state.picker?.workId) === Number(work.id);
+    const norms = getWorkMaterialsFor(work.id).length;
 
     return `
         <button data-action="selectEstimateWork" data-arg="${work.id}"
-                class="w-full text-left px-3 py-2 rounded-lg border transition ${active
-                    ? 'bg-emerald-50 border-emerald-300'
-                    : 'border-transparent hover:bg-emerald-50 hover:border-emerald-200'}"
-                style="padding-left:${8 + level * 14}px">
-            <div class="text-sm font-medium text-gray-800">${escapeHtml(work.name)}</div>
-            <div class="text-[11px] text-gray-500">
-                ${escapeHtml(work.unit)} · наряд ${formatMoney(work.price_worker)} · кошторис ${formatMoney(work.price_client)}
+                class="block w-full rounded-xl border py-2 pr-2 text-left transition ${active
+                    ? 'border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200'
+                    : 'border-transparent hover:border-emerald-200 hover:bg-emerald-50'}"
+                style="padding-left:${12 + level * 14}px">
+            ${path ? `<div class="truncate text-[10px] text-gray-400" title="${escapeHtml(path)}">📁 ${escapeHtml(path)}</div>` : ''}
+            <div class="flex items-start justify-between gap-2">
+                <span class="min-w-0 text-sm font-medium text-gray-800">${escapeHtml(work.name)}</span>
+                ${norms ? `<span class="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                                  title="Материалы работы (нормы расхода): ${norms}">📦 ${norms}</span>` : ''}
+            </div>
+            <div class="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-gray-500">
+                <span class="rounded bg-gray-100 px-1.5 py-0.5">${escapeHtml(work.unit)}</span>
+                <span class="tabular-nums">наряд ${formatMoney(work.price_worker)}</span>
+                <span class="text-gray-300">·</span>
+                <span class="tabular-nums font-semibold text-[#166534]">кошторис ${formatMoney(work.price_client)}</span>
             </div>
         </button>
     `;
@@ -1942,7 +2088,13 @@ export function chooseEstimateWork(workId) {
     toast(`Добавлено: ${work.name}`, 'success');
 }
 
-/** Карточка выбранной работы: цены и материалы, привязанные к работе (нормы). */
+/**
+ * Правая половина окна — карточка выбранной работы: путь до папки, две цены
+ * плитками, материалы по нормам и кнопка «➕ Добавить в смету» внизу (она
+ * «прилипает» к низу колонки, чтобы не искать её прокруткой). Пока работу не
+ * выбрали, вместо карточки — три шага словами: окно, которое просто молчит,
+ * новый сотрудник читает как «здесь ничего нет».
+ */
 function renderEstimateWorkPickerPreview() {
     const container = el('estimate-work-picker-preview');
     if (!container) return;
@@ -1951,60 +2103,89 @@ function renderEstimateWorkPickerPreview() {
 
     if (!work) {
         container.innerHTML = `
-            <p class="text-xs text-gray-500 text-center pt-6">
-                Выберите работу — покажем материалы, которые к ней привязаны.
-            </p>
+            <div class="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-10 text-center">
+                <span class="text-3xl">👈</span>
+                <p class="text-sm font-semibold text-gray-700">Выбери работу слева</p>
+                <ol class="space-y-1 text-left text-[11px] text-gray-500">
+                    <li>1. Раскрой папку — клик по её названию.</li>
+                    <li>2. Кликни работу: справа появятся её материалы.</li>
+                    <li>3. Нажми «➕ Добавить в смету» — работа попадёт в раздел.</li>
+                </ol>
+            </div>
         `;
         return;
     }
 
     const norms = getWorkMaterialsFor(work.id);
+    const path = workSectionPath(work.section_id);
 
     container.innerHTML = `
-        <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Выбранная работа</p>
-        <p class="text-sm font-bold text-gray-800">${escapeHtml(work.name)}</p>
-        <p class="text-[11px] text-gray-500">
-            ${escapeHtml(work.unit)} · наряд ${formatMoney(work.price_worker)} · кошторис ${formatMoney(work.price_client)}
-        </p>
+        <div class="rounded-xl border bg-white p-3">
+            <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Выбранная работа</p>
+            <p class="text-sm font-bold text-gray-800">${escapeHtml(work.name)}</p>
+            ${path ? `
+                <p class="truncate text-[10px] text-gray-400" title="${escapeHtml(path)}">📁 ${escapeHtml(path)}</p>
+            ` : ''}
+            <div class="mt-2 grid grid-cols-2 gap-2">
+                <div class="rounded-lg bg-gray-50 p-2">
+                    <p class="text-[10px] text-gray-500">Наряд (рабочим)</p>
+                    <p class="text-sm font-semibold tabular-nums text-gray-800">${formatMoney(work.price_worker)}</p>
+                </div>
+                <div class="rounded-lg bg-emerald-50 p-2">
+                    <p class="text-[10px] text-emerald-700">Кошторис (заказчику)</p>
+                    <p class="text-sm font-bold tabular-nums text-[#166534]">${formatMoney(work.price_client)}</p>
+                </div>
+            </div>
+        </div>
 
-        <p class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mt-4">
+        <p class="mt-3 flex items-center gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
             Материалы работы (нормы расхода)
+            <span class="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">${norms.length}</span>
         </p>
         ${norms.length === 0 ? `
-            <p class="text-[11px] text-gray-500 p-2 bg-white rounded-lg border border-dashed">
+            <p class="mt-1 rounded-xl border border-dashed bg-gray-50 p-3 text-[11px] text-gray-500">
                 К работе материалы не привязаны. Добавить их можно в справочнике
                 («📚 Справочники → Работы → 📦») — тогда они подставятся в смету сами.
             </p>
         ` : `
-            <table class="w-full text-[11px] bg-white rounded-lg">
-                <thead class="text-gray-500">
-                    <tr>
-                        <th class="px-2 py-1 text-left">Материал</th>
-                        <th class="px-2 py-1 w-16 text-right">Расход</th>
-                        <th class="px-2 py-1 w-12 text-left">Од.</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-                    ${norms.map(({ material, consumption }) => `
+            <div class="mt-1 overflow-hidden rounded-xl border bg-white">
+                <table class="w-full text-[11px]">
+                    <thead class="bg-gray-50 text-gray-500">
                         <tr>
-                            <td class="px-2 py-1 text-gray-800">
-                                ${escapeHtml(material.name)}
-                                ${material.is_customer_supplied
-                                    ? '<span class="text-[10px] px-1 rounded bg-amber-100 text-amber-800">заказчика</span>'
-                                    : ''}
-                            </td>
-                            <td class="px-2 py-1 text-right">${formatNumber(consumption, 4)}</td>
-                            <td class="px-2 py-1 text-gray-500">${escapeHtml(material.unit)}</td>
+                            <th class="px-2 py-1 text-left">Материал</th>
+                            <th class="px-2 py-1 w-16 text-right">Расход</th>
+                            <th class="px-2 py-1 w-12 text-left">Од.</th>
                         </tr>
-                    `).join('')}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        ${norms.map(({ material, consumption }) => `
+                            <tr>
+                                <td class="px-2 py-1 text-gray-800">
+                                    ${escapeHtml(material.name)}
+                                    ${material.is_customer_supplied
+                                        ? '<span class="text-[10px] px-1 rounded bg-amber-100 text-amber-800">заказчика</span>'
+                                        : ''}
+                                </td>
+                                <td class="px-2 py-1 text-right tabular-nums">${formatNumber(consumption, 4)}</td>
+                                <td class="px-2 py-1 text-gray-500">${escapeHtml(material.unit)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
         `}
 
-        <button data-action="chooseEstimateWork" data-arg="${work.id}"
-                class="w-full mt-4 bg-[#15803d] hover:bg-[#166534] text-white px-3 py-2 rounded-lg text-xs font-semibold shadow transition">
-            ➕ Добавить в смету
-        </button>
+        <!-- Кнопка «прилипает» к низу колонки: у работы с десятком материалов её
+             иначе приходилось бы искать прокруткой. -->
+        <div class="sticky bottom-0 -mx-4 mt-3 border-t bg-white px-4 pb-1 pt-2">
+            <button data-action="chooseEstimateWork" data-arg="${work.id}"
+                    class="w-full bg-[#15803d] hover:bg-[#166534] text-white px-3 py-2.5 rounded-xl text-xs font-semibold shadow transition">
+                ➕ Добавить в смету
+            </button>
+            <p class="mt-1 text-center text-[10px] text-gray-500">
+                Материалы подставятся по нормам расхода работы.
+            </p>
+        </div>
     `;
 }
 

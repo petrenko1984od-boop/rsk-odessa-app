@@ -1194,6 +1194,36 @@ function main() {
             /seen\.has\(id\)/.test(catalogJsV211) &&
             /function sectionAndDescendants\(kind, id\)/.test(catalogJsV211));
 
+        // 3г. Справочник и окно выбора работы переработаны (v2.12.0-r9) по
+        //     замечаниям «в справочнике легко запутаться, а новому человеку
+        //     тяжело»: у вкладок появились счётчики, в шапке — «шпаргалка» из
+        //     трёх шагов, поиск очищается кнопкой «✕», пустой список объясняет
+        //     себя карточкой с кнопками, папки с одинаковым именем подсказывают
+        //     родителя, а в окне выбора работы папки свёрнуты на старте, есть
+        //     кнопки раскрытия и плоский список результатов поиска. Прежние
+        //     запреты (r7) остаются в силе: ни дерева в правой половине, ни
+        //     выпадающего фильтра «Раздел».
+        ok('v2.12.0-r9: справочник и выбор работы объясняют себя (шаги, счётчики, пустые карточки)',
+            /id="estimate-catalog-tab-works-count"/.test(indexHtmlV29) &&
+            /id="estimate-catalog-search-clear"/.test(indexHtmlV29) &&
+            /id="estimate-work-picker-search-clear"/.test(indexHtmlV29) &&
+            /estimates\.catalogStep1/.test(indexHtmlV29) &&
+            /estimates\.pickStep3/.test(indexHtmlV29) &&
+            /function renderCatalogTabCounts\(/.test(catalogJsV211) &&
+            /function emptyCard\(/.test(catalogJsV211) &&
+            /function catalogEmptyState\(/.test(catalogJsV211) &&
+            /export function getSectionNameHints\(/.test(catalogJsV211) &&
+            /function relativeSectionPath\(/.test(catalogJsV211) &&
+            /function catalogScopeText\(/.test(catalogJsV211) &&
+            /function pickerPanelHead\(/.test(estimatesJs) &&
+            /function pickerSearchRows\(/.test(estimatesJs) &&
+            /getSectionNameHints/.test(estimatesJs) &&
+            /window\.expandEstimateWorkPickerAll\s*=/.test(estimatesJs) &&
+            /window\.collapseEstimateWorkPickerAll\s*=/.test(estimatesJs) &&
+            !/renderCatalogTree/.test(catalogJsV211) &&
+            !/estimate-catalog-section-filter/.test(indexHtmlV29) &&
+            !/fillCatalogSectionFilter/.test(catalogJsV211));
+
         // 4. Окно экспорта: четыре выбора из макета и их списки в CONFIG.
         ok('v2.11.0: окно экспорта — тип, вид кошториса, колір шапки, формат',
             /id="estimate-export-types"/.test(indexHtmlV29) &&

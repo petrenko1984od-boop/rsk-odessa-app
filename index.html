@@ -2075,54 +2075,107 @@
     <!-- СМЕТЫ: СПРАВОЧНИКИ (прайс работ и материалов)                 -->
     <!-- ============================================================ -->
     <div id="estimate-catalog-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-2 md:p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden">
-            <div class="flex items-start justify-between gap-3 px-4 py-3 border-b">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden">
+            <!-- Шапка окна: что это за справочник. Заголовок и подсказку читает
+                 новый сотрудник первым делом, поэтому подсказка называет обе
+                 колонки словами, а не «слева/справа» без объяснения. -->
+            <div class="flex items-start justify-between gap-3 px-4 py-3 border-b bg-emerald-50/60">
                 <div class="min-w-0">
                     <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.catalogTitle">📚 Справочники сметы</h3>
                     <p class="text-[11px] text-gray-500" data-i18n="estimates.catalogHint">Прайс компании: цены «наряд» (рабочим и поставщикам) и «кошторис» (заказчику). Слева — папки разделов, справа — прайс выбранной папки.</p>
                 </div>
-                <button data-action="hideModal" data-arg="estimate-catalog-modal" class="shrink-0 text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="estimate-catalog-modal"
+                        class="shrink-0 rounded-lg px-2 text-lg font-bold text-gray-400 transition hover:bg-white hover:text-gray-600">✕</button>
             </div>
 
             <div class="px-4 py-3 border-b space-y-3">
-                <div class="flex flex-wrap gap-2">
+                <!-- Вид прайса: четыре вкладки одной «полосой», активная — белая
+                     пилюля. Счётчики в пилюлях заполняет renderEstimateCatalog()
+                     (js/modules/estimate-catalog.js): по ним видно, есть ли вообще
+                     работы и материалы, не открывая вкладку. -->
+                <div class="flex flex-wrap gap-1 rounded-xl bg-gray-200/60 p-1">
                     <button id="estimate-catalog-tab-works" data-action="setEstimateCatalogTab" data-arg="works"
-                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-[#15803d] text-white"
-                            data-i18n="estimates.tabWorks">Работы</button>
+                            class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition bg-white text-[#166534] shadow-sm">
+                        <span>🛠</span>
+                        <span data-i18n="estimates.tabWorks">Работы</span>
+                        <span id="estimate-catalog-tab-works-count"
+                              class="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-800">0</span>
+                    </button>
                     <button id="estimate-catalog-tab-materials" data-action="setEstimateCatalogTab" data-arg="materials"
-                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
-                            data-i18n="estimates.tabMaterials">Материалы</button>
+                            class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition text-gray-600 hover:text-gray-800">
+                        <span>📦</span>
+                        <span data-i18n="estimates.tabMaterials">Материалы</span>
+                        <span id="estimate-catalog-tab-materials-count"
+                              class="rounded-full bg-white/70 px-1.5 text-[10px] font-bold text-gray-500">0</span>
+                    </button>
                     <!-- Вкладки «Разделы» нет: папки и подпапки видны в «Работы» и
                          «Материалы» — слева их дерево, а позиция создаётся кнопкой
                          «➕ Работа» в полосе над прайсом, когда папка выбрана
                          (folderActions() в js/modules/estimate-catalog.js). -->
                     <button id="estimate-catalog-tab-units" data-action="setEstimateCatalogTab" data-arg="units"
-                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
-                            data-i18n="estimates.tabUnits">Единицы</button>
+                            class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition text-gray-600 hover:text-gray-800">
+                        <span>📏</span>
+                        <span data-i18n="estimates.tabUnits">Единицы</span>
+                        <span id="estimate-catalog-tab-units-count"
+                              class="rounded-full bg-white/70 px-1.5 text-[10px] font-bold text-gray-500">0</span>
+                    </button>
                     <button id="estimate-catalog-tab-clients" data-action="setEstimateCatalogTab" data-arg="clients"
-                            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-gray-100 text-gray-700"
-                            data-i18n="estimates.tabClients">Клиенты</button>
+                            class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition text-gray-600 hover:text-gray-800">
+                        <span>👥</span>
+                        <span data-i18n="estimates.tabClients">Клиенты</span>
+                        <span id="estimate-catalog-tab-clients-count"
+                              class="rounded-full bg-white/70 px-1.5 text-[10px] font-bold text-gray-500">0</span>
+                    </button>
+                </div>
+
+                <!-- «Шпаргалка» для нового сотрудника: пока не знаешь порядок
+                     работы, окно выглядит как две непонятные колонки. На узком
+                     экране её нет — там колонки стоят друг под другом. -->
+                <div class="hidden flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500 lg:flex">
+                    <span class="flex items-center gap-1.5">
+                        <span class="flex h-4 w-4 items-center justify-center rounded-full bg-[#15803d] text-[10px] font-bold text-white">1</span>
+                        <span data-i18n="estimates.catalogStep1">Выбери папку в колонке слева</span>
+                    </span>
+                    <span class="text-gray-300">→</span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="flex h-4 w-4 items-center justify-center rounded-full bg-[#15803d] text-[10px] font-bold text-white">2</span>
+                        <span data-i18n="estimates.catalogStep2">Найди позицию в прайсе справа</span>
+                    </span>
+                    <span class="text-gray-300">→</span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="flex h-4 w-4 items-center justify-center rounded-full bg-[#15803d] text-[10px] font-bold text-white">3</span>
+                        <span data-i18n="estimates.catalogStep3">Правь цену «✏» или добавь позицию кнопкой «➕»</span>
+                    </span>
                 </div>
 
                 <div class="flex flex-wrap gap-2 items-center">
-                    <input type="text" id="estimate-catalog-search"
-                           data-action="setEstimateCatalogSearch" data-on="input" data-arg-value
-                           data-i18n-placeholder="estimates.catalogSearch" placeholder="Поиск по названию"
-                           class="flex-1 min-w-[10rem] border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    <label class="relative flex-1 min-w-[12rem]">
+                        <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">🔍</span>
+                        <input type="text" id="estimate-catalog-search"
+                               data-action="setEstimateCatalogSearch" data-on="input" data-arg-value
+                               data-i18n-placeholder="estimates.catalogSearch" placeholder="Поиск по названию"
+                               class="w-full border rounded-lg py-2 pl-9 pr-9 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        <!-- «✕» очищает поиск: data-arg="" передаёт пустую строку.
+                             Кнопка спрятана, пока искать нечего (renderEstimateCatalog). -->
+                        <button type="button" id="estimate-catalog-search-clear"
+                                data-action="setEstimateCatalogSearch" data-arg=""
+                                class="hidden absolute right-1.5 top-1/2 h-6 w-6 -translate-y-1/2 rounded-full text-xs text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+                                title="Очистить поиск">✕</button>
+                    </label>
                     <div id="estimate-catalog-folder-wrap" class="hidden">
                         <button data-action="addEstimateFolder"
-                                class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                                class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-xs font-semibold transition"
                                 data-i18n="estimates.catalogAddSection">📁 Добавить раздел</button>
                     </div>
                     <button id="estimate-catalog-add-btn" data-action="openEstimateCatalogAdd"
-                            class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition"
+                            class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-2 rounded-lg text-xs font-semibold shadow transition"
                             data-i18n="estimates.catalogAdd">➕ Добавить</button>
                 </div>
             </div>
 
-            <!-- ПРАЙС В ДВЕ КОЛОНКИ (v2.12.0-r7): слева — папки-разделы («📚 Все
-                 разделы», сворачиваемое дерево, «📄 Без раздела»), справа — прайс
-                 выбранной папки вместе с её подпапками. Панель рисует
+            <!-- ПРАЙС В ДВЕ КОЛОНКИ (v2.12.0-r7, переработано в r9): слева — папки
+                 разделов («📚 Все разделы», сворачиваемое дерево, «📄 Без раздела»),
+                 справа — прайс выбранной папки вместе с её подпапками. Панель рисует
                  renderCatalogSections(), отбор по выбранной ветке — scopeSectionIds()
                  в js/modules/estimate-catalog.js. Дерева справа нет: папка была видна
                  дважды, а ряд кнопок «📁➕ ➕ ✏ 🗑» повторялся в каждой строке. Вместо
@@ -2134,13 +2187,13 @@
                  там нет. Выпадающий фильтр «Раздел» убран — он дублировал бы панель. -->
             <div class="flex-1 min-h-0 flex flex-col md:flex-row">
                 <aside id="estimate-catalog-sections"
-                       class="hidden w-full md:w-72 md:shrink-0 max-h-52 md:max-h-none overflow-hidden flex flex-col border-b md:border-b-0 md:border-r bg-gray-50"></aside>
+                       class="hidden w-full md:w-80 md:shrink-0 max-h-56 md:max-h-none overflow-hidden flex flex-col border-b md:border-b-0 md:border-r bg-gray-50"></aside>
                 <section class="flex-1 min-w-0 flex flex-col">
                     <div id="estimate-catalog-pane-head"
-                         class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-2"></div>
+                         class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-white px-4 py-2"></div>
                     <div id="estimate-catalog-table" class="flex-1 min-h-0 overflow-auto"></div>
                     <div id="estimate-catalog-pane-foot"
-                         class="border-t px-4 py-1.5 text-[11px] text-gray-500"></div>
+                         class="border-t bg-gray-50 px-4 py-1.5 text-[11px] text-gray-500"></div>
                 </section>
             </div>
         </div>
@@ -2466,28 +2519,58 @@
          renderEstimateWorkPickerTree() (js/modules/estimates.js), список разделов
          берётся из справочника (getEstimateWorkSectionTree) — окно и прайс не
          расходятся. Папки сворачиваются кликом по заголовку
-         (toggleEstimateWorkPickerSection), поэтому работы нужного раздела
-         открывают, не листая прайс целиком. -->
-    <div id="estimate-work-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[70]">
-        <div class="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[92vh] flex flex-col">
-            <div class="flex justify-between items-start gap-3 p-4 border-b">
-                <div>
+         (toggleEstimateWorkPickerSection): при открытии они СВЁРНУТЫ (v2.12.0-r9) —
+         прайс на сотни работ показывался простынёй, и новый сотрудник не понимал,
+         что перед ним разделы; кнопки «▾ Раскрыть папки» / «▸ Свернуть папки» в полосе
+         над списком открывают или закрывают всё сразу, а поиск показывает найденное
+         ПЛОСКИМ списком с папкой в строке. Окно занимает высоту экрана — дереву и
+         карточке нужна прокрутка, а не две строки. -->
+    <div id="estimate-work-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-2 md:p-4 z-[70]">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[92vh] flex flex-col overflow-hidden">
+            <div class="flex justify-between items-start gap-3 px-4 py-3 border-b bg-emerald-50/60">
+                <div class="min-w-0">
                     <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.pickWorkTitle">➕ Работа из справочника</h3>
                     <p class="text-[11px] text-gray-500" data-i18n="estimates.pickWorkHint">
-                        Разделы и подразделы справочника слева (клик — свернуть или раскрыть), работа и её материалы — справа.
+                        Слева разделы и работы справочника: клик по папке сворачивает или раскрывает её, клик по работе показывает её материалы справа.
                     </p>
+                    <!-- Порядок работы: без него окно читается как два списка. -->
+                    <div class="mt-1 hidden flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 lg:flex">
+                        <span class="flex items-center gap-1.5">
+                            <span class="flex h-4 w-4 items-center justify-center rounded-full bg-[#15803d] text-[10px] font-bold text-white">1</span>
+                            <span data-i18n="estimates.pickStep1">Раскрой папку с нужным разделом</span>
+                        </span>
+                        <span class="text-gray-300">→</span>
+                        <span class="flex items-center gap-1.5">
+                            <span class="flex h-4 w-4 items-center justify-center rounded-full bg-[#15803d] text-[10px] font-bold text-white">2</span>
+                            <span data-i18n="estimates.pickStep2">Кликни работу — справа её материалы</span>
+                        </span>
+                        <span class="text-gray-300">→</span>
+                        <span class="flex items-center gap-1.5">
+                            <span class="flex h-4 w-4 items-center justify-center rounded-full bg-[#15803d] text-[10px] font-bold text-white">3</span>
+                            <span data-i18n="estimates.pickStep3">Нажми «➕ Добавить в смету»</span>
+                        </span>
+                    </div>
                 </div>
-                <button data-action="hideModal" data-arg="estimate-work-picker-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button data-action="hideModal" data-arg="estimate-work-picker-modal"
+                        class="shrink-0 rounded-lg px-2 text-lg font-bold text-gray-400 transition hover:bg-white hover:text-gray-600">✕</button>
             </div>
-            <div class="p-4 border-b">
-                <input type="text" id="estimate-work-picker-search"
-                       data-action="setEstimateWorkPickerSearch" data-on="input" data-arg-value
-                       data-i18n-placeholder="estimates.pickSearch" placeholder="Поиск по названию"
-                       class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+            <div class="p-4 border-b bg-gray-50/70">
+                <label class="relative block">
+                    <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">🔍</span>
+                    <input type="text" id="estimate-work-picker-search"
+                           data-action="setEstimateWorkPickerSearch" data-on="input" data-arg-value
+                           data-i18n-placeholder="estimates.pickSearch" placeholder="Поиск по названию"
+                           class="w-full border rounded-lg py-2 pl-10 pr-10 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                    <!-- «✕» очищает поиск: data-arg="" передаёт пустую строку. -->
+                    <button type="button" id="estimate-work-picker-search-clear"
+                            data-action="setEstimateWorkPickerSearch" data-arg=""
+                            class="hidden absolute right-2 top-1/2 h-6 w-6 -translate-y-1/2 rounded-full text-xs text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+                            title="Очистить поиск">✕</button>
+                </label>
             </div>
-            <div class="flex-1 overflow-y-auto md:grid md:grid-cols-2 md:overflow-hidden">
-                <div id="estimate-work-picker-list" class="p-2 space-y-1 md:overflow-auto md:border-r"></div>
-                <div id="estimate-work-picker-preview" class="p-4 bg-gray-50 border-t md:border-t-0 md:overflow-auto"></div>
+            <div class="flex-1 min-h-0 flex flex-col md:flex-row">
+                <div id="estimate-work-picker-list" class="min-h-0 flex-1 overflow-y-auto border-b bg-gray-50/50 md:border-b-0 md:border-r"></div>
+                <div id="estimate-work-picker-preview" class="min-h-0 flex-1 flex flex-col overflow-y-auto bg-white p-4"></div>
             </div>
         </div>
     </div>

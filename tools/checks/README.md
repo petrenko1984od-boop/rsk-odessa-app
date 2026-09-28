@@ -210,6 +210,21 @@ npm run lint            # eslint: встроенные обработчики и
   3в. **раздел с потерянным родителем** (v2.12.0-r7) строится корнем в `sectionTree()`
      (и обход подпапок защищён от петли в `sectionAndDescendants()`): иначе он и его
      позиции исчезли бы из окна молча, а счётчики не сошлись бы;
+  3г. **справочник и выбор работы объясняют себя** (v2.12.0-r9, по замечаниям «в
+     справочнике легко запутаться»): в разметке есть счётчики вкладок
+     (`#estimate-catalog-tab-*-count`), «шпаргалка» из трёх шагов
+     (`estimates.catalogStep1..3`), кнопки очистки поиска
+     (`#estimate-catalog-search-clear`, `#estimate-work-picker-search-clear`) и шаги
+     окна выбора работы (`estimates.pickStep3`); модуль справочника умеет считать
+     счётчики (`renderCatalogTabCounts()`), рисовать карточку пустого состояния
+     (`emptyCard()` + `catalogEmptyState()`), подсказывать родителя у папок с
+     одинаковым именем (`getSectionNameHints()`), показывать подпапку вместо полного
+     пути (`relativeSectionPath()`) и называть охват итогов (`catalogScopeText()`); в
+     модуле смет появились полоса списка (`pickerPanelHead()`), плоские результаты
+     поиска (`pickerSearchRows()`) и кнопки раскрытия дерева
+     (`expandEstimateWorkPickerAll()` / `collapseEstimateWorkPickerAll()`), а подсказки
+     о повторяющихся именах берутся из справочника (`getSectionNameHints`). Прежние
+     запреты сохранены: ни `renderCatalogTree()`, ни выпадающего фильтра «Раздел»;
   4. **окно экспорта документа** — четыре группы выбора в разметке
      (`#estimate-export-types/views/colors/formats`) и их списки в `CONFIG.ESTIMATE`
      (`DOC_KINDS` / `DOC_VIEWS` / `DOC_COLORS` / `DOC_FORMATS`), которые читает модуль смет;
