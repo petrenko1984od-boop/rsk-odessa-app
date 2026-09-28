@@ -1281,6 +1281,15 @@ async function main() {
         settingsText.includes('Графит'),
         settingsText.replace(/\n/g, ' | ').slice(0, 160));
 
+    // Раздел «Приложение» (v2.12.0-r8): установка, обновление и удаление
+    // приложения переехали сюда из отдельного пункта меню «Кабинет».
+    ok('в настройках есть раздел «Приложение»: установка, обновление и удаление',
+        settingsText.includes('Приложение') &&
+        settingsText.includes('Обновить приложение') &&
+        settingsText.includes('Удалить приложение с устройства') &&
+        settingsText.includes('Версия приложения'),
+        settingsText.replace(/\n/g, ' | ').slice(0, 200));
+
     await evaluate('window.chooseTheme("blue")');
     await sleep(500);
     const themeState = await evaluate('(() => {' +

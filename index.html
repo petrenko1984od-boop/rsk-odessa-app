@@ -303,11 +303,13 @@
                             <button data-action="openMyOperations" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Авансовый отчёт</span></button>
                             <button data-action="openMyRequests" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span>Мои заявки</span></button>
                             <button data-action="openMyTasks" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📌 <span>Мои задачи</span></button>
-                            <!-- Установка приложения. Карточка внизу (js/pwa.js) показывается
-                                 один раз и только там, где браузер разрешил установку, а после
-                                 «✕» — никогда; этот пункт меню есть всегда и открывает окно с
-                                 шагами для своего устройства (#install-modal). -->
-                            <button data-action="openInstallHelp" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📲 <span data-i18n="pwa.installMenu">Установить приложение</span></button>
+                            <!-- Настройки: язык, цветовая схема и приложение — установку, обновление
+                                 и удаление приложения сотрудник находит в окне
+                                 настроек (раздел «Приложение»). Отдельного пункта
+                                 меню «📲 Установить приложение» больше нет:
+                                 установку и обновление искали в двух разных местах,
+                                 а установленному приложению предлагать установку
+                                 нечего (v2.12.0-r8). -->
                             <!-- Язык интерфейса и цветовая схема: каждый сотрудник выбирает сам -->
                             <button data-action="openSettings" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">⚙ <span>Настройки</span></button>
                             <button data-action="logout" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
@@ -911,14 +913,14 @@
 
     <!-- НАСТРОЙКИ ПРИЛОЖЕНИЯ (язык + цветовая схема) -->
     <div id="settings-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
-        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-gray-800" data-i18n="settings.title">⚙ Настройки приложения</h3>
                 <button data-action="hideModal" data-arg="settings-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
 
             <p class="text-xs text-gray-500" data-i18n="settings.subtitle">
-                Язык интерфейса и цветовая схема. Настройки сохраняются для этого устройства.
+                Язык, оформление и приложение. Настройки сохраняются для этого устройства.
             </p>
 
             <div class="space-y-2">
@@ -936,6 +938,76 @@
                 </p>
             </div>
 
+            <!-- ПРИЛОЖЕНИЕ (PWA): установка, обновление и удаление приложения —
+                 v2.12.0-r8. Раньше установка была отдельным пунктом меню, а
+                 обновление жило только в карточке внизу: у сотрудника с уже
+                 установленным приложением не было ни того, ни другого. Состояние
+                 («установлено / не установлено») и видимость кнопок считает
+                 js/pwa.js → renderAppSection(): у установленного приложения кнопки
+                 установки нет, зато есть кнопка удаления. -->
+            <div class="space-y-2 border-t pt-3">
+                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="settings.app">Приложение</p>
+
+                <!-- Строка состояния: «приложение установлено» или «работаете
+                     в браузере». Текст ставит js/pwa.js → renderAppSection(). -->
+                <div id="settings-app-status" class="bg-gray-50 border rounded-lg p-3 text-xs text-gray-600"></div>
+
+                <!-- Подсказка для устройств, где браузер не даёт кнопку
+                     установки (iPhone, Firefox): остаются шаги ниже. -->
+                <p id="settings-app-hint" class="hidden text-[11px] text-gray-500" data-i18n="pwa.installHint">Браузер не предлагает установку на этом устройстве: установите приложение вручную — шаги ниже.</p>
+
+                <!-- Кнопка установки — только там, где браузер разрешил установку -->
+                <button type="button" id="settings-app-install" data-action="pwaInstall"
+                        class="hidden w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="pwa.installButton">📲 Установить</button>
+
+                <!-- Шаги для своего устройства: раскрыты, когда кнопки установки
+                     нет — иначе сотрудник видит «установить нельзя» и не знает,
+                     что делать. Устройство выбирает js/pwa.js. -->
+                <details id="settings-app-steps" class="bg-gray-50 border rounded-lg p-3">
+                    <summary class="text-xs font-semibold text-gray-700 cursor-pointer" data-i18n="settings.appSteps">Как установить приложение вручную</summary>
+                    <div class="space-y-3 pt-2">
+                        <div id="install-steps-desktop" class="hidden space-y-2">
+                            <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installDesktop">Компьютер: Windows и macOS (Chrome, Edge)</p>
+                            <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
+                                <li data-i18n="pwa.installDesktop1">Меню браузера ⋮ → «Транслировать, сохранить, поделиться» → «Установить страницу как приложение».</li>
+                                <li data-i18n="pwa.installDesktop2">Или нажмите значок установки справа в адресной строке (экран с маленькой стрелкой).</li>
+                                <li data-i18n="pwa.installDesktop3">Подтвердите установку: приложение откроется отдельным окном, а ярлык FreeDOM появится в «Пуск» (Windows) или в Launchpad (macOS).</li>
+                            </ol>
+                        </div>
+                        <div id="install-steps-android" class="hidden space-y-2">
+                            <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installAndroid">Android: телефон или планшет (Chrome)</p>
+                            <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
+                                <li data-i18n="pwa.installAndroid1">Меню браузера ⋮ → «Установить приложение» (в старых версиях — «Добавить на главный экран»).</li>
+                                <li data-i18n="pwa.installAndroid2">Или нажмите «📲 Установить» на карточке, которая появляется внизу после входа.</li>
+                                <li data-i18n="pwa.installAndroid3">Подтвердите: значок FreeDOM появится на главном экране и в списке приложений.</li>
+                            </ol>
+                        </div>
+                        <div id="install-steps-ios" class="hidden space-y-2">
+                            <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installIos">iPhone и iPad (только Safari)</p>
+                            <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
+                                <li data-i18n="pwa.installIos1">Кнопка «Поделиться» (квадрат со стрелкой вверх) внизу экрана.</li>
+                                <li data-i18n="pwa.installIos2">В списке выберите «На экран „Домой“» — пункт может быть скрыт в разделе «Ещё».</li>
+                                <li data-i18n="pwa.installIos3">Проверьте название FreeDOM и нажмите «Добавить». Safari устанавливать приложение кнопкой не умеет — это особенность iOS, а не ошибка.</li>
+                            </ol>
+                        </div>
+                        <p class="text-[11px] text-gray-500" data-i18n="pwa.installOpenInApp">Если в меню браузера есть пункт «Открыть в приложении» — приложение уже установлено на этом компьютере: это оно, открытое отдельным окном. Ярлык ищите в «Пуск» по имени FreeDOM.</p>
+                    </div>
+                </details>
+
+                <!-- Обновление: кнопка проверяет версию сама, состояние — строкой
+                     ниже (js/pwa.js → renderUpdateStatus). -->
+                <button type="button" id="settings-app-update" data-action="pwaUpdateNow"
+                        class="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="settings.updateButton">🔄 Обновить приложение</button>
+                <p id="settings-app-update-status" class="text-[11px] text-gray-500"></p>
+
+                <!-- Удаление: приложение снимает свои файлы и кэш, ярлык удаляет
+                     само устройство — шаги в окне подтверждения. -->
+                <button type="button" id="settings-app-uninstall" data-action="pwaUninstall"
+                        class="w-full border border-red-200 text-red-700 hover:bg-red-50 font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="settings.uninstallButton">🗑 Удалить приложение с устройства</button>
+            </div>
             <div class="bg-gray-50 border rounded-lg p-3 flex justify-between items-center text-xs text-gray-600">
                 <span data-i18n="settings.version">Версия приложения</span>
                 <span id="settings-version" class="font-semibold text-gray-800">FreeDOM</span>
@@ -947,78 +1019,47 @@
         </div>
     </div>
 
-    <!-- УСТАНОВКА ПРИЛОЖЕНИЯ (PWA) — окно пункта «Кабинет» → «📲 Установить приложение»
-         Карточка внизу показывается один раз и только там, где браузер разрешил
-         установку (beforeinstallprompt); после «✕» она не появится вовсе. Поэтому
-         постоянный пункт меню открывает это окно: шаги для СВОЕГО устройства и
-         кнопка установки, если браузер её предлагает. Устройство и кнопку
-         выбирает js/pwa.js → openInstallHelp(), тексты шагов — словарь
-         (data-i18n), поэтому шаги не дублируются в модуле. -->
-    <div id="install-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
+    <!-- УДАЛЕНИЕ ПРИЛОЖЕНИЯ (PWA) — кнопка «🗑 Удалить приложение с устройства»
+     в настройках. Полностью убрать приложение может только само устройство
+     (ярлык и запись в системе), поэтому окно честно делит работу: приложение
+     снимает кэш и service worker, а ярлык удаляется шагами ниже. Состояния
+     переключают js/pwa.js → pwaUninstall() и pwaUninstallConfirm(). -->
+    <div id="pwa-uninstall-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
         <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto">
 
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-gray-800" data-i18n="pwa.installTitle">📲 Установить приложение</h3>
-                <button data-action="hideModal" data-arg="install-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="pwa.uninstallTitle">🗑 Удалить приложение</h3>
+                <button data-action="hideModal" data-arg="pwa-uninstall-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
             </div>
 
-            <p class="text-xs text-gray-500" data-i18n="pwa.installIntro">
-                Приложение ставится как обычная программа: значок на рабочем столе, отдельное окно без адресной строки. Скачивать файлы и заходить в магазин приложений не нужно.
-            </p>
+            <div id="pwa-uninstall-ask" class="space-y-3">
+                <p class="text-xs text-gray-600" data-i18n="pwa.uninstallWhat">Приложение снимет с этого устройства свои файлы и кэш — значок FreeDOM перестанет открывать приложение. Вход в аккаунт и данные в браузере останутся: если устройство передаёте другому сотруднику, после удаления выйдите из приложения («Кабинет» → «Выйти»).</p>
+                <p class="text-xs text-gray-600" data-i18n="pwa.uninstallCloud">Данные в облаке — объекты, заявки, расходы, фото — не удаляются. После повторной установки и входа вы увидите всё то же самое.</p>
 
-            <!-- Кнопку показываем только там, где браузер разрешил установку -->
-            <button type="button" id="install-modal-btn" data-action="pwaInstall"
-                    class="hidden w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
-                    data-i18n="pwa.installButton">📲 Установить</button>
+                <div class="bg-gray-50 border rounded-lg p-3 space-y-2">
+                    <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.uninstallIcon">Ярлык удаляется на самом устройстве</p>
+                    <ul class="list-disc ml-5 space-y-1 text-xs text-gray-700">
+                        <li id="pwa-uninstall-desktop" data-i18n="pwa.uninstallDesktop">Компьютер (Windows, macOS): «Пуск» → правый клик по ярлыку FreeDOM → «Удалить»; в macOS — перетащите значок из Launchpad в «Корзину».</li>
+                        <li id="pwa-uninstall-android" class="hidden" data-i18n="pwa.uninstallAndroid">Android: долгое нажатие на значок FreeDOM → «Удалить» (или «Информация о приложении» → «Удалить»).</li>
+                        <li id="pwa-uninstall-ios" class="hidden" data-i18n="pwa.uninstallIos">iPhone и iPad: долгое нажатие на значок FreeDOM → «Удалить приложение» → «Удалить».</li>
+                    </ul>
+                </div>
 
-            <!-- Приложение уже открыто отдельным окном — ставить нечего -->
-            <p id="install-done" class="hidden bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900"
-               data-i18n="pwa.installDone">
-                Приложение уже открыто отдельным окном — устанавливать нечего. Ярлык «FreeDOM» лежит в меню «Пуск» (Windows) или в Launchpad (macOS).
-            </p>
-
-            <div id="install-steps-desktop" class="hidden space-y-2">
-                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installDesktop">Компьютер: Windows и macOS (Chrome, Edge)</p>
-                <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
-                    <li data-i18n="pwa.installDesktop1">Меню браузера ⋮ → «Транслировать, сохранить, поделиться» → «Установить страницу как приложение».</li>
-                    <li data-i18n="pwa.installDesktop2">Или нажмите значок установки справа в адресной строке (экран с маленькой стрелкой).</li>
-                    <li data-i18n="pwa.installDesktop3">Подтвердите установку: приложение откроется отдельным окном, а ярлык FreeDOM появится в «Пуск» (Windows) или в Launchpad (macOS).</li>
-                </ol>
+                <button type="button" data-action="pwaUninstallConfirm"
+                        class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="pwa.uninstallConfirm">🗑 Удалить с устройства</button>
+                <button type="button" data-action="hideModal" data-arg="pwa-uninstall-modal"
+                        class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="common.cancel">Отмена</button>
             </div>
 
-            <div id="install-steps-android" class="hidden space-y-2">
-                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installAndroid">Android: телефон или планшет (Chrome)</p>
-                <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
-                    <li data-i18n="pwa.installAndroid1">Меню браузера ⋮ → «Установить приложение» (в старых версиях — «Добавить на главный экран»).</li>
-                    <li data-i18n="pwa.installAndroid2">Или нажмите «📲 Установить» на карточке, которая появляется внизу после входа.</li>
-                    <li data-i18n="pwa.installAndroid3">Подтвердите: значок FreeDOM появится на главном экране и в списке приложений.</li>
-                </ol>
+            <!-- Итог: файлы приложения сняты, ярлык сотрудник удаляет сам -->
+            <div id="pwa-uninstall-done" class="hidden space-y-3">
+                <p class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900" data-i18n="pwa.uninstallDone">Готово: файлы приложения и кэш удалены с устройства. Ярлык удаляется вручную — шаги выше. Чтобы вернуться к работе, откройте адрес приложения и войдите заново.</p>
+                <button type="button" data-action="hideModal" data-arg="pwa-uninstall-modal"
+                        class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                        data-i18n="common.close">Закрыть</button>
             </div>
-
-            <div id="install-steps-ios" class="hidden space-y-2">
-                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installIos">iPhone и iPad (только Safari)</p>
-                <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
-                    <li data-i18n="pwa.installIos1">Кнопка «Поделиться» (квадрат со стрелкой вверх) внизу экрана.</li>
-                    <li data-i18n="pwa.installIos2">В списке выберите «На экран „Домой“» — пункт может быть скрыт в разделе «Ещё».</li>
-                    <li data-i18n="pwa.installIos3">Проверьте название FreeDOM и нажмите «Добавить». Safari устанавливать приложение кнопкой не умеет — это особенность iOS, а не ошибка.</li>
-                </ol>
-            </div>
-
-            <!-- Что делать, если кнопки установки в окне нет -->
-            <p id="install-hint" class="hidden bg-gray-50 border rounded-lg p-3 text-xs text-gray-600"
-               data-i18n="pwa.installHint">
-                Кнопки установки нет: браузер не предлагает её на этом устройстве. Установите приложение через меню браузера — как описано выше.
-            </p>
-
-            <!-- Уже установлено: Chrome показывает это пунктом «Открыть в приложении» —
-                 по нему и решают, что установки нет. Текст стоит в окне всегда. -->
-            <p class="bg-gray-50 border rounded-lg p-3 text-xs text-gray-600" data-i18n="pwa.installOpenInApp">
-                Если в меню браузера есть пункт «Открыть в приложении» — приложение уже установлено на этом компьютере: это оно, открытое отдельным окном. Ярлык ищите в «Пуск» по имени FreeDOM.
-            </p>
-
-            <button type="button" data-action="hideModal" data-arg="install-modal"
-                    class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
-                    data-i18n="common.close">Закрыть</button>
         </div>
     </div>
 

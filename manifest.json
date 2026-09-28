@@ -11,6 +11,12 @@
     "orientation": "any",
     "theme_color": "#c8102e",
     "background_color": "#fcfafb",
+    "related_applications": [
+        {
+            "platform": "webapp",
+            "url": "https://rsk-odessa-app.vercel.app/manifest.json"
+        }
+    ],
     "categories": ["business", "productivity"],
     "icons": [
         {
