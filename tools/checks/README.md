@@ -195,6 +195,12 @@ npm run lint            # eslint: встроенные обработчики и
      папки видны в «Работы» и «Материалы» (`renderCatalogTree()`), поэтому проверяется и
      её отсутствие (`#estimate-catalog-tab-sections` / `#estimate-catalog-section-kind`
      удалены, появилась обёртка `#estimate-catalog-folder-wrap`);
+  3б. **прайс в две колонки** (v2.12.0-r6): в разметке есть панель папок
+     `#estimate-catalog-sections`, а модуль рисует её (`renderCatalogSections()`) и умеет
+     оставить справа только выбранную ветку (`scopeSectionIds()`); действия панели —
+     `data-action="selectEstimateCatalogSection"`. Выпадающий фильтр «Раздел»
+     (`#estimate-catalog-section-filter`, `fillCatalogSectionFilter()`) убран: он
+     дублировал бы панель, а нужную папку на сотнях работ искали прокруткой;
   4. **окно экспорта документа** — четыре группы выбора в разметке
      (`#estimate-export-types/views/colors/formats`) и их списки в `CONFIG.ESTIMATE`
      (`DOC_KINDS` / `DOC_VIEWS` / `DOC_COLORS` / `DOC_FORMATS`), которые читает модуль смет;

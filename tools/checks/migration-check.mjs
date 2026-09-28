@@ -1162,6 +1162,18 @@ function main() {
             !/estimate-catalog-tab-sections/.test(indexHtmlV29) &&
             !/estimate-catalog-section-kind/.test(indexHtmlV29));
 
+        // 3б. Прайс в две колонки (v2.12.0-r6): слева панель папок, справа —
+        //     позиции выбранной папки. Выпадающий фильтр «Раздел» убран: с
+        //     панелью он дублировал бы друг друга, а на сотнях работ искать
+        //     папку прокруткой — то, из-за чего колонки и появились.
+        ok('v2.12.0-r6: прайс в две колонки — слева папки, справа позиции выбранной папки',
+            /id="estimate-catalog-sections"/.test(indexHtmlV29) &&
+            /renderCatalogSections/.test(catalogJsV211) &&
+            /scopeSectionIds/.test(catalogJsV211) &&
+            /data-action="selectEstimateCatalogSection"/.test(catalogJsV211) &&
+            !/estimate-catalog-section-filter/.test(indexHtmlV29) &&
+            !/fillCatalogSectionFilter/.test(catalogJsV211));
+
         // 4. Окно экспорта: четыре выбора из макета и их списки в CONFIG.
         ok('v2.11.0: окно экспорта — тип, вид кошториса, колір шапки, формат',
             /id="estimate-export-types"/.test(indexHtmlV29) &&

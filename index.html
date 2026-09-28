@@ -2040,7 +2040,7 @@
                     <h3 class="text-lg font-bold text-gray-800" data-i18n="estimates.catalogTitle">📚 Справочники сметы</h3>
                     <p class="text-[11px] text-gray-500" data-i18n="estimates.catalogHint">
                         Прайс компании: цены «наряд» (рабочим и поставщикам) и «кошторис» (заказчику).
-                        Из справочника работы и материалы подставляются в смету.
+                        Слева — папки с разделами, справа — работы и материалы выбранной папки.
                     </p>
                 </div>
                 <button data-action="hideModal" data-arg="estimate-catalog-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
@@ -2071,15 +2071,6 @@
                            data-action="setEstimateCatalogSearch" data-on="input" data-arg-value
                            data-i18n-placeholder="estimates.catalogSearch" placeholder="Поиск по названию"
                            class="flex-1 min-w-[10rem] border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
-                    <div id="estimate-catalog-section-filter-wrap">
-                        <select id="estimate-catalog-section-filter"
-                                data-action="setEstimateCatalogSectionFilter" data-on="change" data-arg-value
-                                class="border rounded-lg px-3 py-2 text-xs text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
-                    </div>
-                    <!-- «Раздел» — верхняя папка прайса; внутри раздела можно создать ещё
-                         папку (кнопка «📁➕» у строки). В базе это одно поле parent_id,
-                         поэтому вложенность любая. Кнопка видна только на вкладках
-                         «Работы» и «Материалы» — её прячет renderEstimateCatalog(). -->
                     <div id="estimate-catalog-folder-wrap" class="hidden">
                         <button data-action="addEstimateFolder"
                                 class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
@@ -2091,7 +2082,18 @@
                 </div>
             </div>
 
-            <div id="estimate-catalog-table" class="p-4 overflow-auto flex-1"></div>
+            <!-- ПРАЙС В ДВЕ КОЛОНКИ (v2.12.0-r6): слева папки-разделы («Все разделы»,
+                 дерево разделов, «📄 Без раздела»), справа — работы или материалы
+                 выбранной папки вместе с её подпапками. Панель рисует
+                 renderCatalogSections(), а отбор по выбранной ветке — scopeSectionIds()
+                 в js/modules/estimate-catalog.js. На вкладках «Единицы» и «Клиенты»
+                 панель пустая и скрытая: разделов там нет. Выпадающий фильтр «Раздел»
+                 убран — он дублировал бы эту панель. -->
+            <div class="flex-1 min-h-0 flex flex-col md:flex-row">
+                <aside id="estimate-catalog-sections"
+                       class="hidden w-full md:w-64 md:shrink-0 max-h-40 md:max-h-none overflow-y-auto border-b md:border-b-0 md:border-r p-2 space-y-0.5 bg-gray-50"></aside>
+                <div id="estimate-catalog-table" class="flex-1 min-w-0 overflow-auto p-4"></div>
+            </div>
         </div>
     </div>
 
