@@ -44,6 +44,10 @@ const state = {
     // Выбранная в левой половине окна папка: '' — «Все разделы», id раздела —
     // эта папка вместе с подпапками, '0' — группа «📄 Без раздела».
     sectionFilter: '',
+    // Свёрнутые в левой панели ветки (ключи «вид:id», см. collapseKey). Живёт
+    // до перезагрузки страницы: окно открывают и закрывают много раз, и
+    // заново раскрывать всё дерево каждый раз незачем.
+    collapsed: new Set(),
     works: [],
     materials: [],
     workSections: [],
@@ -225,6 +229,29 @@ export function setEstimateCatalogSearch(value) {
  */
 export function selectEstimateCatalogSection(value) {
     state.sectionFilter = value === undefined || value === null ? '' : String(value);
+
+    // Папку показываем развёрнутой: иначе после сворачивания ветки выбранную
+    // папку не было бы видно, и непонятно, чей прайс справа.
+    const id = Number(state.sectionFilter) || 0;
+    if (id) {
+        sectionChain(catalogKind(), id)
+            .forEach(section => state.collapsed.delete(collapseKey(catalogKind(), section.id)));
+    }
+
+    renderEstimateCatalog();
+}
+
+/** Стрелка у папки: сворачивает и разворачивает её ветку в левой панели. */
+export function toggleEstimateCatalogFolder(arg) {
+    const parts = String(arg || '').split(':');
+    const kind = parts[0] === 'material' ? 'material' : 'work';
+    const id = Number(parts[1]) || 0;
+    if (!id) return;
+
+    const key = collapseKey(kind, id);
+    if (state.collapsed.has(key)) state.collapsed.delete(key);
+    else state.collapsed.add(key);
+
     renderEstimateCatalog();
 }
 
@@ -252,9 +279,9 @@ const TAB_LABELS = {
 
 // Вкладки справочника. Отдельной вкладки «Разделы» нет намеренно (v2.11.0):
 // прайс заполняется сверху вниз — сначала папка, потом позиция внутри неё.
-// Поэтому разделы (папки и подпапки) видны и в панели слева, и в самих
-// «Работах»/«Материалах» (v2.12.0-r6: слева выбирают папку, справа её прайс),
-// а кнопки «📁➕» и «➕» стоят у каждой папки (см. renderCatalogTree).
+// Поэтому разделы (папки и подпапки) видны деревом в панели слева, а справа
+// идёт прайс выбранной папки (v2.12.0-r7: renderCatalogSections + folderActions)
+// — кнопки «📁➕ Подраздел» и «➕ Работа» стоят в полосе над прайсом.
 const CATALOG_TABS = ['works', 'materials', 'units', 'clients'];
 
 export function renderEstimateCatalog() {
@@ -309,6 +336,7 @@ export function renderEstimateCatalog() {
     }
 
     renderCatalogSections();
+    renderCatalogPaneHead();
 
     const renderers = {
         works: renderWorksTable,
@@ -318,6 +346,7 @@ export function renderEstimateCatalog() {
     };
 
     container.innerHTML = (renderers[state.activeTab] || renderWorksTable)();
+    renderCatalogPaneFoot();
 }
 
 /** Вид справочника по открытой вкладке: работы или материалы. */
@@ -349,41 +378,149 @@ function renderCatalogSections() {
     const all = catalogItems(kind);
     const active = String(state.sectionFilter || '');
     const orphans = all.filter(item => !item.section_id).length;
-    const buttons = [sectionButton('', '📚 Все разделы', all.length, 0, active === '')];
+    const tree = sectionTree(kind);
+    const rows = [];
+    const collapsedLevels = [];         // уровни, внутри которых ветка свёрнута
 
     // Дерево, а не плоский список: видно, что «Покрівля скатна» — подпапка
-    // «Покрівля», поэтому вложенная папка идёт с отступом и стрелкой.
-    sectionTree(kind).forEach(({ section, level }) => {
-        // Счётчик — по всей ветке: у папки может быть пусто, а работы лежат в
-        // подпапке, и «0» у неё выглядело бы враньём.
-        const branch = new Set(sectionAndDescendants(kind, Number(section.id)));
-        const count = all.filter(item => branch.has(Number(item.section_id))).length;
-        const value = String(section.id);
+    // «Покрівля», поэтому вложенная папка идёт с отступом и направляющей линией.
+    tree.forEach(({ section, level }, index) => {
+        while (collapsedLevels.length && collapsedLevels[collapsedLevels.length - 1] >= level) {
+            collapsedLevels.pop();
+        }
+        if (collapsedLevels.length) return;         // строка внутри свёрнутой ветки
 
-        buttons.push(sectionButton(value,
-            `${level > 0 ? '↳ ' : ''}📁 ${escapeHtml(section.name)}`, count, level, value === active));
+        const id = Number(section.id);
+        // Стрелка — только если под папкой в дереве есть строки (следующая строка
+        // дерева на уровень глубже). В данных с петлёй («А внутри Б, Б внутри А»)
+        // ребёнок уже показан выше, и стрелка врала бы: сворачивать нечего.
+        const hasChildren = index + 1 < tree.length && tree[index + 1].level > level;
+        const expanded = hasChildren ? !isCollapsed(kind, id) : undefined;
+
+        rows.push(sectionLink({
+            kind,
+            value: String(id),
+            level,
+            active: String(id) === active,
+            label: `📁 ${escapeHtml(section.name)}`,
+            // Счётчик — по всей ветке: у папки может быть пусто, а работы лежат
+            // в подпапке, и «0» у неё выглядело бы враньём.
+            count: branchItems(kind, id).length,
+            expanded
+        }));
+
+        if (expanded === false) collapsedLevels.push(level);
     });
 
-    // Позиции без раздела — отдельный пункт, а не спрятанная группа: потерять
-    // такую работу слишком легко.
-    if (orphans > 0) {
-        buttons.push(sectionButton('0', '📄 Без раздела', orphans, 0, active === '0'));
-    }
-
-    aside.innerHTML = buttons.join('');
+    // «Все разделы» сверху и «Без раздела» снизу не прокручиваются вместе с
+    // деревом: выход к целому прайсу и к позициям без папки всегда под рукой.
+    aside.innerHTML = `
+        <div class="shrink-0 p-1.5">
+            ${sectionLink({ kind, value: '', label: '📚 Все разделы', count: all.length, level: 0, active: active === '' })}
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto px-1.5 space-y-0.5">${rows.join('')}</div>
+        ${orphans > 0 ? `
+            <div class="shrink-0 p-1.5">
+                ${sectionLink({ kind, value: '0', label: '📄 Без раздела', count: orphans, level: 0, active: active === '0' })}
+            </div>
+        ` : '<div class="shrink-0 h-1.5"></div>'}
+    `;
 }
 
-/** Кнопка папки в левой панели: клик выбирает её, справа показывается её прайс. */
-function sectionButton(value, label, count, level, active) {
+/** Ключ свёрнутой папки: разделы работ и материалов — разные таблицы. */
+function collapseKey(kind, id) {
+    return `${kind}:${Number(id)}`;
+}
+
+/** Свёрнута ли ветка папки в левой панели. */
+function isCollapsed(kind, id) {
+    return state.collapsed.has(collapseKey(kind, id));
+}
+
+/**
+ * Раздел и его подпапки ПО ВИДИМОМУ дереву (см. sectionTree): подпапкой
+ * считается то, что показано вложенной строкой, а не сырой parent_id. В данных
+ * с петлёй («А внутри Б, Б внутри А») счётчик и отбор тогда совпадают с тем,
+ * что сотрудник видит слева: у «Петли Б» своей ветки нет, а у «Петли А» — есть.
+ */
+function branchIds(kind, id) {
+    const branch = new Set([Number(id)]);
+    let level = -1;
+
+    sectionTree(kind).forEach(({ section, level: current }) => {
+        if (Number(section.id) === Number(id)) {
+            level = current;
+            return;
+        }
+        if (level < 0) return;
+        if (current <= level) { level = -1; return; }     // ветка раздела кончилась
+
+        branch.add(Number(section.id));
+    });
+
+    return branch;
+}
+
+/** Позиции раздела вместе с его подпапками. */
+function branchItems(kind, id) {
+    const branch = branchIds(kind, id);
+    return catalogItems(kind).filter(item => branch.has(Number(item.section_id)));
+}
+
+/**
+ * Разделы от корня до указанного: [{ id, name, parent_id }, …].
+ * Петля в данных (раздел сам себе родитель) не зацикливает окно: через
+ * интерфейс её не создать, но данные приходят не только из него.
+ */
+function sectionChain(kind, id) {
+    const chain = [];
+    const seen = new Set();
+    let current = Number(id) || 0;
+
+    while (current && !seen.has(current)) {
+        seen.add(current);
+        const section = sectionList(kind).find(item => Number(item.id) === current);
+        if (!section) break;
+
+        chain.unshift(section);
+        current = section.parent_id ? Number(section.parent_id) : 0;
+    }
+
+    return chain;
+}
+
+/** Путь раздела от корня: «Земляные работы › Разработка грунта». */
+function sectionPath(kind, id) {
+    return sectionChain(kind, id).map(section => section.name).join(' › ');
+}
+
+/**
+ * Строка левой панели: папка, «📚 Все разделы» или «📄 Без раздела».
+ * Клик выбирает папку (справа остаётся только её прайс), стрелка сворачивает
+ * ветку. Кнопок правки и удаления здесь нет намеренно: они повторялись у
+ * каждой папки и занимали пол-строки — они в полосе над прайсом, у выбранной
+ * папки (см. folderActions).
+ */
+function sectionLink(options) {
+    const guides = '<span class="shrink-0 self-stretch w-3.5 border-l border-gray-200"></span>'
+        .repeat(options.level);
+    const chevron = options.expanded === undefined
+        ? '<span class="shrink-0 w-4"></span>'
+        : `
+            <button data-action="toggleEstimateCatalogFolder" data-arg="${options.kind}:${options.value}" data-stop
+                    class="shrink-0 w-4 text-[10px] leading-none text-gray-500 transition hover:text-gray-900"
+                    title="${options.expanded ? 'Свернуть раздел' : 'Раскрыть раздел'}">${options.expanded ? '▾' : '▸'}</button>
+        `;
+
     return `
-        <button data-action="selectEstimateCatalogSection" data-arg="${value}"
-                class="w-full flex items-center gap-1 py-1.5 pr-2 rounded-lg text-left transition ${active
-                    ? 'bg-emerald-50 text-emerald-900 font-semibold'
-                    : 'hover:bg-gray-100 text-gray-700'}"
-                style="padding-left:${8 + level * 12}px">
-            <span class="flex-1 truncate text-[11px]">${label}</span>
-            <span class="text-[10px] text-gray-400 shrink-0">${count}</span>
-        </button>
+        <div class="flex items-stretch rounded-lg transition ${options.active ? 'bg-emerald-50' : 'hover:bg-white'}">
+            ${guides}${chevron}
+            <button data-action="selectEstimateCatalogSection" data-arg="${options.value}"
+                    class="flex-1 min-w-0 py-1.5 pr-1 text-left">
+                <span class="block truncate text-xs ${options.active ? 'font-semibold text-emerald-900' : 'text-gray-700'}">${options.label}</span>
+            </button>
+            <span class="shrink-0 self-center pr-2 text-[10px] ${options.count ? 'text-gray-500' : 'text-gray-300'}">${options.count}</span>
+        </div>
     `;
 }
 
@@ -402,27 +539,53 @@ function dropStaleSectionFilter(withSections) {
     if (!exists) state.sectionFilter = '';
 }
 
-/** Разделы правой половины окна: выбранная папка вместе с её подпапками. */
+/**
+ * Разделы правой половины окна: выбранная папка вместе с её подпапками.
+ * Ветка берётся по видимому дереву (branchIds) — так отбор и счётчик у папки
+ * в левой панели всегда говорят об одном и том же.
+ */
 function scopeSectionIds(kind) {
     if (!state.sectionFilter) return null;      // «Все разделы» — весь прайс
 
     const id = Number(state.sectionFilter) || 0;
-    return new Set(id ? sectionAndDescendants(kind, id) : [0]);
+    return new Set(id ? branchIds(kind, id) : [0]);
 }
 
-/** Отбор по выбранной папке и поиску — общий для работ и материалов. */
-function filterItems(items, scope = null) {
+/**
+ * Отбор по выбранной папке и поиску — общий для работ и материалов.
+ * Поиск смотрит и на путь папки: сотрудник ищет «Покрівля» и ждёт работы этой
+ * папки, а не помнит название каждой из них.
+ */
+function filterItems(items, scope = null, kind = null) {
     return items.filter(item => {
         const id = item.section_id ? Number(item.section_id) : 0;
         if (scope && !scope.has(id)) return false;
         if (!state.search) return true;
 
-        return String(item.name || '').toLowerCase().includes(state.search);
+        if (String(item.name || '').toLowerCase().includes(state.search)) return true;
+
+        return kind ? sectionPath(kind, id).toLowerCase().includes(state.search) : false;
     });
 }
 
+/**
+ * Пустое состояние списка. Обёртка-таблица нужна не для красоты: без неё
+ * браузер выбрасывает `<tr>` и `<td>` (правило разбора HTML — строка таблицы
+ * вне таблицы), и подсказка показывалась серым текстом без отступов и
+ * выравнивания.
+ */
 function emptyRow(text, columns) {
-    return `<tr><td colspan="${columns}" class="px-3 py-6 text-center text-xs text-gray-500">${escapeHtml(text)}</td></tr>`;
+    return `
+        <table class="w-full text-xs">
+            <tbody>
+                <tr>
+                    <td colspan="${columns}" class="px-4 py-10 text-center text-xs text-gray-500">
+                        ${escapeHtml(text)}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    `;
 }
 
 /** Кнопки строки справочника: правка и удаление. */
@@ -440,37 +603,67 @@ function rowActions(actionEdit, actionDelete, id, extra = '') {
     `;
 }
 
-/**
- * Подсказка пустого списка: в выбранной папке она своя. «Работ пока нет» в
- * пустом прайсе и «в этой папке работ нет» — разные вещи, и во втором случае
- * сотруднику нужен выход к «Все разделы».
- */
-function catalogEmptyText(inFolder, wholeCatalog) {
-    return state.sectionFilter ? inFolder : wholeCatalog;
+/** «работу» или «материал» — для подсказок пустого списка. */
+function itemWord(kind) {
+    return kind === 'material' ? 'материал' : 'работу';
 }
 
-/** Работы: две цены рядом — сразу видно, где прибыль. Деревом по разделам. */
+/** «Работа» или «Материал» — подпись кнопки добавления. */
+function itemTitle(kind) {
+    return kind === 'material' ? 'Материал' : 'Работа';
+}
+
+/**
+ * Подсказка пустого списка. Это четыре разные ситуации, и каждая ведёт к
+ * своему действию: пустой прайс — завести папку, пустая папка — добавить
+ * позицию или выйти к «Все разделы», «ничего не нашлось» — поправить запрос.
+ * Фразы собраны целиком (без вставки слов по частям): их переводит фразовый
+ * словарь js/i18n.js, а он ищет фразу целиком в тексте узла.
+ */
+function catalogEmptyText(kind) {
+    const material = kind === 'material';
+
+    if (state.search) {
+        return 'Ничего не найдено — проверь название или выбери «📚 Все разделы» слева.';
+    }
+
+    if (state.sectionFilter === '0') {
+        return material
+            ? 'Позиций без раздела нет — новый материал создаётся кнопкой «➕ Материал» сверху.'
+            : 'Позиций без раздела нет — новая работа создаётся кнопкой «➕ Работа» сверху.';
+    }
+
+    if (state.sectionFilter) {
+        return material
+            ? 'В этой папке (и её подпапках) материалов нет — добавь кнопкой «➕ Материал» сверху или выбери другую папку слева.'
+            : 'В этой папке (и её подпапках) работ нет — добавь кнопкой «➕ Работа» сверху или выбери другую папку слева.';
+    }
+
+    return material
+        ? 'Прайс пока пуст. Заведи папку («📁 Добавить раздел») и добавь материал кнопкой «➕ Материал» над списком.'
+        : 'Прайс пока пуст. Заведи папку («📁 Добавить раздел») и добавь работу кнопкой «➕ Работа» над списком.';
+}
+
+/** Работы: две цены рядом — сразу видно, где прибыль. */
 function renderWorksTable() {
-    return renderCatalogTree('work', {
-        totalColumns: 6,
+    return renderCatalogList('work', {
+        totalColumns: 7,
         head: `
             <th class="px-3 py-2 text-left">Название работы</th>
-            <th class="px-3 py-2 text-left w-20">Ед.</th>
+            <th class="px-3 py-2 text-left w-44">Раздел</th>
+            <th class="px-3 py-2 text-left w-16">Ед.</th>
             <th class="px-3 py-2 text-right w-24">Наряд</th>
             <th class="px-3 py-2 text-right w-24">Костор.</th>
-            <th class="px-3 py-2 text-center w-20">Нормы</th>
+            <th class="px-3 py-2 text-center w-16">Нормы</th>
             <th class="px-3 py-2 w-28"></th>
         `,
-        emptyText: catalogEmptyText(
-            'В этой папке работ нет — нажми «➕» у раздела или выбери «Все разделы» слева.',
-            'Работ пока нет. Создай раздел («📁 Добавить раздел»), потом добавь работу '
-                + 'кнопкой «➕» у раздела — она попадёт прямо в него.'),
-        itemRow: (work, level) => `
+        row: (work) => `
             <tr class="hover:bg-gray-50">
-                <td class="py-2 pr-3" style="padding-left:${12 + level * 20}px">
+                <td class="px-3 py-2">
                     <div class="font-medium text-gray-800">${escapeHtml(work.name)}</div>
                     ${work.description ? `<div class="text-[10px] text-gray-500">${escapeHtml(work.description)}</div>` : ''}
                 </td>
+                ${sectionCell('work', work.section_id)}
                 <td class="px-3 py-2 text-gray-600">${escapeHtml(work.unit)}</td>
                 <td class="px-3 py-2 text-right text-gray-700">${formatMoney(work.price_worker)}</td>
                 <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(work.price_client)}</td>
@@ -484,27 +677,23 @@ function renderWorksTable() {
     });
 }
 
-/** Материалы: закупка/кошторис + пометка «давальческий». Тоже деревом. */
+/** Материалы: закупка/кошторис + пометка «давальческий». */
 function renderMaterialsTable() {
-    return renderCatalogTree('material', {
-        totalColumns: 6,
+    return renderCatalogList('material', {
+        totalColumns: 7,
         head: `
             <th class="px-3 py-2 text-left">Название материала</th>
-            <th class="px-3 py-2 text-left w-20">Ед.</th>
+            <th class="px-3 py-2 text-left w-44">Раздел</th>
+            <th class="px-3 py-2 text-left w-16">Ед.</th>
             <th class="px-3 py-2 text-right w-24">Закупка</th>
             <th class="px-3 py-2 text-right w-24">Костор.</th>
-            <th class="px-3 py-2 text-center w-28">Давальч.</th>
+            <th class="px-3 py-2 text-center w-20">Давальч.</th>
             <th class="px-3 py-2 w-28"></th>
         `,
-        emptyText: catalogEmptyText(
-            'В этой папке материалов нет — нажми «➕» у раздела или выбери «Все разделы» слева.',
-            'Материалов пока нет. Создай раздел («📁 Добавить раздел»), потом добавь материал '
-                + 'кнопкой «➕» у раздела — он попадёт прямо в него.'),
-        itemRow: (material, level) => `
+        row: (material) => `
             <tr class="hover:bg-gray-50">
-                <td class="py-2 pr-3 font-medium text-gray-800" style="padding-left:${12 + level * 20}px">
-                    ${escapeHtml(material.name)}
-                </td>
+                <td class="px-3 py-2 font-medium text-gray-800">${escapeHtml(material.name)}</td>
+                ${sectionCell('material', material.section_id)}
                 <td class="px-3 py-2 text-gray-600">${escapeHtml(material.unit)}</td>
                 <td class="px-3 py-2 text-right text-gray-700">${formatMoney(material.price_purchase)}</td>
                 <td class="px-3 py-2 text-right font-semibold text-[#166534]">${formatMoney(material.price_client)}</td>
@@ -519,28 +708,130 @@ function renderMaterialsTable() {
     });
 }
 
-/**
- * Кнопки строки раздела (папки): папка внутри, позиция внутри, правка, удаление.
- * Позиция создаётся СРАЗУ в этом разделе — окно откроется с выбранным
- * родителем, поэтому прайс заполняется сверху вниз, от папки к работе.
- */
-function sectionActions(kind, sectionId) {
-    const item = kind === 'material' ? 'материал' : 'работу';
+// =====================================================================
+// ПРАВАЯ ПОЛОВИНА ОКНА: ПОЛОСА НАД ПРАЙСОМ
+// =====================================================================
+// Здесь видно, чей прайс показан («📚 Все разделы» или путь до выбранной
+// папки), сколько в нём позиций и что можно сделать с этой папкой. Раньше эти
+// кнопки стояли у каждой папки прямо в таблице: одна и та же папка была видна
+// и слева, и справа, а ряд кнопок повторялся в каждой строке.
+
+/** Полоса над таблицей: где мы находимся и что можно сделать с папкой. */
+function renderCatalogPaneHead() {
+    const head = document.getElementById('estimate-catalog-pane-head');
+    if (!head) return;
+
+    // У «Единиц» и «Клиентов» папок нет — полоса не нужна.
+    if (state.activeTab !== 'works' && state.activeTab !== 'materials') {
+        head.innerHTML = '';
+        head.classList.add('hidden');
+        return;
+    }
+
+    head.classList.remove('hidden');
+
+    const kind = catalogKind();
+    const value = String(state.sectionFilter || '');
+    const shown = filterItems(catalogItems(kind), scopeSectionIds(kind), kind).length;
+    const counter = `<span class="shrink-0 text-[11px] text-gray-400">· ${shown} ${itemsWord(shown)}</span>`;
+
+    if (!value) {
+        head.innerHTML = `
+            <div class="flex min-w-0 items-center gap-2">
+                <span class="shrink-0 text-xs font-semibold text-gray-700">📚 Все разделы</span>
+                ${counter}
+            </div>
+            <p class="ml-auto hidden shrink-0 text-[11px] text-gray-400 lg:block">
+                Выбери папку слева — останется только её прайс
+            </p>
+        `;
+        return;
+    }
+
+    const id = Number(value) || 0;
+    const crumbs = id
+        ? sectionChain(kind, id).map(section => crumbHtml(kind, section))
+            .join('<span class="shrink-0 text-gray-300">›</span>')
+        : '<span class="shrink-0 text-xs font-semibold text-gray-700">📄 Без раздела</span>';
+
+    head.innerHTML = `
+        <div class="flex min-w-0 items-center gap-1.5">
+            ${id ? '<span class="shrink-0 text-xs text-gray-400">📁</span>' : ''}
+            ${crumbs}
+            ${counter}
+        </div>
+        <div class="ml-auto flex shrink-0 items-center gap-1">${folderActions(kind, id)}</div>
+    `;
+}
+
+/** Звено пути раздела: по родителю можно кликнуть, последний — подпись. */
+function crumbHtml(kind, section) {
+    const name = escapeHtml(section.name);
+    const path = escapeHtml(sectionPath(kind, section.id));
+
+    if (String(section.id) === String(state.sectionFilter)) {
+        return `<span class="min-w-0 max-w-[16rem] truncate text-xs font-semibold text-gray-800"
+                      title="${path}">${name}</span>`;
+    }
 
     return `
-        <button data-action="addEstimateSubsection" data-arg="${kind}:${sectionId}" data-stop
-                class="text-xs px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold transition"
-                title="Создать папку внутри">📁➕</button>
-        <button data-action="addEstimateCatalogItem" data-arg="${sectionId}" data-stop
-                class="text-xs px-2 py-1 rounded-lg bg-[#15803d] hover:bg-[#166534] text-white font-semibold transition"
-                title="Добавить ${item} в раздел">➕</button>
-        <button data-action="openEstimateSectionModal" data-arg="edit:${kind}:${sectionId}" data-stop
-                class="text-xs px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold transition"
-                title="Править">✏</button>
-        <button data-action="deleteEstimateSection" data-arg="del:${kind}:${sectionId}" data-stop
-                class="text-xs px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-semibold transition"
-                title="Удалить">🗑</button>
+        <button data-action="selectEstimateCatalogSection" data-arg="${section.id}"
+                class="min-w-0 max-w-[10rem] truncate text-xs text-gray-500 transition hover:text-gray-800 hover:underline"
+                title="${path}">${name}</button>
     `;
+}
+
+/**
+ * Кнопки выбранной папки: подпапка внутри, позиция внутри, переименовать,
+ * удалить. Позиция создаётся СРАЗУ в этой папке — окно откроется с уже
+ * выбранным разделом, поэтому прайс заполняется сверху вниз, от папки к работе.
+ */
+function folderActions(kind, id) {
+    const addItem = `
+        <button data-action="addEstimateCatalogItem" data-arg="${id}"
+                class="bg-[#15803d] hover:bg-[#166534] text-white px-2 py-1 rounded-lg text-[11px] font-semibold transition"
+                title="Добавить ${itemWord(kind)} в этот раздел">➕ ${itemTitle(kind)}</button>
+    `;
+
+    // «📄 Без раздела» — не папка: её нельзя переименовать или удалить.
+    if (!id) return addItem;
+
+    return `
+        <button data-action="addEstimateSubsection" data-arg="${kind}:${id}"
+                class="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-2 py-1 rounded-lg text-[11px] font-semibold transition"
+                title="Создать папку внутри">📁➕ Подраздел</button>
+        ${addItem}
+        <button data-action="openEstimateSectionModal" data-arg="edit:${kind}:${id}"
+                class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded-lg text-[11px] font-semibold transition"
+                title="Переименовать раздел">✏</button>
+        <button data-action="deleteEstimateSection" data-arg="del:${kind}:${id}"
+                class="bg-red-50 hover:bg-red-100 text-red-700 px-2 py-1 rounded-lg text-[11px] font-semibold transition"
+                title="Удалить раздел">🗑</button>
+    `;
+}
+
+/** Полоса под таблицей: сколько строк показано и на какую сумму. */
+function renderCatalogPaneFoot() {
+    const foot = document.getElementById('estimate-catalog-pane-foot');
+    if (!foot) return;
+
+    const search = state.search ? `🔍 «${state.search}» · ` : '';
+
+    if (state.activeTab === 'units' || state.activeTab === 'clients') {
+        const units = state.activeTab === 'units';
+        foot.innerHTML = `${search}${units ? 'Единиц' : 'Клиентов'}: `
+            + `${(units ? state.units : state.clients).length}`;
+        return;
+    }
+
+    const kind = catalogKind();
+    const items = filterItems(catalogItems(kind), scopeSectionIds(kind), kind);
+    const sum = (field) => formatMoney(items.reduce((acc, item) => acc + (Number(item[field]) || 0), 0));
+    const prices = kind === 'material'
+        ? `закупка ${sum('price_purchase')} · костор. ${sum('price_client')}`
+        : `наряд ${sum('price_worker')} · костор. ${sum('price_client')}`;
+
+    foot.innerHTML = `${search}Итого: ${items.length} ${itemsWord(items.length)} · ${prices}`;
 }
 
 /** Склонение слова «позиция» для подписи у папки. */
@@ -551,126 +842,60 @@ function itemsWord(count) {
     return 'позиций';
 }
 
-/** Строка папки: название с отступом и количество позиций в ветке. */
-function sectionRow(kind, section, level, count, totalColumns) {
+/** Ячейка «Раздел»: папка позиции, полный путь — в подсказке. */
+function sectionCell(kind, sectionId) {
+    if (!sectionId) return '<td class="px-3 py-2 text-gray-400">— без раздела —</td>';
+
+    const known = sectionPath(kind, sectionId);
+    const text = known || 'раздел не найден';
+
     return `
-        <tr class="bg-gray-50/70">
-            <td colspan="${totalColumns - 1}" class="py-2 pr-3 font-semibold text-gray-700"
-                style="padding-left:${12 + level * 20}px">
-                <span class="text-gray-400">${level > 0 ? '↳ ' : ''}</span>📁 ${escapeHtml(section.name)}
-                <span class="text-gray-400 font-normal">· ${count} ${itemsWord(count)}</span>
-            </td>
-            <td class="px-3 py-2 text-right whitespace-nowrap">${sectionActions(kind, section.id)}</td>
-        </tr>
+        <td class="px-3 py-2 text-gray-500">
+            <span class="block max-w-[11rem] truncate" title="${escapeHtml(text)}">📁 ${escapeHtml(text)}</span>
+        </td>
     `;
 }
 
 /**
- * Дерево прайса: разделы (папки, подпапки) и позиции внутри них.
- *
- * Раздел показывается, если в нём или в его подпапках есть подходящие позиции —
- * вместе со всеми родителями (иначе подпапка «висела» бы без папки). Если поиск
- * совпал с НАЗВАНИЕМ раздела, он показывается целиком, со всеми своими
- * позициями: сотрудник ищет «Покрівля» и ждёт содержимое папки, а не пустую
- * строку. Позиции без раздела собраны отдельной группой внизу — потерять такую
- * работу слишком легко.
- *
- * Если слева выбрана папка (scopeSectionIds), здесь остаются только она и её
- * подпапки: сама папка рисуется заголовком даже пустой, иначе по списку не
- * понять, где мы находимся.
+ * Порядок папок как в дереве слева: позиции идут за своей папкой, поэтому
+ * список читается сверху вниз так же, как дерево.
  */
-function renderCatalogTree(kind, options) {
-    const all = catalogItems(kind);
+function sectionOrder(kind) {
+    const order = new Map();
+    sectionTree(kind).forEach(({ section }, index) => order.set(Number(section.id), index));
+    return order;
+}
+
+/**
+ * Плоская таблица прайса: позиции выбранной папки вместе с её подпапками.
+ *
+ * Дерева в правой половине нет намеренно: папки не должны быть видны дважды —
+ * слева навигация, справа прайс. Откуда позиция, видно по колонке «Раздел»
+ * (полный путь в подсказке), а порядок строк — как в дереве слева: позиции
+ * идут за своей папкой, позиции без папки — в конце списка.
+ *
+ * В «Все разделы» видны ВСЕ позиции прайса, чем бы ни была заполнена их
+ * папка: спрятать строку из-за незнакомого section_id окно не может.
+ */
+function renderCatalogList(kind, options) {
     const scope = scopeSectionIds(kind);
-    const matched = filterItems(all, scope);
-
-    const bySection = new Map();
-    matched.forEach(item => {
+    const order = sectionOrder(kind);
+    const rank = (item) => {
         const id = item.section_id ? Number(item.section_id) : 0;
-        if (!bySection.has(id)) bySection.set(id, []);
-        bySection.get(id).push(item);
-    });
-
-    const nameMatched = new Set();
-    if (state.search) {
-        sectionList(kind).forEach(section => {
-            if (String(section.name || '').toLowerCase().includes(state.search)) {
-                nameMatched.add(Number(section.id));
-            }
-        });
-    }
-
-    const parentOf = new Map();
-    sectionList(kind).forEach(section => {
-        parentOf.set(Number(section.id), section.parent_id ? Number(section.parent_id) : 0);
-    });
-
-    const visible = new Set();
-    const showBranch = (id) => {
-        let current = Number(id) || 0;
-        while (current && !visible.has(current)) {
-            visible.add(current);
-            current = parentOf.get(current) || 0;
-        }
+        const at = order.get(id);
+        return typeof at === 'number' ? at : order.size + 1;   // без папки или папка не найдена
     };
 
-    bySection.forEach((list, id) => { if (id) showBranch(id); });
-    nameMatched.forEach(id => showBranch(id));
+    const rows = filterItems(catalogItems(kind), scope, kind)
+        .slice()
+        .sort((a, b) => rank(a) - rank(b))
+        .map(options.row);
 
-    // В выбранной папке видны только она и её подпапки: родителей, которые
-    // showBranch() добавил по пути вверх, убираем — иначе в списке появились бы
-    // соседние папки, которых в выбранной ветке нет.
-    const scopedRoot = scope ? (Number(state.sectionFilter) || 0) : null;
-
-    if (scope) {
-        visible.forEach(id => { if (!scope.has(id)) visible.delete(id); });
-        if (scopedRoot) visible.add(scopedRoot);
-    }
-
-    const rows = [];
-
-    sectionTree(kind).forEach(({ section, level }) => {
-        const id = Number(section.id);
-        if (!visible.has(id)) return;
-
-        // Считаем позиции всей ветки: у папки может быть пусто, а в подпапке —
-        // работы, и «0 позиций» у неё выглядело бы враньём.
-        const branch = new Set(sectionAndDescendants(kind, id));
-        const branchItems = all.filter(item => branch.has(Number(item.section_id)));
-
-        const own = nameMatched.has(id)
-            ? all.filter(item => Number(item.section_id) === id)
-            : (bySection.get(id) || []);
-
-        rows.push(sectionRow(kind, section, level, branchItems.length, options.totalColumns));
-        own.forEach(item => rows.push(options.itemRow(item, level + 1)));
-    });
-
-    // Группа «Без раздела» нужна и в общем списке, и когда выбрана она сама
-    // (слева пункт «📄 Без раздела»): у неё нет папки, и заголовок заменяет её.
-    const showOrphans = !scope || scopedRoot === 0;
-    const orphans = showOrphans ? (bySection.get(0) || []) : [];
-    if (orphans.length > 0) {
-        rows.push(`
-            <tr class="bg-gray-50/70">
-                <td colspan="${options.totalColumns - 1}" class="px-3 py-2 font-semibold text-gray-700">
-                    📄 Без раздела <span class="text-gray-400 font-normal">· ${orphans.length} ${itemsWord(orphans.length)}</span>
-                </td>
-                <td class="px-3 py-2 text-right whitespace-nowrap">
-                    <button data-action="addEstimateCatalogItem" data-stop
-                            class="text-xs px-2 py-1 rounded-lg bg-[#15803d] hover:bg-[#166534] text-white font-semibold transition"
-                            title="Добавить без раздела">➕</button>
-                </td>
-            </tr>
-        `);
-        orphans.forEach(item => rows.push(options.itemRow(item, 0)));
-    }
-
-    if (rows.length === 0) return emptyRow(options.emptyText, options.totalColumns);
+    if (rows.length === 0) return emptyRow(catalogEmptyText(kind), options.totalColumns);
 
     return `
         <table class="w-full text-xs">
-            <thead class="bg-gray-50 text-gray-600">
+            <thead class="sticky top-0 z-10 bg-gray-50 text-gray-600">
                 <tr>${options.head}</tr>
             </thead>
             <tbody class="divide-y">${rows.join('')}</tbody>
@@ -682,15 +907,47 @@ function renderCatalogTree(kind, options) {
  * Дерево разделов: родитель, затем его подразделы с отступом.
  * Порядок — как в прайсе: «Покрівля» → «Покрівля скатна» → ...
  */
-function sectionTree(kind, parentId = null, level = 0, acc = []) {
-    const list = kind === 'material' ? state.materialSections : state.workSections;
+/**
+ * Дерево разделов: родитель, затем его подразделы с отступом.
+ * Порядок — как в прайсе: «Покрівля» → «Покрівля скатна» → ...
+ *
+ * Корнем считается и раздел, чьего родителя в списке нет: данные приходят не
+ * только из интерфейса. Раздел, до которого обход не дошёл (в данных петля:
+ * «А внутри Б, Б внутри А»), тоже показывается корнем — иначе он вместе со
+ * своими позициями исчез бы из окна молча, а счётчики не сошлись бы.
+ */
+function sectionTree(kind) {
+    const list = sectionList(kind);
+    const known = new Set(list.map(section => Number(section.id)));
+    const acc = [];
+    const seen = new Set();
 
-    list
-        .filter(section => (section.parent_id ?? null) === parentId)
-        .forEach(section => {
-            acc.push({ section, level });
-            sectionTree(kind, section.id, level + 1, acc);
-        });
+    const walk = (parentId, level) => {
+        list
+            .filter(section => {
+                const parent = section.parent_id ? Number(section.parent_id) : 0;
+                return parentId ? parent === parentId : (!parent || !known.has(parent));
+            })
+            .forEach(section => {
+                const id = Number(section.id);
+                if (seen.has(id)) return;
+                seen.add(id);
+
+                acc.push({ section, level });
+                walk(id, level + 1);
+            });
+    };
+
+    walk(0, 0);
+
+    list.forEach(section => {
+        const id = Number(section.id);
+        if (seen.has(id)) return;
+
+        seen.add(id);
+        acc.push({ section, level: 0 });
+        walk(id, 1);
+    });
 
     return acc;
 }
@@ -1194,18 +1451,25 @@ function sectionList(kind) {
 /** Раздел и все его подпапки: их нельзя выбрать родителем — вышел бы цикл. */
 function sectionAndDescendants(kind, id) {
     const ids = [];
+    const seen = new Set();
 
     const walk = (parentId) => {
         sectionList(kind)
-            .filter(item => (item.parent_id ?? null) === parentId)
+            .filter(item => (item.parent_id ? Number(item.parent_id) : 0) === parentId)
             .forEach(item => {
-                ids.push(Number(item.id));
-                walk(Number(item.id));
+                const childId = Number(item.id);
+                // Петля в данных («А внутри Б, Б внутри А») не зацикливает окно.
+                if (seen.has(childId)) return;
+                seen.add(childId);
+
+                ids.push(childId);
+                walk(childId);
             });
     };
 
     if (id) {
         ids.push(Number(id));
+        seen.add(Number(id));
         walk(Number(id));
     }
 
@@ -1578,6 +1842,7 @@ window.openEstimateCatalog = openEstimateCatalog;
 window.setEstimateCatalogTab = setEstimateCatalogTab;
 window.setEstimateCatalogSearch = setEstimateCatalogSearch;
 window.selectEstimateCatalogSection = selectEstimateCatalogSection;
+window.toggleEstimateCatalogFolder = toggleEstimateCatalogFolder;
 window.openEstimateCatalogAdd = openEstimateCatalogAdd;
 window.renderEstimateCatalog = renderEstimateCatalog;
 window.openEstimateWorkModal = openEstimateWorkModal;

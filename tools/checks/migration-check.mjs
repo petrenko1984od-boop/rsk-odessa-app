@@ -1153,26 +1153,46 @@ function main() {
             /data-action="addEstimateFolder"/.test(indexHtmlV29) &&
             /sectionAndDescendants/.test(catalogJsV211));
 
-        // 3a. Дерево прайса живёт в «Работы» и «Материалы»: отдельной вкладки
-        //     «Разделы» нет, позиция создаётся кнопкой «➕» прямо у папки.
+        // 3a. Прайс живёт в «Работы» и «Материалы»: отдельной вкладки
+        //     «Разделы» нет, позиция создаётся кнопкой «➕ Работа» у папки.
         ok('v2.11.0: разделы видны в работах и материалах, вкладки «Разделы» нет',
-            /renderCatalogTree/.test(catalogJsV211) &&
+            /renderCatalogList/.test(catalogJsV211) &&
             /addEstimateCatalogItem/.test(catalogJsV211) &&
             /estimate-catalog-folder-wrap/.test(indexHtmlV29) &&
             !/estimate-catalog-tab-sections/.test(indexHtmlV29) &&
             !/estimate-catalog-section-kind/.test(indexHtmlV29));
 
-        // 3б. Прайс в две колонки (v2.12.0-r6): слева панель папок, справа —
-        //     позиции выбранной папки. Выпадающий фильтр «Раздел» убран: с
-        //     панелью он дублировал бы друг друга, а на сотнях работ искать
-        //     папку прокруткой — то, из-за чего колонки и появились.
-        ok('v2.12.0-r6: прайс в две колонки — слева папки, справа позиции выбранной папки',
+        // 3б. Прайс в две колонки (v2.12.0-r7). Слева панель папок со стрелками
+        //     сворачивания, справа — ПЛОСКАЯ таблица прайса выбранной папки с
+        //     колонкой «Раздел»: в r6 дерево повторялось и справа, а ряд кнопок
+        //     папки стоял в каждой строке. Путь до папки, счётчик и кнопки папки
+        //     теперь в полосе над таблицей, итоги — в полосе под ней, а окно
+        //     занимает высоту экрана (в r6 в таблицу помещалось две строки).
+        //     Выпадающий фильтр «Раздел» убран: панель его заменяет.
+        ok('v2.12.0-r7: слева папки со сворачиванием, справа плоский прайс с колонкой «Раздел»',
             /id="estimate-catalog-sections"/.test(indexHtmlV29) &&
+            /id="estimate-catalog-pane-head"/.test(indexHtmlV29) &&
+            /id="estimate-catalog-pane-foot"/.test(indexHtmlV29) &&
+            /h-\[92vh\]/.test(indexHtmlV29) &&
             /renderCatalogSections/.test(catalogJsV211) &&
             /scopeSectionIds/.test(catalogJsV211) &&
+            /renderCatalogList/.test(catalogJsV211) &&
+            /function sectionCell\(/.test(catalogJsV211) &&
+            /function folderActions\(/.test(catalogJsV211) &&
+            /toggleEstimateCatalogFolder/.test(catalogJsV211) &&
             /data-action="selectEstimateCatalogSection"/.test(catalogJsV211) &&
+            !/renderCatalogTree/.test(catalogJsV211) &&
             !/estimate-catalog-section-filter/.test(indexHtmlV29) &&
             !/fillCatalogSectionFilter/.test(catalogJsV211));
+
+        // 3в. Позиции не могут пропасть из-за папки: раздел с несуществующим
+        //     родителем (и петля в данных) строится корнем, а обход подпапок
+        //     защищён от зацикливания — иначе окно замерло бы на живых данных.
+        ok('v2.12.0-r7: раздел с потерянным родителем строится корнем (позиции не пропадают)',
+            /function sectionTree\(kind\)/.test(catalogJsV211) &&
+            /!known\.has\(parent\)/.test(catalogJsV211) &&
+            /seen\.has\(id\)/.test(catalogJsV211) &&
+            /function sectionAndDescendants\(kind, id\)/.test(catalogJsV211));
 
         // 4. Окно экспорта: четыре выбора из макета и их списки в CONFIG.
         ok('v2.11.0: окно экспорта — тип, вид кошториса, колір шапки, формат',
