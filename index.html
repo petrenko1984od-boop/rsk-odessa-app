@@ -303,6 +303,11 @@
                             <button data-action="openMyOperations" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">💰 <span>Авансовый отчёт</span></button>
                             <button data-action="openMyRequests" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📋 <span>Мои заявки</span></button>
                             <button data-action="openMyTasks" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📌 <span>Мои задачи</span></button>
+                            <!-- Установка приложения. Карточка внизу (js/pwa.js) показывается
+                                 один раз и только там, где браузер разрешил установку, а после
+                                 «✕» — никогда; этот пункт меню есть всегда и открывает окно с
+                                 шагами для своего устройства (#install-modal). -->
+                            <button data-action="openInstallHelp" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">📲 <span data-i18n="pwa.installMenu">Установить приложение</span></button>
                             <!-- Язык интерфейса и цветовая схема: каждый сотрудник выбирает сам -->
                             <button data-action="openSettings" class="w-full text-left px-4 py-3 text-sm text-gray-800 hover:bg-gray-50 transition flex items-center gap-2 border-b">⚙ <span>Настройки</span></button>
                             <button data-action="logout" class="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition flex items-center gap-2">🚪 <span>Выйти</span></button>
@@ -937,6 +942,81 @@
             </div>
 
             <button type="button" data-action="hideModal" data-arg="settings-modal"
+                    class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                    data-i18n="common.close">Закрыть</button>
+        </div>
+    </div>
+
+    <!-- УСТАНОВКА ПРИЛОЖЕНИЯ (PWA) — окно пункта «Кабинет» → «📲 Установить приложение»
+         Карточка внизу показывается один раз и только там, где браузер разрешил
+         установку (beforeinstallprompt); после «✕» она не появится вовсе. Поэтому
+         постоянный пункт меню открывает это окно: шаги для СВОЕГО устройства и
+         кнопка установки, если браузер её предлагает. Устройство и кнопку
+         выбирает js/pwa.js → openInstallHelp(), тексты шагов — словарь
+         (data-i18n), поэтому шаги не дублируются в модуле. -->
+    <div id="install-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[80]">
+        <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-gray-800" data-i18n="pwa.installTitle">📲 Установить приложение</h3>
+                <button data-action="hideModal" data-arg="install-modal" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <p class="text-xs text-gray-500" data-i18n="pwa.installIntro">
+                Приложение ставится как обычная программа: значок на рабочем столе, отдельное окно без адресной строки. Скачивать файлы и заходить в магазин приложений не нужно.
+            </p>
+
+            <!-- Кнопку показываем только там, где браузер разрешил установку -->
+            <button type="button" id="install-modal-btn" data-action="pwaInstall"
+                    class="hidden w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
+                    data-i18n="pwa.installButton">📲 Установить</button>
+
+            <!-- Приложение уже открыто отдельным окном — ставить нечего -->
+            <p id="install-done" class="hidden bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900"
+               data-i18n="pwa.installDone">
+                Приложение уже открыто отдельным окном — устанавливать нечего. Ярлык «FreeDOM» лежит в меню «Пуск» (Windows) или в Launchpad (macOS).
+            </p>
+
+            <div id="install-steps-desktop" class="hidden space-y-2">
+                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installDesktop">Компьютер: Windows и macOS (Chrome, Edge)</p>
+                <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
+                    <li data-i18n="pwa.installDesktop1">Меню браузера ⋮ → «Транслировать, сохранить, поделиться» → «Установить страницу как приложение».</li>
+                    <li data-i18n="pwa.installDesktop2">Или нажмите значок установки справа в адресной строке (экран с маленькой стрелкой).</li>
+                    <li data-i18n="pwa.installDesktop3">Подтвердите установку: приложение откроется отдельным окном, а ярлык FreeDOM появится в «Пуск» (Windows) или в Launchpad (macOS).</li>
+                </ol>
+            </div>
+
+            <div id="install-steps-android" class="hidden space-y-2">
+                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installAndroid">Android: телефон или планшет (Chrome)</p>
+                <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
+                    <li data-i18n="pwa.installAndroid1">Меню браузера ⋮ → «Установить приложение» (в старых версиях — «Добавить на главный экран»).</li>
+                    <li data-i18n="pwa.installAndroid2">Или нажмите «📲 Установить» на карточке, которая появляется внизу после входа.</li>
+                    <li data-i18n="pwa.installAndroid3">Подтвердите: значок FreeDOM появится на главном экране и в списке приложений.</li>
+                </ol>
+            </div>
+
+            <div id="install-steps-ios" class="hidden space-y-2">
+                <p class="text-xs font-bold text-gray-700 uppercase tracking-wider" data-i18n="pwa.installIos">iPhone и iPad (только Safari)</p>
+                <ol class="list-decimal ml-5 space-y-1 text-xs text-gray-700">
+                    <li data-i18n="pwa.installIos1">Кнопка «Поделиться» (квадрат со стрелкой вверх) внизу экрана.</li>
+                    <li data-i18n="pwa.installIos2">В списке выберите «На экран „Домой“» — пункт может быть скрыт в разделе «Ещё».</li>
+                    <li data-i18n="pwa.installIos3">Проверьте название FreeDOM и нажмите «Добавить». Safari устанавливать приложение кнопкой не умеет — это особенность iOS, а не ошибка.</li>
+                </ol>
+            </div>
+
+            <!-- Что делать, если кнопки установки в окне нет -->
+            <p id="install-hint" class="hidden bg-gray-50 border rounded-lg p-3 text-xs text-gray-600"
+               data-i18n="pwa.installHint">
+                Кнопки установки нет: браузер не предлагает её на этом устройстве. Установите приложение через меню браузера — как описано выше.
+            </p>
+
+            <!-- Уже установлено: Chrome показывает это пунктом «Открыть в приложении» —
+                 по нему и решают, что установки нет. Текст стоит в окне всегда. -->
+            <p class="bg-gray-50 border rounded-lg p-3 text-xs text-gray-600" data-i18n="pwa.installOpenInApp">
+                Если в меню браузера есть пункт «Открыть в приложении» — приложение уже установлено на этом компьютере: это оно, открытое отдельным окном. Ярлык ищите в «Пуск» по имени FreeDOM.
+            </p>
+
+            <button type="button" data-action="hideModal" data-arg="install-modal"
                     class="w-full bg-[#15803d] hover:bg-[#166534] text-white font-semibold py-2.5 rounded-lg text-sm transition"
                     data-i18n="common.close">Закрыть</button>
         </div>

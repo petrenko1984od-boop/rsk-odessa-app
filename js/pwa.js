@@ -10,7 +10,12 @@
 //      «Поделиться → На экран „Домой“»: установить приложение за
 //      пользователя Safari не позволяет;
 //   3) когда service worker скачал новую версию, предлагаем «Обновить»
-//      (#pwa-update-banner): иначе сотрудник останется на старых файлах.
+//      (#pwa-update-banner): иначе сотрудник останется на старых файлах;
+//   4) постоянный пункт меню «Кабинет» → «📲 Установить приложение» открывает
+//      окно (#install-modal) с шагами для своего устройства. Карточка внизу
+//      показывается один раз и только там, где браузер разрешил установку, а
+//      после «✕» — никогда; окно же доступно всегда, поэтому сотрудник может
+//      установить приложение и позже, и на другом устройстве.
 //
 // Разметка обеих карточек — в index.html. Показываем их только внутри
 // приложения (после входа): на экране авторизации они закрывали бы форму,
@@ -18,7 +23,7 @@
 // =====================================================================
 
 import { CONFIG } from './config.js';
-import { log } from './utils.js';
+import { log, hideModal, showModal } from './utils.js';
 
 const OFFER_KEY = 'rsk.pwa.install';   // 'no' — от установки отказались навсегда
 const SNOOZE_KEY = 'rsk.pwa.snooze';   // 'yes' — «Позже» до конца сеанса
@@ -112,6 +117,7 @@ function setupInstallOffer() {
         installPrompt = event;
         installBannerReady = true;
         showBanners();
+        showInstallButton();          // окно установки могло быть открыто раньше события
     });
 
     window.addEventListener('appinstalled', () => {
@@ -120,8 +126,62 @@ function setupInstallOffer() {
         installBannerReady = false;
         localStorage.setItem(OFFER_KEY, 'no');   // больше не предлагаем
         hide('pwa-install-banner');
+        hideModal('install-modal');
     });
 }
+
+// =====================================================================
+// ОКНО «📲 УСТАНОВИТЬ ПРИЛОЖЕНИЕ» (постоянный пункт меню «Кабинет»)
+// =====================================================================
+// Зачем окно, если есть карточка: карточку браузер разрешает показать не
+// всегда (событие beforeinstallprompt приходит только на «устанавливаемых»
+// устройствах), а после «✕» она не появляется никогда — сотрудник остаётся
+// без подсказки, хотя установить приложение можно через меню браузера. Здесь
+// порядок шагов для его устройства и кнопка установки, когда браузер её даёт.
+
+/** Показывает/прячет блок окна по id. */
+function toggle(id, visible) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !visible);
+}
+
+/** Кнопка установки: браузер разрешает её не всегда — тогда остаются шаги. */
+function showInstallButton() {
+    toggle('install-modal-btn', !!installPrompt);
+    toggle('install-hint', !installPrompt);
+}
+
+/** Заполняет окно установки по текущему устройству (тексты шагов — в разметке). */
+function renderInstallHelp() {
+    toggle('install-steps-desktop', false);
+    toggle('install-steps-android', false);
+    toggle('install-steps-ios', false);
+    toggle('install-done', false);
+
+    if (isStandalone()) {
+        // Приложение уже открыто отдельным окном — ставить нечего, и говорить
+        // про меню браузера незачем.
+        toggle('install-done', true);
+        toggle('install-modal-btn', false);
+        toggle('install-hint', false);
+        return;
+    }
+
+    showInstallButton();
+
+    if (isIOS()) toggle('install-steps-ios', true);
+    else if (isAndroid()) toggle('install-steps-android', true);
+    else toggle('install-steps-desktop', true);
+}
+
+/** Открывает окно установки (пункт меню «Кабинет» → «📲 Установить приложение»). */
+window.openInstallHelp = function openInstallHelp() {
+    const menu = document.getElementById('profile-menu');
+    if (menu) menu.classList.add('hidden');
+
+    renderInstallHelp();
+    showModal('install-modal');
+};
 
 // =====================================================================
 // КНОПКИ КАРТОЧЕК (вызываются из onclick в index.html)
@@ -140,6 +200,7 @@ window.pwaInstall = async function pwaInstall() {
     installPrompt = null;
     installBannerReady = false;
     hide('pwa-install-banner');
+    hideModal('install-modal');       // окно «Установить приложение», если оно открыто
 
     if (outcome === 'dismissed') {
         sessionStorage.setItem(SNOOZE_KEY, 'yes');      // не пристаём до конца сеанса
@@ -225,6 +286,11 @@ function isStandalone() {
 function isIOS() {
     return /iPad|iPhone|iPod/.test(navigator.userAgent)
         || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPad с iPadOS 13+
+}
+
+/** Android: шаги установки — пункт меню браузера «Установить приложение». */
+function isAndroid() {
+    return /Android/i.test(navigator.userAgent);
 }
 
 function show(id) {
