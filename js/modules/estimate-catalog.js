@@ -658,8 +658,10 @@ function sectionPath(kind, id) {
  *
  * Строка — КНОПКА на всю ширину (v2.12.0-r10): по ней и выбирают раздел, и
  * раскрывают его ветку, поэтому целиться в маленькую стрелку не нужно. Стрелка
- * осталась крупной (24×24 с подсветкой при наведении) — для тех, кому нужно
- * только свернуть/раскрыть, не меняя выбранный раздел.
+ * осталась крупной (v2.12.0-r12): плитка 28×28 с белой подложкой и значком ▸/▾
+ * в 18 пикселей — по ней сворачивают и раскрывают ветку, не меняя выбранный
+ * раздел, и на строке сразу видно, раскрыта папка или свёрнута (раньше значок
+ * был подписью в 12 пикселей и не читался).
  *
  * Выбранная строка заметно отличается от остальных: зелёный фон, рамка, жирное
  * имя и зелёный счётчик — в дереве из десятков строк сразу видно, чей прайс
@@ -672,7 +674,7 @@ function sectionRow(options) {
         ? '<span class="shrink-0 w-7"></span>'
         : `
             <button data-action="toggleEstimateCatalogFolder" data-arg="${options.kind}:${options.value}" data-stop
-                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs text-gray-500 transition hover:bg-white hover:text-gray-900"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white text-lg font-bold text-gray-500 ring-1 ring-gray-200 transition hover:bg-gray-100 hover:text-gray-900"
                     title="${options.expanded ? 'Свернуть раздел' : 'Раскрыть раздел'}">${options.expanded ? '▾' : '▸'}</button>
         `;
     const nameClass = options.active
@@ -867,7 +869,7 @@ function renderWorksTable() {
             ${withSection ? '<th class="px-3 py-2 text-left w-44">Раздел</th>' : ''}
             <th class="px-3 py-2 text-left w-16">Ед.</th>
             <th class="px-3 py-2 text-right w-24">Наряд</th>
-            <th class="px-3 py-2 text-right w-24">Костор.</th>
+            <th class="px-3 py-2 text-right w-24">Смета</th>
             <th class="px-3 py-2 text-center w-16">Нормы</th>
             <th class="px-3 py-2 w-28"></th>
         `,
@@ -923,7 +925,7 @@ function renderMaterialsTable() {
             ${withSection ? '<th class="px-3 py-2 text-left w-44">Раздел</th>' : ''}
             <th class="px-3 py-2 text-left w-16">Ед.</th>
             <th class="px-3 py-2 text-right w-24">Закупка</th>
-            <th class="px-3 py-2 text-right w-24">Костор.</th>
+            <th class="px-3 py-2 text-right w-24">Смета</th>
             <th class="px-3 py-2 text-center w-20">Давальч.</th>
             <th class="px-3 py-2 w-28"></th>
         `,
@@ -1088,8 +1090,8 @@ function renderCatalogPaneFoot() {
     const items = filterItems(catalogItems(kind), scopeSectionIds(kind), kind);
     const sum = (field) => formatMoney(items.reduce((acc, item) => acc + (Number(item[field]) || 0), 0));
     const prices = kind === 'material'
-        ? `закупка ${sum('price_purchase')} · костор. ${sum('price_client')}`
-        : `наряд ${sum('price_worker')} · костор. ${sum('price_client')}`;
+        ? `закупка ${sum('price_purchase')} · смета ${sum('price_client')}`
+        : `наряд ${sum('price_worker')} · смета ${sum('price_client')}`;
 
     foot.innerHTML = `${search}${catalogScopeText(kind)}: ${items.length} ${itemsWord(items.length)} · ${prices}`;
 }
@@ -1119,23 +1121,38 @@ function itemsWord(count) {
  * Колонка показывается ТОЛЬКО в «Все разделы» (v2.12.0-r10): внутри выбранного
  * раздела она повторяла бы его имя в каждой строке — именно это и заметили
  * («дублируется информация»).
+ *
+ * Пилюля — КНОПКА (v2.12.0-r12): клик открывает папку этой позиции — в левой
+ * панели она подсвечивается, и справа остаётся её прайс. Так имя раздела в
+ * строке не приходится искать глазами в дереве, а «Все разделы» превращаются в
+ * навигацию: от позиции к её папке. Тот же приём у «📄 Без раздела» (arg = '0').
  */
 function sectionCell(kind, sectionId) {
     if (!sectionId) {
         return `<td class="px-3 py-2 align-top">
-            <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-400">без раздела</span>
+            <button data-action="selectEstimateCatalogSection" data-arg="0"
+                    class="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-400 transition hover:bg-gray-200 hover:text-gray-600"
+                    title="Открыть позиции без раздела">без раздела</button>
         </td>`;
     }
 
-    const text = sectionPath(kind, sectionId) || 'раздел не найден';
+    const path = sectionPath(kind, sectionId);
+    // Раздела может уже не быть в дереве (позиция осталась от удалённой папки):
+    // тогда это просто подпись — открывать нечего.
+    if (!path) {
+        return `<td class="px-3 py-2 align-top">
+            <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-400">раздел не найден</span>
+        </td>`;
+    }
 
     return `
         <td class="px-3 py-2 align-top">
-            <span class="inline-flex max-w-[11rem] items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[10px] text-gray-600 ring-1 ring-gray-200"
-                  title="${escapeHtml(text)}">
+            <button data-action="selectEstimateCatalogSection" data-arg="${Number(sectionId)}"
+                    class="inline-flex max-w-[11rem] items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[10px] text-gray-600 ring-1 ring-gray-200 transition hover:bg-emerald-50 hover:text-emerald-800 hover:ring-emerald-200"
+                    title="${escapeHtml(path)} — открыть эту папку">
                 <span>📁</span>
-                <span class="truncate">${escapeHtml(text)}</span>
-            </span>
+                <span class="truncate">${escapeHtml(path)}</span>
+            </button>
         </td>
     `;
 }
@@ -1436,7 +1453,7 @@ export async function deleteEstimateWork(id) {
 function renderClientsTable() {
     if (state.clients.length === 0) {
         return emptyCard('👥', 'Клиентов пока нет',
-            'Заказчик попадает в шапку кошториса и наряда — добавь первого кнопкой сверху.');
+            'Заказчик попадает в шапку сметы и наряда — добавь первого кнопкой сверху.');
     }
 
     return `

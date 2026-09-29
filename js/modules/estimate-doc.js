@@ -253,8 +253,9 @@ const DOC_COLORS = CONFIG.ESTIMATE?.DOC_COLORS || [];
 // (getLang()). Русский — исходный (им же подписаны остальные модули), вторая
 // колонка — печатная украинская версия. Подписи ВВОДИТ сотрудник — названия
 // работ, материалов, разделов, заказчик и примечания — не переводятся: это его
-// данные. Списки вариантов окна экспорта (CONFIG.ESTIMATE.DOC_*) остаются
-// украинскими: это экран приложения, а не файл.
+// данные. Списки вариантов окна экспорта (CONFIG.ESTIMATE.DOC_*) описаны
+// подписями двух языков (label / labelUk).
+// Это экран приложения, поэтому он говорит на языке из «Настроек».
 //
 // Обе колонки лежат рядом строка за строкой, поэтому «забыть перевести»
 // подпись трудно, а прогон tools/checks/migration-check.mjs проверяет, что
@@ -472,7 +473,7 @@ export function normalizeDocOptions(options) {
 
     const source = options || {};
     const kindInfo = DOC_KINDS.find(item => item.value === source.kind) || DOC_KINDS[0] || {
-        value: 'koshtorys', label: 'Кошторис', view: true
+        value: 'koshtorys', label: 'Смета', labelUk: 'Кошторис', view: true
     };
     const kind = kindInfo.value;
 
@@ -483,7 +484,7 @@ export function normalizeDocOptions(options) {
 
     const color = DOC_COLORS.some(item => item.value === source.color) ? source.color : 'none';
     const palette = DOC_COLORS.find(item => item.value === color)
-        || { value: 'none', label: 'Без кольору', bg: null, text: '111827' };
+        || { value: 'none', label: 'Без цвета', labelUk: 'Без кольору', bg: null, text: '111827' };
 
     const wide = kind === 'koshtorys' && view === '9';
 

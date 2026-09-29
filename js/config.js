@@ -309,9 +309,10 @@ export const CONFIG = {
         // с index.html и js/modules/estimate-doc.js.
         // Подписи — на двух языках: показываются в окне экспорта, а оно на языке
         // интерфейса (label — русская, labelUk — украинская). Сами документы
-        // печатаются по-украински: их шапки берутся из estimate-doc.js.
+        // берут свои подписи из estimate-doc.js (DOC_TEXT) и подставляют их на
+        // том же языке интерфейса.
         DOC_KINDS: [
-            { value: 'koshtorys', label: 'Кошторис', labelUk: 'Кошторис', view: true },
+            { value: 'koshtorys', label: 'Смета', labelUk: 'Кошторис', view: true },
             { value: 'naryad',    label: 'Наряд на работы', labelUk: 'Наряд на роботи', view: false },
             { value: 'materials', label: 'Ведомость материалов', labelUk: 'Відомість матеріалів', view: false }
         ],

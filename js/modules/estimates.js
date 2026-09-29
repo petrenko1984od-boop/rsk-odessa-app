@@ -613,7 +613,7 @@ function renderEstimateItemsTable(section, items) {
                         <th class="px-2 py-2 w-16 text-left">Ед.</th>
                         <th class="px-2 py-2 w-20 text-right">Кол-во</th>
                         <th class="px-2 py-2 w-24 text-right">Наряд</th>
-                        <th class="px-2 py-2 w-24 text-right">Костор.</th>
+                        <th class="px-2 py-2 w-24 text-right">Смета</th>
                         <th class="px-2 py-2 w-28 text-right">Сумма</th>
                         <th class="px-2 py-2 w-24"></th>
                     </tr>
@@ -718,7 +718,7 @@ function renderItemMaterials(item) {
                     <th class="px-2 py-1 w-14 text-left">Ед.</th>
                     <th class="px-2 py-1 w-20 text-right">Кол-во</th>
                     <th class="px-2 py-1 w-24 text-right">Закупка</th>
-                    <th class="px-2 py-1 w-24 text-right">Костор.</th>
+                    <th class="px-2 py-1 w-24 text-right">Смета</th>
                     <th class="px-2 py-1 w-20 text-center" title="Материал привозит заказчик: в суммы не входит">Заказч.</th>
                     <th class="px-2 py-1 w-24 text-right">Сумма</th>
                     <th class="px-2 py-1 w-10"></th>
@@ -2059,7 +2059,7 @@ function pickerWorkRow(work, level, path = '') {
                 <span class="rounded bg-gray-100 px-1.5 py-0.5">${escapeHtml(work.unit)}</span>
                 <span class="tabular-nums">наряд ${formatMoney(work.price_worker)}</span>
                 <span class="text-gray-300">·</span>
-                <span class="tabular-nums font-semibold text-[#166534]">кошторис ${formatMoney(work.price_client)}</span>
+                <span class="tabular-nums font-semibold text-[#166534]">смета ${formatMoney(work.price_client)}</span>
             </div>
         </button>
     `;
@@ -2150,7 +2150,7 @@ function renderEstimateWorkPickerPreview() {
                     <p class="text-sm font-semibold tabular-nums text-gray-800">${formatMoney(work.price_worker)}</p>
                 </div>
                 <div class="rounded-lg bg-emerald-50 p-2">
-                    <p class="text-[10px] text-emerald-700">Кошторис (заказчику)</p>
+                    <p class="text-[10px] text-emerald-700">Смета (заказчику)</p>
                     <p class="text-sm font-bold tabular-nums text-[#166534]">${formatMoney(work.price_client)}</p>
                 </div>
             </div>
@@ -2269,7 +2269,7 @@ function renderEstimateMaterialPickerList() {
             </div>
             <div class="text-[11px] text-gray-500">
                 ${escapeHtml(material.unit)} · закупка ${formatMoney(material.price_purchase)} ·
-                кошторис ${formatMoney(material.price_client)}
+                смета ${formatMoney(material.price_client)}
             </div>
         </button>
     `).join('');
