@@ -275,7 +275,7 @@ async function askBrowserAboutInstall() {
     return installedKnown;
 }
 
-/** Ревизия оболочки из имени кэша: `freedom-v2.12.0-r9` → `r9`. */
+/** Ревизия оболочки из имени кэша: `freedom-v2.12.0-r10` → `r10`. */
 async function readShellRevision() {
     try {
         if (typeof caches === 'undefined') return '';

@@ -218,13 +218,25 @@ npm run lint            # eslint: встроенные обработчики и
      окна выбора работы (`estimates.pickStep3`); модуль справочника умеет считать
      счётчики (`renderCatalogTabCounts()`), рисовать карточку пустого состояния
      (`emptyCard()` + `catalogEmptyState()`), подсказывать родителя у папок с
-     одинаковым именем (`getSectionNameHints()`), показывать подпапку вместо полного
-     пути (`relativeSectionPath()`) и называть охват итогов (`catalogScopeText()`); в
-     модуле смет появились полоса списка (`pickerPanelHead()`), плоские результаты
-     поиска (`pickerSearchRows()`) и кнопки раскрытия дерева
-     (`expandEstimateWorkPickerAll()` / `collapseEstimateWorkPickerAll()`), а подсказки
-     о повторяющихся именах берутся из справочника (`getSectionNameHints`). Прежние
-     запреты сохранены: ни `renderCatalogTree()`, ни выпадающего фильтра «Раздел»;
+     одинаковым именем (`getSectionNameHints()`) и называть охват итогов
+     (`catalogScopeText()`); в модуле смет появились полоса списка
+     (`pickerPanelHead()`), плоские результаты поиска (`pickerSearchRows()`) и
+     кнопки раскрытия дерева (`expandEstimateWorkPickerAll()` /
+     `collapseEstimateWorkPickerAll()`), а подсказки о повторяющихся именах
+     берутся из справочника (`getSectionNameHints`). Прежние запреты сохранены:
+     ни `renderCatalogTree()`, ни выпадающего фильтра «Раздел»;
+  3д. **разделы и позиции разведены по колонкам** (v2.12.0-r10): у левой колонки
+     своя шапка со счётчиком разделов (`#estimate-catalog-folders-count`), кнопка
+     «📁 Добавить раздел» (`#estimate-catalog-folder-wrap`) и подсказка
+     `estimates.catalogFoldersHint`, дерево — в `#estimate-catalog-sections-list`,
+     «📄 Без раздела» — в `#estimate-catalog-sections-foot`. Строка раздела —
+     аккордеон (`sectionRow()`, `flipFolder()`, `revealFolder()`), действия
+     выбранного раздела рисует `folderActions()` под его строкой, а в правой
+     половине осталась одна кнопка создания позиции — `addItemButton()`. Колонка
+     «Раздел» в таблице есть только в «Все разделы»
+     (`const withSection = !state.sectionFilter`), а новый раздел сразу становится
+     выбранным (`state.sectionFilter = String(savedId)`); прежний
+     `relativeSectionPath()` удалён — колонка внутри раздела больше не показывается;
   4. **окно экспорта документа** — четыре группы выбора в разметке
      (`#estimate-export-types/views/colors/formats`) и их списки в `CONFIG.ESTIMATE`
      (`DOC_KINDS` / `DOC_VIEWS` / `DOC_COLORS` / `DOC_FORMATS`), которые читает модуль смет;

@@ -1213,7 +1213,6 @@ function main() {
             /function emptyCard\(/.test(catalogJsV211) &&
             /function catalogEmptyState\(/.test(catalogJsV211) &&
             /export function getSectionNameHints\(/.test(catalogJsV211) &&
-            /function relativeSectionPath\(/.test(catalogJsV211) &&
             /function catalogScopeText\(/.test(catalogJsV211) &&
             /function pickerPanelHead\(/.test(estimatesJs) &&
             /function pickerSearchRows\(/.test(estimatesJs) &&
@@ -1223,6 +1222,30 @@ function main() {
             !/renderCatalogTree/.test(catalogJsV211) &&
             !/estimate-catalog-section-filter/.test(indexHtmlV29) &&
             !/fillCatalogSectionFilter/.test(catalogJsV211));
+
+        // 3д. Разделы и позиции разведены по колонкам (v2.12.0-r10, по замечаниям
+        //     к r9): у левой колонки своя шапка, счётчик папок и кнопка «📁 Добавить
+        //     раздел» (разметка index.html), дерево — в отдельном контейнере, а
+        //     «📄 Без раздела» — в своей нижней полосе. Строка раздела стала
+        //     аккордеоном (клик и выбирает, и раскрывает — целиться в стрелку не
+        //     нужно), действия выбранного раздела («📁➕ Подраздел», ✏, 🗑) рисует
+        //     folderActions() под его строкой, а в правой половине осталась одна
+        //     кнопка создания позиции — addItemButton(). Колонка «Раздел» в таблице
+        //     есть только в «Все разделы»: внутри раздела она дублировала его имя.
+        ok('v2.12.0-r10: слева разделы (аккордеон), справа только добавление позиции',
+            /id="estimate-catalog-sections-list"/.test(indexHtmlV29) &&
+            /id="estimate-catalog-sections-foot"/.test(indexHtmlV29) &&
+            /id="estimate-catalog-folders-count"/.test(indexHtmlV29) &&
+            /id="estimate-catalog-folder-wrap"/.test(indexHtmlV29) &&
+            /data-i18n="estimates\.catalogFoldersHint"/.test(indexHtmlV29) &&
+            /function sectionRow\(/.test(catalogJsV211) &&
+            /function flipFolder\(/.test(catalogJsV211) &&
+            /function revealFolder\(/.test(catalogJsV211) &&
+            /function folderActions\(/.test(catalogJsV211) &&
+            /function addItemButton\(/.test(catalogJsV211) &&
+            /const withSection = !state\.sectionFilter/.test(catalogJsV211) &&
+            /state\.sectionFilter = String\(savedId\)/.test(catalogJsV211) &&
+            !/function relativeSectionPath\(/.test(catalogJsV211));
 
         // 4. Окно экспорта: четыре выбора из макета и их списки в CONFIG.
         ok('v2.11.0: окно экспорта — тип, вид кошториса, колір шапки, формат',
