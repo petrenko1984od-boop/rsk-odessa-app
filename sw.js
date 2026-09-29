@@ -444,7 +444,7 @@ const LEGACY_CACHE_PREFIXES = ['rsk-odessa'];
 //        становится выбранным, чтобы следующим шагом создать в нём подраздел.
 //        Оболочка обновилась потому, что изменились index.html, js/i18n.js и
 //        js/modules/estimate-catalog.js.
-const SHELL_REVISION = 'r10';
+const SHELL_REVISION = 'r11';
 const CACHE_NAME = `${CACHE_PREFIX}-v${APP_VERSION}-${SHELL_REVISION}`;
 
 // Оболочка приложения: кладём в кэш сразу при установке. Список должен

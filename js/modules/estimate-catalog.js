@@ -57,7 +57,13 @@ const state = {
     clients: [],
     company: null,
     currentWorkId: null,       // чья норма расхода открыта в окне
-    editingId: null            // что правит открытое окно (null — создание)
+    editingId: null,           // что правит открытое окно (null — создание)
+    // Материалы, выбранные в окне работы ДО её сохранения: у новой работы ещё
+    // нет id, а норма расхода ссылается на работу
+    // (estimate_work_materials.work_id), поэтому строки копятся здесь и уходят
+    // в базу из saveEstimateWork (см. addEstimateWorkModalNorm).
+    pendingNorms: [],          // [{ key, materialId, consumption }]
+    normKeySeq: 0              // счётчик ключей этих строк (data-arg кнопки «🗑»)
 };
 
 const listeners = [];
@@ -1343,6 +1349,14 @@ export function openEstimateWorkModal(id, sectionId) {
     fillSectionSelect('estimate-work-section', 'work',
         work ? work.section_id : (Number(sectionId) || ''));
 
+    // Материалы работы: и выбор, и список заполняются сразу, чтобы норму расхода
+    // можно было задать в том же окне (v2.12.0-r11). У новой работы прежние
+    // выбранные строки не переживают закрытие окна — начинаем с чистого листа.
+    state.pendingNorms = [];
+    fillNormMaterialSelect('estimate-work-modal-norm-material', state.editingId);
+    setValue('estimate-work-modal-norm-consumption', 1);
+    renderWorkModalNorms();
+
     showModal(MODAL_IDS.work);
 }
 
@@ -1366,7 +1380,7 @@ export async function saveEstimateWork(event) {
     };
 
     const id = str('estimate-work-id');
-    const { error } = id
+    const { data, error } = id
         ? await db.update('estimate_works', payload, { id: Number(id) })
         : await db.insert('estimate_works', payload);
 
@@ -1375,6 +1389,15 @@ export async function saveEstimateWork(event) {
         toast('Не удалось сохранить работу: ' + db.explainError(error), 'error');
         return false;
     }
+
+    // Материалы, выбранные в окне работы до сохранения, ждут именно этого
+    // момента: норме расхода нужен id работы (см. addEstimateWorkModalNorm).
+    // Работа уже создана, поэтому ошибку здесь не откатываем — о ней сообщает
+    // savePendingNorms, а материалы остаётся привязать из справочника («📦»).
+    if (!id && state.pendingNorms.length > 0 && data?.id) {
+        await savePendingNorms(data.id);
+    }
+    state.pendingNorms = [];
 
     toast(id ? 'Работа обновлена' : `Работа «${name}» добавлена`, 'success');
     hideModal(MODAL_IDS.work);
@@ -1571,12 +1594,16 @@ export function openEstimateWorkNorms(workId) {
     showModal(MODAL_IDS.workMaterials);
 }
 
-/** Материалы, которых ещё нет в нормах этой работы. */
-function fillNormMaterialSelect() {
-    const select = el('estimate-work-norms-material');
+/**
+ * Материалы, которых ещё нет в нормах этой работы. Заполнение нужно двум окнам —
+ * «📦 Нормы расхода» и окну работы, — поэтому селект и работа приходят
+ * параметрами (по умолчанию — окно норм той работы, чьи нормы открыты).
+ */
+function fillNormMaterialSelect(selectId = 'estimate-work-norms-material', workId = state.currentWorkId) {
+    const select = el(selectId);
     if (!select) return;
 
-    const linked = new Set(getWorkMaterialNorms(state.currentWorkId).map(entry => Number(entry.link.material_id)));
+    const linked = new Set(linkedMaterialIds(workId));
     const available = state.materials.filter(material => !linked.has(Number(material.id)));
 
     if (available.length === 0) {
@@ -1589,23 +1616,84 @@ function fillNormMaterialSelect() {
         .join('');
 }
 
+/**
+ * id материалов, которые уже привязаны к работе: сохранённые нормы плюс
+ * строки, выбранные в окне работы, но ещё не записанные (state.pendingNorms).
+ * Без второй части один материал можно было бы выбрать дважды — в списке он уже
+ * есть, а в базе его ещё нет.
+ */
+function linkedMaterialIds(workId) {
+    const saved = getWorkMaterialNorms(workId).map(entry => Number(entry.link.material_id));
+    const pending = state.pendingNorms.map(norm => Number(norm.materialId));
+    return [...saved, ...pending];
+}
+
 export function renderEstimateWorkNormsList() {
     const container = el('estimate-work-norms-list');
     if (!container) return;
 
-    const norms = getWorkMaterialNorms(state.currentWorkId);
+    container.innerHTML = normsTableHtml(getWorkMaterialNorms(state.currentWorkId).map(({ link, material, consumption }) => ({
+        action: 'deleteEstimateWorkNorm',
+        arg: link.id,
+        name: material ? material.name : '— материал удалён —',
+        unit: material ? material.unit : '',
+        consumption
+    })));
+}
 
-    if (norms.length === 0) {
-        container.innerHTML = `
+/**
+ * Список материалов в окне работы: у сохранённой работы это нормы из базы, у
+ * новой — строки, выбранные до сохранения (state.pendingNorms). Удаление идёт
+ * разными действиями: у сохранённой нормы есть id, у выбранной строки — только
+ * её ключ в очереди.
+ */
+function renderWorkModalNorms() {
+    const container = el('estimate-work-modal-norms');
+    if (!container) return;
+
+    // «Материалы привяжутся после сохранения» — только про новую работу: у
+    // сохранённой нормы уходят в базу сразу.
+    const hint = el('estimate-work-modal-norms-new');
+    if (hint) hint.classList.toggle('hidden', Boolean(state.editingId));
+
+    const rows = state.editingId
+        ? getWorkMaterialNorms(state.editingId).map(({ link, material, consumption }) => ({
+            action: 'removeEstimateWorkModalNorm',
+            arg: `db:${link.id}`,
+            name: material ? material.name : '— материал удалён —',
+            unit: material ? material.unit : '',
+            consumption
+        }))
+        : state.pendingNorms.map(norm => {
+            const material = findEstimateMaterial(norm.materialId);
+            return {
+                action: 'removeEstimateWorkModalNorm',
+                arg: `new:${norm.key}`,
+                name: material ? material.name : '— материал удалён —',
+                unit: material ? material.unit : '',
+                consumption: norm.consumption
+            };
+        });
+
+    container.innerHTML = normsTableHtml(rows);
+}
+
+/**
+ * Разметка таблицы норм расхода: одна на два окна — «📦 Нормы расхода» и окно
+ * работы. Строка несёт готовое действие удаления ('deleteEstimateWorkNorm' с id
+ * нормы или 'removeEstimateWorkModalNorm' с ключом ещё не сохранённой строки).
+ */
+function normsTableHtml(rows) {
+    if (rows.length === 0) {
+        return `
             <p class="text-xs text-gray-500 p-3 bg-gray-50 rounded-lg border border-dashed">
                 Норм пока нет. Добавь материал и укажи, сколько его нужно на 1 единицу работы.
                 Например, «Цемент — 0.02 т на 1 м² стяжки».
             </p>
         `;
-        return;
     }
 
-    container.innerHTML = `
+    return `
         <table class="w-full text-xs">
             <thead class="bg-gray-50 text-gray-600">
                 <tr>
@@ -1616,13 +1704,13 @@ export function renderEstimateWorkNormsList() {
                 </tr>
             </thead>
             <tbody class="divide-y">
-                ${norms.map(({ link, material, consumption }) => `
+                ${rows.map(row => `
                     <tr>
-                        <td class="px-3 py-2 text-gray-800">${escapeHtml(material ? material.name : '— материал удалён —')}</td>
-                        <td class="px-3 py-2 text-right">${formatNumber(consumption, 4)}</td>
-                        <td class="px-3 py-2 text-gray-500">${escapeHtml(material ? material.unit : '')}</td>
+                        <td class="px-3 py-2 text-gray-800">${escapeHtml(row.name)}</td>
+                        <td class="px-3 py-2 text-right">${formatNumber(row.consumption, 4)}</td>
+                        <td class="px-3 py-2 text-gray-500">${escapeHtml(row.unit)}</td>
                         <td class="px-3 py-2 text-right">
-                            <button data-action="deleteEstimateWorkNorm" data-arg="${link.id}" data-stop
+                            <button data-action="${row.action}" data-arg="${row.arg}" data-stop
                                     class="text-xs px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 font-semibold transition"
                                     title="Убрать норму">🗑</button>
                         </td>
@@ -1631,6 +1719,44 @@ export function renderEstimateWorkNormsList() {
             </tbody>
         </table>
     `;
+}
+
+/**
+ * Запись нормы расхода в базу: материал к работе уже привязан — правим расход,
+ * иначе добавляем строку. Общий код двух окон — «📦 Нормы расхода» и окна работы.
+ */
+async function saveNormLink(workId, materialId, consumption) {
+    const existing = state.workMaterials.find(link =>
+        Number(link.work_id) === Number(workId) && Number(link.material_id) === Number(materialId));
+
+    const { error } = existing
+        ? await db.update('estimate_work_materials', { consumption }, { id: existing.id })
+        : await db.insert('estimate_work_materials', {
+            work_id: Number(workId),
+            material_id: Number(materialId),
+            consumption
+        });
+
+    if (error) {
+        log.error('Ошибка сохранения нормы расхода:', error.message);
+        toast('Не удалось сохранить норму: ' + db.explainError(error), 'error');
+        return false;
+    }
+
+    return true;
+}
+
+/** Удаление нормы расхода из базы (общее для двух окон). */
+async function deleteNormLink(linkId) {
+    const { error } = await db.remove('estimate_work_materials', { id: Number(linkId) });
+
+    if (error) {
+        log.error('Ошибка удаления нормы расхода:', error.message);
+        toast('Не удалось удалить норму: ' + db.explainError(error), 'error');
+        return false;
+    }
+
+    return true;
 }
 
 export async function addEstimateWorkNorm() {
@@ -1648,22 +1774,7 @@ export async function addEstimateWorkNorm() {
         return;
     }
 
-    const existing = state.workMaterials.find(link =>
-        Number(link.work_id) === state.currentWorkId && Number(link.material_id) === materialId);
-
-    const { error } = existing
-        ? await db.update('estimate_work_materials', { consumption }, { id: existing.id })
-        : await db.insert('estimate_work_materials', {
-            work_id: state.currentWorkId,
-            material_id: materialId,
-            consumption
-        });
-
-    if (error) {
-        log.error('Ошибка сохранения нормы расхода:', error.message);
-        toast('Не удалось сохранить норму: ' + db.explainError(error), 'error');
-        return;
-    }
+    if (!await saveNormLink(state.currentWorkId, materialId, consumption)) return;
 
     toast('Норма сохранена', 'success');
     await loadEstimateCatalog({ force: true });
@@ -1675,18 +1786,110 @@ export async function addEstimateWorkNorm() {
 export async function deleteEstimateWorkNorm(linkId) {
     if (!requirePermission('manage_estimate')) return;
 
-    const { error } = await db.remove('estimate_work_materials', { id: Number(linkId) });
-
-    if (error) {
-        log.error('Ошибка удаления нормы расхода:', error.message);
-        toast('Не удалось удалить норму: ' + db.explainError(error), 'error');
-        return;
-    }
+    if (!await deleteNormLink(linkId)) return;
 
     await loadEstimateCatalog({ force: true });
     fillNormMaterialSelect();
     renderEstimateWorkNormsList();
     notifyChange();
+}
+
+// =====================================================================
+// МАТЕРИАЛЫ РАБОТЫ В ОКНЕ РАБОТЫ (v2.12.0-r11)
+// =====================================================================
+// Раньше норму расхода задавали только из справочника — кнопкой «📦» в строке
+// работы: заводя работу, сотрудник не видел, из чего она состоит, и возвращался
+// к ней второй раз. Теперь те же нормы привязываются прямо в окне работы.
+
+/**
+ * Счётчик ключей строк, ещё не записанных в базу: по ключу строка удаляется из
+ * очереди (кнопка «🗑» в списке).
+ */
+function nextNormKey() {
+    state.normKeySeq += 1;
+    return state.normKeySeq;
+}
+
+/**
+ * «➕ Добавить норму» в окне работы. У сохранённой работы норма уходит в базу
+ * сразу, у новой — копится в state.pendingNorms: её запишет saveEstimateWork,
+ * когда работа получит id (норма ссылается на работу).
+ */
+export async function addEstimateWorkModalNorm() {
+    if (!requirePermission('manage_estimate')) return;
+
+    const materialId = Number(str('estimate-work-modal-norm-material'));
+    const consumption = num('estimate-work-modal-norm-consumption');
+
+    if (!materialId) {
+        toast('Выбери материал', 'error');
+        return;
+    }
+    if (consumption <= 0) {
+        toast('Расход должен быть больше нуля', 'error');
+        return;
+    }
+
+    if (state.editingId) {
+        if (!await saveNormLink(state.editingId, materialId, consumption)) return;
+
+        toast('Норма сохранена', 'success');
+        await loadEstimateCatalog({ force: true });
+        notifyChange();
+    } else {
+        // Повторный выбор того же материала не заводит вторую строку, а правит
+        // расход: иначе в базе оказались бы дубли (у неё нет ключа уникальности).
+        const existing = state.pendingNorms.find(norm => Number(norm.materialId) === materialId);
+        if (existing) existing.consumption = consumption;
+        else state.pendingNorms.push({ key: nextNormKey(), materialId, consumption });
+    }
+
+    fillNormMaterialSelect('estimate-work-modal-norm-material', state.editingId);
+    setValue('estimate-work-modal-norm-consumption', 1);
+    renderWorkModalNorms();
+}
+
+/**
+ * «🗑» в списке материалов окна работы. Аргумент называет строку: 'db:12' —
+ * сохранённая норма с id 12, 'new:3' — строка из очереди (state.pendingNorms).
+ */
+export async function removeEstimateWorkModalNorm(arg) {
+    if (!requirePermission('manage_estimate')) return;
+
+    const [kind, value] = String(arg || '').split(':');
+
+    if (kind === 'new') {
+        state.pendingNorms = state.pendingNorms.filter(norm => String(norm.key) !== value);
+    } else if (!await deleteNormLink(Number(value))) {
+        return;
+    }
+
+    fillNormMaterialSelect('estimate-work-modal-norm-material', state.editingId);
+    renderWorkModalNorms();
+    notifyChange();
+}
+
+/**
+ * Записывает материалы, выбранные в окне работы до её сохранения. Работа уже
+ * создана, поэтому ошибку не откатываем: говорим, что материалы не привязались
+ * (их можно добавить из справочника — кнопкой «📦» в строке работы).
+ */
+async function savePendingNorms(workId) {
+    const rows = state.pendingNorms.map(norm => ({
+        work_id: Number(workId),
+        material_id: Number(norm.materialId),
+        consumption: Number(norm.consumption) || 0
+    }));
+
+    const { error } = await db.insertMany('estimate_work_materials', rows);
+
+    if (error) {
+        log.error('Ошибка сохранения материалов работы:', error.message);
+        toast('Работа сохранена, но материалы к ней не привязались: ' + db.explainError(error), 'error');
+        return false;
+    }
+
+    return true;
 }
 
 // =====================================================================
@@ -2149,6 +2352,8 @@ window.deleteEstimateMaterial = deleteEstimateMaterial;
 window.openEstimateWorkNorms = openEstimateWorkNorms;
 window.addEstimateWorkNorm = addEstimateWorkNorm;
 window.deleteEstimateWorkNorm = deleteEstimateWorkNorm;
+window.addEstimateWorkModalNorm = addEstimateWorkModalNorm;
+window.removeEstimateWorkModalNorm = removeEstimateWorkModalNorm;
 window.openEstimateSectionModal = openEstimateSectionModal;
 window.addEstimateFolder = addEstimateFolder;
 window.addEstimateCatalogItem = addEstimateCatalogItem;

@@ -31,6 +31,7 @@ import {
 } from '../utils.js';
 import { CONFIG } from '../config.js';
 import { requirePermission } from '../permissions.js';
+import { getLang } from '../i18n.js';
 import {
     calcEstimate, calcSection, calcItem, calcItemMaterial,
     exportEstimateExcel, exportEstimatePdf
@@ -53,6 +54,15 @@ const DOC_COLORS = CONFIG.ESTIMATE?.DOC_COLORS || [];
 const DOC_FORMATS = CONFIG.ESTIMATE?.DOC_FORMATS || [];
 const DEFAULT_DOC = CONFIG.ESTIMATE?.DEFAULT_DOC
     || { kind: 'koshtorys', view: '9', color: 'none', format: 'pdf' };
+
+/**
+ * Подпись варианта окна экспорта на языке интерфейса: в CONFIG `label` —
+ * русская, `labelUk` — украинская. Сами документы печатаются по-украински: их
+ * шапки собирает js/modules/estimate-doc.js, а не эти подписи.
+ */
+function optionLabel(item) {
+    return (getLang() === 'uk' ? item.labelUk : item.label) || item.label || '';
+}
 
 // =====================================================================
 // СОСТОЯНИЕ
@@ -570,7 +580,7 @@ function renderEstimateSectionCard(section, index) {
                 <input data-action="setEstimateField" data-pass-event data-on="input"
                        data-scope="section" data-key="${section._key}" data-field="name"
                        class="flex-1 min-w-[10rem] border rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"
-                       value="${escapeHtml(section.name)}" placeholder="Название раздела (напр. Покрівля)">
+                       value="${escapeHtml(section.name)}" placeholder="Название раздела (напр. Кровельные работы)">
                 <button data-action="openEstimateWorkPicker" data-arg="${section._key}"
                         class="bg-[#15803d] hover:bg-[#166534] text-white px-2.5 py-1 rounded-lg text-[11px] font-semibold transition">
                     ➕ Работа из справочника
@@ -600,8 +610,8 @@ function renderEstimateItemsTable(section, items) {
                     <tr>
                         <th class="px-2 py-2 w-8 text-left">№</th>
                         <th class="px-2 py-2 text-left">Наименование работы</th>
-                        <th class="px-2 py-2 w-16 text-left">Од.</th>
-                        <th class="px-2 py-2 w-20 text-right">К-сть</th>
+                        <th class="px-2 py-2 w-16 text-left">Ед.</th>
+                        <th class="px-2 py-2 w-20 text-right">Кол-во</th>
                         <th class="px-2 py-2 w-24 text-right">Наряд</th>
                         <th class="px-2 py-2 w-24 text-right">Костор.</th>
                         <th class="px-2 py-2 w-28 text-right">Сумма</th>
@@ -613,7 +623,7 @@ function renderEstimateItemsTable(section, items) {
                 </tbody>
                 <tfoot class="bg-gray-50 font-semibold text-gray-700">
                     <tr>
-                        <td class="px-2 py-2" colspan="5">Разом за розділом</td>
+                        <td class="px-2 py-2" colspan="5">Итого по разделу</td>
                         <td class="px-2 py-2 text-right" colspan="2"
                             data-section-total="${section._key}">${formatMoney(calc.clientTotal)}</td>
                         <td class="px-2 py-2"></td>
@@ -705,8 +715,8 @@ function renderItemMaterials(item) {
             <thead class="text-gray-500">
                 <tr>
                     <th class="px-2 py-1 text-left">Материал</th>
-                    <th class="px-2 py-1 w-14 text-left">Од.</th>
-                    <th class="px-2 py-1 w-20 text-right">К-сть</th>
+                    <th class="px-2 py-1 w-14 text-left">Ед.</th>
+                    <th class="px-2 py-1 w-20 text-right">Кол-во</th>
                     <th class="px-2 py-1 w-24 text-right">Закупка</th>
                     <th class="px-2 py-1 w-24 text-right">Костор.</th>
                     <th class="px-2 py-1 w-20 text-center" title="Материал привозит заказчик: в суммы не входит">Заказч.</th>
@@ -780,7 +790,15 @@ function renderItemMaterials(item) {
 // =====================================================================
 
 const LIMIT_BASES = CONFIG.ESTIMATE?.LIMIT_BASES || [];
-const LIMIT_PRESETS = CONFIG.ESTIMATE?.LIMIT_PRESETS || [];
+// Подсказки названий лимитов лежат в CONFIG на двух языках ({ ru, uk }): это
+// надписи интерфейса, поэтому показываем список текущего языка.
+const LIMIT_PRESETS = CONFIG.ESTIMATE?.LIMIT_PRESETS || {};
+
+/** Подсказки названий лимитированных расходов на языке интерфейса. */
+function limitPresets() {
+    const list = LIMIT_PRESETS[getLang()] || LIMIT_PRESETS.ru;
+    return Array.isArray(list) ? list : [];
+}
 
 function renderEstimateLimits() {
     const container = el('estimate-limits-container');
@@ -793,7 +811,7 @@ function renderEstimateLimits() {
         container.innerHTML = `
             <p class="text-xs text-gray-500 p-3 bg-gray-50 rounded-lg border border-dashed">
                 Лимитированных расходов нет. Это начисления сверх работ и материалов:
-                непередбачені витрати, зимове удорожчання, кошторисний прибуток.
+                непредвиденные затраты, зимнее удорожание, сметная прибыль.
             </p>
         `;
         return;
@@ -822,7 +840,7 @@ function renderEstimateLimits() {
                                            data-action="setEstimateField" data-pass-event data-on="input"
                                            data-scope="limit" data-index="${index}" data-field="name"
                                            class="${inputClass} w-full" value="${escapeHtml(limit.name)}"
-                                           placeholder="Например: Непередбачені витрати">
+                                           placeholder="Например: Непредвиденные затраты">
                                 </td>
                                 <td class="px-2 py-2">
                                     <input type="number" step="0.01"
@@ -912,7 +930,7 @@ export function renderEstimateTotals() {
             не входят. ПДВ считается от подытога: работы + материалы + лимиты.
         </p>
         <datalist id="estimate-limit-presets">
-            ${LIMIT_PRESETS.map(name => `<option value="${escapeHtml(name)}"></option>`).join('')}
+            ${limitPresets().map(name => `<option value="${escapeHtml(name)}"></option>`).join('')}
         </datalist>
     `;
 }
@@ -1346,7 +1364,7 @@ export function renderEstimateExportOptions() {
     const kinds = el('estimate-export-types');
     if (kinds) {
         kinds.innerHTML = DOC_KINDS
-            .map(kind => docTile('setEstimateExportType', kind.value, kind.label, state.doc.kind === kind.value))
+            .map(kind => docTile('setEstimateExportType', kind.value, optionLabel(kind), state.doc.kind === kind.value))
             .join('');
     }
 
@@ -1358,7 +1376,7 @@ export function renderEstimateExportOptions() {
     const views = el('estimate-export-views');
     if (views && showView) {
         views.innerHTML = DOC_VIEWS
-            .map(view => docTile('setEstimateExportView', view.value, view.label, state.doc.view === view.value))
+            .map(view => docTile('setEstimateExportView', view.value, optionLabel(view), state.doc.view === view.value))
             .join('');
     }
 
@@ -1375,21 +1393,21 @@ export function renderEstimateExportOptions() {
 
             return `
                 <button type="button" data-action="setEstimateExportColor" data-arg="${escapeHtml(color.value)}"
-                        title="${escapeHtml(color.label)}"
+                        title="${escapeHtml(optionLabel(color))}"
                         class="w-7 h-7 rounded-full border-2 transition flex items-center justify-center ${ring}"
                         style="background-color:${color.bg ? '#' + color.bg : '#ffffff'}">
                     ${color.bg ? mark : '<span class="w-full h-px bg-red-400 rotate-45"></span>'}
                 </button>
             `;
         }).join('') + `<span class="text-xs text-gray-500 ml-1">${
-            escapeHtml((DOC_COLORS.find(item => item.value === state.doc.color) || {}).label || '')
+            escapeHtml(optionLabel(DOC_COLORS.find(item => item.value === state.doc.color) || {}))
         }</span>`;
     }
 
     const formats = el('estimate-export-formats');
     if (formats) {
         formats.innerHTML = DOC_FORMATS
-            .map(format => docTile('setEstimateExportFormat', format.value, format.label, state.doc.format === format.value))
+            .map(format => docTile('setEstimateExportFormat', format.value, optionLabel(format), state.doc.format === format.value))
             .join('');
     }
 }
@@ -2005,7 +2023,7 @@ function pickerSectionTitle(section, level, count, folded, note = '') {
                 class="flex w-full items-center gap-1.5 rounded-lg py-2 pr-2 text-left transition hover:bg-white"
                 style="padding-left:${8 + level * 14}px"
                 title="${folded ? 'Раскрыть раздел' : 'Свернуть раздел'}">
-            <span class="w-3 shrink-0 text-[10px] text-gray-400">${folded ? '▸' : '▾'}</span>
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white text-sm font-bold text-gray-500 ring-1 ring-gray-200">${folded ? '▸' : '▾'}</span>
             <span class="min-w-0 truncate text-[11px] font-bold text-gray-700">${arrow}${icon} ${escapeHtml(name)}</span>
             ${note ? `<span class="shrink-0 text-[10px] text-gray-400">${escapeHtml(note)}</span>` : ''}
             <span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${count
@@ -2154,7 +2172,7 @@ function renderEstimateWorkPickerPreview() {
                         <tr>
                             <th class="px-2 py-1 text-left">Материал</th>
                             <th class="px-2 py-1 w-16 text-right">Расход</th>
-                            <th class="px-2 py-1 w-12 text-left">Од.</th>
+                            <th class="px-2 py-1 w-12 text-left">Ед.</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">

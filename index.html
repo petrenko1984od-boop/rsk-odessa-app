@@ -2268,6 +2268,35 @@
                     <textarea id="estimate-work-description" rows="2"
                               class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></textarea>
                 </label>
+                <!-- Материалы работы привязываются здесь же (v2.12.0-r11): раньше нормы
+                     расхода задавали только из справочника — кнопкой «📦» в строке работы.
+                     У новой работы материалов ещё нет (её id появится после «💾 Сохранить»),
+                     поэтому строки, выбранные до сохранения, сторожит state.pendingNorms
+                     (js/modules/estimate-catalog.js → addEstimateWorkModalNorm). -->
+                <div class="space-y-2 rounded-lg border bg-gray-50/70 p-3">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <span class="text-xs font-bold text-gray-700" data-i18n="estimates.workNorms">📦 Материалы работы (нормы расхода)</span>
+                        <span class="text-[11px] text-gray-500" data-i18n="estimates.workNormsHint">Сколько материала нужно на 1 единицу работы: в смете материалы подставятся сами.</span>
+                    </div>
+                    <p id="estimate-work-modal-norms-new" class="hidden text-[11px] text-amber-700" data-i18n="estimates.workNormsNew">Материалы привяжутся к работе после «💾 Сохранить»: сейчас работа ещё новая.</p>
+                    <div class="flex flex-wrap gap-2 items-end">
+                        <label class="space-y-1 flex-1 min-w-[12rem]">
+                            <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.material">Материал</span>
+                            <select id="estimate-work-modal-norm-material"
+                                    class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]"></select>
+                        </label>
+                        <label class="space-y-1 w-32">
+                            <span class="text-xs font-semibold text-gray-600" data-i18n="estimates.consumption">Расход на 1 ед.</span>
+                            <input type="number" step="0.0001" id="estimate-work-modal-norm-consumption"
+                                   class="w-full border rounded-lg px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#15803d]">
+                        </label>
+                        <button type="button" data-action="addEstimateWorkModalNorm"
+                                class="bg-[#15803d] hover:bg-[#166534] text-white px-3 py-2 rounded-lg text-xs font-semibold shadow transition"
+                                data-i18n="estimates.normsAdd">➕ Добавить норму</button>
+                    </div>
+                    <div id="estimate-work-modal-norms"></div>
+                </div>
+
                 <div class="flex justify-end gap-2 pt-2 border-t">
                     <button type="button" data-action="hideModal" data-arg="estimate-work-modal"
                             class="px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition"
@@ -2642,12 +2671,12 @@
                 <!-- Блок «Вид кошторису» есть только у кошториса: у наряда и ведомости
                      таблица одна (6 граф), и его прячет renderEstimateExportOptions(). -->
                 <div id="estimate-export-views-wrap" class="space-y-1.5">
-                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportView">2. Вид кошторису</p>
+                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportView">2. Вид кошториса</p>
                     <div id="estimate-export-views" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
                 </div>
 
                 <div class="space-y-1.5">
-                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportColor">3. Колір шапки</p>
+                    <p class="text-sm font-semibold text-gray-700" data-i18n="estimates.exportColor">3. Цвет шапки</p>
                     <div id="estimate-export-colors" class="flex items-center gap-2 flex-wrap"></div>
                 </div>
 
@@ -2667,7 +2696,7 @@
                         data-i18n="common.cancel">Отмена</button>
                 <button type="button" data-action="downloadEstimateDoc"
                         class="px-4 py-2 rounded-lg text-xs font-semibold bg-[#15803d] hover:bg-[#166534] text-white shadow transition"
-                        data-i18n="estimates.download">⬇️ Завантажити</button>
+                        data-i18n="estimates.download">⬇️ Скачать</button>
             </div>
         </div>
     </div>
